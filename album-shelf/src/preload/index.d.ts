@@ -74,13 +74,27 @@ interface AlbumShelfAPI {
   albumFilters: () => Promise<IpcResult<{ artists: string[]; genres: string[] }>>
   trackListByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   trackSyncByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
+  albumFetchCover: (albumId: number, force?: boolean) => Promise<IpcResult<{ cover_url: string | null }>>
+  albumResync: (albumId: number) => Promise<IpcResult<{
+    cover_url: string | null
+    tracks_synced: boolean
+    enrich_matched: boolean
+  }>>
+  playerPlayAlbum: (albumId: number, startTrackIndex?: number) => Promise<IpcResult<{
+    playing: string
+    totalTracks: number
+  }>>
   enrichStatus: () => Promise<
     IpcResult<{ pending: number; enriching: boolean; hasCredentials: boolean }>
   >
   enrichStart: () => Promise<
     IpcResult<{ matched: number; failed: number; total: number }>
   >
+  enrichReEnrichAll: () => Promise<
+    IpcResult<{ matched: number; failed: number; total: number }>
+  >
   onEnrichProgress: (callback: (progress: EnrichProgress) => void) => () => void
+  onMenuReEnrichAll: (callback: () => void) => () => void
   mbSetCredentials: (credentials: {
     username: string
     password: string

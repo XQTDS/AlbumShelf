@@ -81,7 +81,18 @@
             >
               <td class="col-index">{{ (currentPage - 1) * pageSize + index + 1 }}</td>
               <td class="col-title">
-                <div class="album-title">{{ album.title }}</div>
+                <div class="album-title-cell">
+                  <button
+                    class="btn-play btn-play-album"
+                    title="播放整张专辑"
+                    @click.stop="handlePlayAlbum(album.id)"
+                    :disabled="playingAlbumId === album.id"
+                  >
+                    <span v-if="playingAlbumId === album.id" class="spinner small"></span>
+                    <span v-else>▶</span>
+                  </button>
+                  <div class="album-title">{{ album.title }}</div>
+                </div>
               </td>
               <td class="col-artist">{{ album.artist }}</td>
               <td class="col-rating">
@@ -104,22 +115,23 @@
               <td :colspan="6" style="padding: 0; border: none;">
                 <div class="detail-collapse" :class="{ 'detail-open': expandedAlbumId === album.id }">
                   <div class="detail-content">
-                    <!-- 左侧：封面图 -->
-                    <div class="detail-cover">
+                    <!-- 左侧：封面图（仅展开时渲染，避免未展开时触发无效图片请求） -->
+                    <div class="detail-cover" v-if="expandedAlbumId === album.id">
                       <img
-                        v-if="album.cover_url"
+                        v-if="album.cover_url && !coverErrorSet.has(album.id)"
                         :src="album.cover_url"
                         :alt="album.title"
                         class="cover-img"
-                        @error="onCoverError"
+                        @error="onCoverError(album.id)"
                       />
                       <div
+                        v-else
                         class="cover-placeholder"
-                        :style="{ display: album.cover_url ? 'none' : 'flex' }"
                       >
                         💿
                       </div>
                     </div>
+                    <div class="detail-cover" v-else></div>
                     <!-- 右侧：详情信息 -->
                     <div class="detail-info">
                       <!-- 风格标签完整展示 -->
@@ -140,16 +152,8 @@
                           <span class="meta-label">曲目数</span>
                           <span class="meta-value">{{ album.track_count != null ? album.track_count : '—' }}</span>
                         </div>
-                        <div class="meta-item">
-                          <span class="meta-label">同步时间</span>
-                          <span class="meta-value">{{ album.synced_at || '—' }}</span>
-                        </div>
-                        <div class="meta-item">
-                          <span class="meta-label">补全时间</span>
-                          <span class="meta-value">{{ album.enriched_at || '未补全' }}</span>
-                        </div>
                       </div>
-                      <!-- 外部链接 -->
+                      <!-- 外部链接 & 操作 -->
                       <div class="detail-section detail-links">
                         <a
                           v-if="album.musicbrainz_id"
@@ -167,6 +171,15 @@
                         >
                           🎵 网易云音乐
                         </a>
+                        <button
+                          class="btn btn-resync"
+                          :disabled="resyncingAlbumId === album.id"
+                          @click.stop="handleResync(album.id)"
+                        >
+                          <span v-if="resyncingAlbumId === album.id" class="spinner small"></span>
+                          <span v-else>🔄</span>
+                          {{ resyncingAlbumId === album.id ? '同步中...' : '重新同步' }}
+                        </button>
                       </div>
                     </div>
                     <!-- 曲目列表 -->
@@ -184,7 +197,16 @@
                         <template v-if="isMultiDisc(trackCache.get(album.id)!)">
                           <template v-for="[discNum, discTracks] in groupByDisc(trackCache.get(album.id)!)" :key="discNum">
                             <div class="disc-label">Disc {{ discNum }}</div>
-                            <div v-for="track in discTracks" :key="track.id" class="track-row">
+                            <div v-for="(track, tIdx) in discTracks" :key="track.id" class="track-row">
+                              <button
+                                class="btn-play btn-play-track"
+                                title="从此曲开始播放"
+                                @click.stop="handlePlayTrack(album.id, track, trackCache.get(album.id)!)"
+                                :disabled="playingTrackId === track.id"
+                              >
+                                <span v-if="playingTrackId === track.id" class="spinner small"></span>
+                                <span v-else>▶</span>
+                              </button>
                               <span class="track-num">{{ track.track_number }}</span>
                               <span class="track-title">{{ track.title }}</span>
                               <span class="track-artist">{{ track.artist || '—' }}</span>
@@ -193,7 +215,16 @@
                           </template>
                         </template>
                         <template v-else>
-                          <div v-for="track in trackCache.get(album.id)!" :key="track.id" class="track-row">
+                          <div v-for="(track, tIdx) in trackCache.get(album.id)!" :key="track.id" class="track-row">
+                            <button
+                              class="btn-play btn-play-track"
+                              title="从此曲开始播放"
+                              @click.stop="handlePlayTrack(album.id, track, trackCache.get(album.id)!)"
+                              :disabled="playingTrackId === track.id"
+                            >
+                              <span v-if="playingTrackId === track.id" class="spinner small"></span>
+                              <span v-else>▶</span>
+                            </button>
                             <span class="track-num">{{ track.track_number }}</span>
                             <span class="track-title">{{ track.title }}</span>
                             <span class="track-artist">{{ track.artist || '—' }}</span>
@@ -305,10 +336,51 @@ async function loadTracks(albumId: number) {
   }
 }
 
-// 展开时自动加载曲目
+// 已尝试过远程获取封面的专辑（防止无限重试）
+const coverFetchedSet = new Set<number>()
+// 封面加载请求去重：避免同一专辑并发多次请求
+const coverLoadingSet = new Set<number>()
+
+// 从 ncm-cli 获取封面并替换旧的无效 URL
+async function fetchCoverFromRemote(albumId: number) {
+  const album = albums.value.find((a) => a.id === albumId)
+  if (!album) return
+
+  // 已经尝试过获取的不再重试，防止无限循环
+  if (coverFetchedSet.has(albumId)) return
+
+  // 防止并发重复请求
+  if (coverLoadingSet.has(albumId)) return
+  coverLoadingSet.add(albumId)
+
+  try {
+    coverFetchedSet.add(albumId)
+    // force=true 告知后端忽略数据库已有值，从 ncm-cli 重新获取
+    const result = await window.api.albumFetchCover(albumId, true)
+    if (result.success && result.data?.cover_url) {
+      // 清除错误标记，让 img 重新渲染
+      const newSet = new Set(coverErrorSet.value)
+      newSet.delete(albumId)
+      coverErrorSet.value = newSet
+      // 用新 URL 替换（后端已持久化到数据库）
+      album.cover_url = result.data.cover_url
+    }
+  } catch (error) {
+    console.error('获取封面失败:', error)
+  } finally {
+    coverLoadingSet.delete(albumId)
+  }
+}
+
+// 展开时自动加载曲目；若无封面则尝试获取
 watch(expandedAlbumId, (newId) => {
   if (newId != null) {
     loadTracks(newId)
+    // 仅当 cover_url 为空时主动获取
+    const album = albums.value.find((a) => a.id === newId)
+    if (album && !album.cover_url) {
+      fetchCoverFromRemote(newId)
+    }
   }
 })
 
@@ -343,11 +415,91 @@ function openExternal(url: string, event: Event) {
   window.api.openExternal(url)
 }
 
-function onCoverError(event: Event) {
-  const img = event.target as HTMLImageElement
-  img.style.display = 'none'
-  const placeholder = img.nextElementSibling as HTMLElement
-  if (placeholder) placeholder.style.display = 'flex'
+// 重新同步单张专辑
+const resyncingAlbumId = ref<number | null>(null)
+
+async function handleResync(albumId: number) {
+  if (resyncingAlbumId.value !== null) return
+  resyncingAlbumId.value = albumId
+
+  try {
+    const result = await window.api.albumResync(albumId)
+    if (result.success && result.data) {
+      const album = albums.value.find((a) => a.id === albumId)
+      if (album) {
+        // 更新封面
+        if (result.data.cover_url) {
+          // 清除封面错误状态和远程获取标记
+          const newErrorSet = new Set(coverErrorSet.value)
+          newErrorSet.delete(albumId)
+          coverErrorSet.value = newErrorSet
+          coverFetchedSet.delete(albumId)
+          album.cover_url = result.data.cover_url
+        }
+      }
+      // 清除曲目缓存以便重新加载
+      trackCache.value.delete(albumId)
+      // 重新加载曲目和专辑数据
+      await loadTracks(albumId)
+      await fetchAlbums()
+    }
+  } catch (error) {
+    console.error('重新同步失败:', error)
+  } finally {
+    resyncingAlbumId.value = null
+  }
+}
+
+// 播放状态
+const playingAlbumId = ref<number | null>(null)
+const playingTrackId = ref<number | null>(null)
+
+async function handlePlayAlbum(albumId: number) {
+  if (playingAlbumId.value !== null) return
+  playingAlbumId.value = albumId
+
+  try {
+    const result = await window.api.playerPlayAlbum(albumId)
+    if (!result.success) {
+      console.error('播放专辑失败:', result.error)
+    }
+  } catch (error) {
+    console.error('播放专辑失败:', error)
+  } finally {
+    playingAlbumId.value = null
+  }
+}
+
+interface TrackInfo {
+  id: number
+  netease_song_id: string | null
+  netease_original_id: number | null
+}
+
+async function handlePlayTrack(albumId: number, track: TrackInfo, allTracks: TrackInfo[]) {
+  if (playingTrackId.value !== null) return
+  playingTrackId.value = track.id
+
+  try {
+    // 找到这首曲目在完整列表中的索引
+    const trackIndex = allTracks.findIndex((t) => t.id === track.id)
+    const result = await window.api.playerPlayAlbum(albumId, trackIndex >= 0 ? trackIndex : 0)
+    if (!result.success) {
+      console.error('播放曲目失败:', result.error)
+    }
+  } catch (error) {
+    console.error('播放曲目失败:', error)
+  } finally {
+    playingTrackId.value = null
+  }
+}
+
+const coverErrorSet = ref<Set<number>>(new Set())
+
+function onCoverError(albumId: number) {
+  coverErrorSet.value = new Set(coverErrorSet.value).add(albumId)
+  // 图片加载失败，尝试从 ncm-cli 获取新的封面 URL
+  fetchCoverFromRemote(albumId)
 }
 
 // 搜索 & 筛选
@@ -526,10 +678,39 @@ function setupProgressListener() {
   })
 }
 
+// ==================== 重新补全所有 ====================
+
+let removeMenuReEnrichListener: (() => void) | null = null
+
+async function handleReEnrichAll() {
+  if (enrichProgress.value) {
+    showMessage('补全正在进行中，请等待完成', 'info')
+    return
+  }
+
+  showMessage('正在重新补全所有专辑的评分和风格信息...', 'info')
+
+  try {
+    const result = await window.api.enrichReEnrichAll()
+    if (!result.success) {
+      showMessage(`重新补全失败：${result.error}`, 'error')
+    }
+    // 进度和完成提示由 onEnrichProgress 回调处理
+  } catch (error) {
+    showMessage('重新补全失败：未知错误', 'error')
+  }
+}
+
 // ==================== 生命周期 ====================
 
 onMounted(async () => {
   setupProgressListener()
+
+  // 监听菜单栏"重新补全所有专辑"事件
+  removeMenuReEnrichListener = window.api.onMenuReEnrichAll(() => {
+    handleReEnrichAll()
+  })
+
   await fetchFilters()
   await fetchAlbums()
 })
@@ -537,6 +718,9 @@ onMounted(async () => {
 onUnmounted(() => {
   if (removeProgressListener) {
     removeProgressListener()
+  }
+  if (removeMenuReEnrichListener) {
+    removeMenuReEnrichListener()
   }
   if (searchTimer) {
     clearTimeout(searchTimer)
@@ -1033,6 +1217,104 @@ body {
   border-color: var(--primary);
 }
 
+.btn-resync {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn-resync:hover:not(:disabled) {
+  background: #fff7ed;
+  border-color: #f59e0b;
+  color: #d97706;
+}
+
+.btn-resync:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.btn-resync .spinner.small {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+}
+
+/* ==================== Play Button ==================== */
+.album-title-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s, opacity 0.15s;
+  flex-shrink: 0;
+  padding: 0;
+  line-height: 1;
+}
+
+.btn-play:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-play-album {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+  background: var(--primary);
+  color: white;
+}
+
+.btn-play-album:hover:not(:disabled) {
+  background: #4338ca;
+  transform: scale(1.1);
+}
+
+.btn-play-track {
+  width: 22px;
+  height: 22px;
+  font-size: 9px;
+  background: transparent;
+  color: var(--text-secondary);
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.track-row:hover .btn-play-track {
+  opacity: 1;
+}
+
+.btn-play-track:hover:not(:disabled) {
+  background: var(--primary);
+  color: white;
+}
+
+.btn-play-track:disabled {
+  opacity: 1;
+}
+
+.btn-play .spinner.small {
+  width: 10px;
+  height: 10px;
+  border-width: 2px;
+}
+
 /* ==================== Tracklist ==================== */
 .detail-tracklist {
   width: 100%;
@@ -1122,10 +1404,8 @@ body {
 }
 
 .track-artist {
-  flex: 0 0 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 0 1 auto;
+  max-width: 280px;
   color: var(--text-secondary);
   font-size: 12px;
   text-align: right;

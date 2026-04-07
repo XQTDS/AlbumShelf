@@ -5,7 +5,7 @@ import { MusicBrainzApi, type IMusicBrainzConfig } from 'musicbrainz-api'
  *
  * - 配置自定义 User-Agent
  * - 支持用户名/密码认证
- * - 内置请求频率控制（5 req/s = 每 200ms 一个请求）
+ * - 内置请求频率控制（1 req/s，符合 MusicBrainz 官方限制）
  */
 
 let mbClient: MusicBrainzApi | null = null
@@ -24,9 +24,8 @@ export function createMbClient(credentials?: MbCredentials): MusicBrainzApi {
     appVersion: '1.0.0',
     appContactInfo: 'https://github.com/user/album-shelf',
 
-    // 频率控制：5 req/s → 最多 5 个请求在 1 秒内
-    // musicbrainz-api 默认是 [15, 18]，我们设置更合理的值
-    rateLimit: [5, 1]
+    // 频率控制：1 req/s，符合 MusicBrainz 官方速率限制
+    rateLimit: [1, 1]
   }
 
   if (credentials) {

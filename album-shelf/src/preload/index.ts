@@ -24,9 +24,21 @@ const albumShelfAPI = {
   trackListByAlbum: (albumId: number) => ipcRenderer.invoke('track:listByAlbum', albumId),
   trackSyncByAlbum: (albumId: number) => ipcRenderer.invoke('track:syncByAlbum', albumId),
 
+  // 封面获取
+  albumFetchCover: (albumId: number, force?: boolean) =>
+    ipcRenderer.invoke('album:fetchCover', albumId, force),
+
+  // 单张专辑重新同步（封面 + 曲目 + 评分 + 风格）
+  albumResync: (albumId: number) => ipcRenderer.invoke('album:resync', albumId),
+
+  // 播放控制
+  playerPlayAlbum: (albumId: number, startTrackIndex?: number) =>
+    ipcRenderer.invoke('player:playAlbum', albumId, startTrackIndex),
+
   // 数据补全
   enrichStatus: () => ipcRenderer.invoke('enrich:status'),
   enrichStart: () => ipcRenderer.invoke('enrich:start'),
+  enrichReEnrichAll: () => ipcRenderer.invoke('enrich:reEnrichAll'),
 
   // 补全进度监听
   onEnrichProgress: (
@@ -50,6 +62,13 @@ const albumShelfAPI = {
   mbCheckCredentials: () => ipcRenderer.invoke('mb:checkCredentials'),
 
   mbClearCredentials: () => ipcRenderer.invoke('mb:clearCredentials'),
+
+  // 菜单事件监听
+  onMenuReEnrichAll: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:reEnrichAll', handler)
+    return () => ipcRenderer.removeListener('menu:reEnrichAll', handler)
+  },
 
   // Shell
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url)

@@ -286,6 +286,26 @@ export class AlbumService {
   }
 
   /**
+   * Get all albums (for re-enrichment).
+   */
+  getAllAlbumsForEnrich(): Album[] {
+    const rows = this.db
+      .prepare('SELECT * FROM album ORDER BY id')
+      .all() as Album[]
+    return rows
+  }
+
+  /**
+   * Reset enrichment status for all albums (clear enriched_at, mb_rating, musicbrainz_id, genres).
+   */
+  resetAllEnrichment(): void {
+    this.db.transaction(() => {
+      this.db.prepare('UPDATE album SET enriched_at = NULL, musicbrainz_id = NULL, mb_rating = NULL, mb_rating_count = NULL').run()
+      this.db.prepare('DELETE FROM album_genre').run()
+    })()
+  }
+
+  /**
    * Set genres for an album. Replaces existing genre associations.
    */
   setAlbumGenres(albumId: number, genreNames: string[]): void {
