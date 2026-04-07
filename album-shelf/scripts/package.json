@@ -1,0 +1,5 @@
+{
+  "name": "verify-sync",
+  "main": "verify-sync-electron.js",
+  "type": "commonjs"
+}

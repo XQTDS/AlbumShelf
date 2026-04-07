@@ -1,0 +1,42 @@
+{
+  "name": "album-shelf",
+  "version": "1.0.0",
+  "description": "网易云音乐专辑收藏管理工具，支持 MusicBrainz 数据补全",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "postinstall": "electron-rebuild",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web"
+  },
+  "keywords": [
+    "music",
+    "album",
+    "netease",
+    "musicbrainz",
+    "electron"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@electron-toolkit/preload": "^3.0.2",
+    "@electron-toolkit/tsconfig": "^2.0.0",
+    "@electron-toolkit/utils": "^4.0.0",
+    "@electron/rebuild": "^4.0.3",
+    "@types/better-sqlite3": "^7.6.13",
+    "@vitejs/plugin-vue": "^5.2.4",
+    "electron": "^41.1.1",
+    "electron-vite": "^5.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.0.0",
+    "vue-tsc": "^2.2.12"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "musicbrainz-api": "^1.2.0",
+    "vue": "^3.5.32"
+  }
+}
