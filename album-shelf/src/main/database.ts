@@ -88,6 +88,10 @@ export function initDatabase(): Database.Database {
   if (!albumColumns.some((c) => c.name === 'netease_original_id')) {
     db.exec('ALTER TABLE album ADD COLUMN netease_original_id INTEGER')
   }
+  // Add user_rating if missing
+  if (!albumColumns.some((c) => c.name === 'user_rating')) {
+    db.exec('ALTER TABLE album ADD COLUMN user_rating REAL')
+  }
 
   // Migration: track table
   const trackColumns = db

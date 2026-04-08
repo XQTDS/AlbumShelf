@@ -4,7 +4,7 @@ interface AlbumQueryOptions {
   search?: string
   artist?: string
   genre?: string
-  sortBy?: 'mb_rating' | 'release_date'
+  sortBy?: 'mb_rating' | 'release_date' | 'user_rating'
   sortOrder?: 'asc' | 'desc'
   page?: number
   pageSize?: number
@@ -21,6 +21,7 @@ interface Album {
   release_date: string | null
   mb_rating: number | null
   mb_rating_count: number | null
+  user_rating: number | null
   track_count: number | null
   synced_at: string
   enriched_at: string | null
@@ -75,6 +76,7 @@ interface AlbumShelfAPI {
   trackListByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   trackSyncByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   albumFetchCover: (albumId: number, force?: boolean) => Promise<IpcResult<{ cover_url: string | null }>>
+  albumSetRating: (albumId: number, rating: number | null) => Promise<IpcResult>
   albumResync: (albumId: number) => Promise<IpcResult<{
     cover_url: string | null
     tracks_synced: boolean

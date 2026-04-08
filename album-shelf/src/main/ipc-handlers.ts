@@ -240,6 +240,40 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  // ==================== 用户评分 ====================
+
+  /**
+   * 设置/清除用户评分
+   * rating: 0.5~5.0 步长 0.5，或 null 表示清除
+   */
+  ipcMain.handle(
+    'album:setRating',
+    async (_event, albumId: number, rating: number | null) => {
+      try {
+        // 校验评分值
+        if (rating !== null) {
+          if (typeof rating !== 'number' || rating < 0.5 || rating > 5.0) {
+            return { success: false, error: '评分值必须在 0.5~5.0 之间' }
+          }
+          // 校验步长 0.5
+          if (Math.round(rating * 2) !== rating * 2) {
+            return { success: false, error: '评分步长必须为 0.5' }
+          }
+        }
+
+        const album = albumService.getAlbumById(albumId)
+        if (!album) {
+          return { success: false, error: `专辑不存在 (id: ${albumId})` }
+        }
+
+        albumService.updateAlbum(albumId, { user_rating: rating })
+        return { success: true }
+      } catch (error) {
+        return { success: false, error: (error as Error).message }
+      }
+    }
+  )
+
   // ==================== 播放控制 ====================
 
   /**

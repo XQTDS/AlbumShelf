@@ -26,6 +26,8 @@ export interface MbMatchResult {
   ratingCount: number
   /** 风格标签（来自 MusicBrainz 官方 genres 分类） */
   genres: string[]
+  /** 首次发行日期（来自 MusicBrainz first-release-date，格式如 "YYYY-MM-DD"、"YYYY-MM"、"YYYY"） */
+  releaseDate: string | null
 }
 
 /**
@@ -171,12 +173,17 @@ export class EnrichService {
       const rating = (details as unknown as { rating?: IRating }).rating
       const genres = (details as unknown as { genres?: IMbGenre[] }).genres
 
+      // 提取首次发行日期
+      const firstReleaseDate =
+        (bestMatch as unknown as Record<string, string>)['first-release-date'] || null
+
       return {
         mbid: bestMatch.id,
         score: bestMatch.score,
         rating: rating?.value ?? null,
         ratingCount: rating?.['votes-count'] ?? 0,
-        genres: genres?.map((g) => g.name).filter(Boolean) ?? []
+        genres: genres?.map((g) => g.name).filter(Boolean) ?? [],
+        releaseDate: firstReleaseDate
       }
     } catch (error) {
       console.error(`MusicBrainz 匹配失败 [${title} - ${artist}]:`, error)
@@ -199,11 +206,12 @@ export class EnrichService {
       return false
     }
 
-    // 更新 Album 表
+    // 更新 Album 表（包括发行日期：优先使用 MusicBrainz 的数据）
     this.albumService.updateAlbum(album.id, {
       musicbrainz_id: result.mbid,
       mb_rating: result.rating,
       mb_rating_count: result.ratingCount,
+      release_date: result.releaseDate ?? album.release_date,
       enriched_at: new Date().toISOString()
     })
 

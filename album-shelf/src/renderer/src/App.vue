@@ -61,8 +61,12 @@
             <th class="col-index">#</th>
             <th class="col-title">专辑</th>
             <th class="col-artist">艺术家</th>
-            <th class="col-rating sortable" @click="toggleSort('mb_rating')">
-              评分
+            <th class="col-user-rating sortable" @click="toggleSort('user_rating')">
+              我的评分
+              <span class="sort-arrow" v-if="sortBy === 'user_rating'">{{ sortOrder === 'desc' ? '▼' : '▲' }}</span>
+            </th>
+            <th class="col-mb-rating sortable" @click="toggleSort('mb_rating')">
+              MB评分
               <span class="sort-arrow" v-if="sortBy === 'mb_rating'">{{ sortOrder === 'desc' ? '▼' : '▲' }}</span>
             </th>
             <th class="col-genre">风格</th>
@@ -95,7 +99,14 @@
                 </div>
               </td>
               <td class="col-artist">{{ album.artist }}</td>
-              <td class="col-rating">
+              <td class="col-user-rating">
+                <span v-if="album.user_rating != null" class="user-rating-display">
+                  <span class="user-stars-readonly">{{ renderStars(album.user_rating) }}</span>
+                  <span class="user-rating-num">{{ album.user_rating.toFixed(1) }}</span>
+                </span>
+                <span v-else class="rating-na">—</span>
+              </td>
+              <td class="col-mb-rating">
                 <span v-if="album.mb_rating != null" class="rating-badge">
                   ⭐ {{ album.mb_rating.toFixed(1) }}
                 </span>
@@ -112,7 +123,7 @@
             </tr>
             <!-- 详情展开行 -->
             <tr class="detail-row">
-              <td :colspan="6" style="padding: 0; border: none;">
+              <td :colspan="7" style="padding: 0; border: none;">
                 <div class="detail-collapse" :class="{ 'detail-open': expandedAlbumId === album.id }">
                   <div class="detail-content">
                     <!-- 左侧：封面图（仅展开时渲染，避免未展开时触发无效图片请求） -->
@@ -141,6 +152,27 @@
                           <span v-for="genre in album.genres" :key="genre" class="genre-tag">{{ genre }}</span>
                         </div>
                         <span v-else class="rating-na">—</span>
+                      </div>
+                      <!-- 我的评分 -->
+                      <div class="detail-section">
+                        <div class="detail-label">我的评分</div>
+                        <div class="star-rating" @mouseleave="hoverRating = 0">
+                          <template v-for="star in 5" :key="star">
+                            <span
+                              class="star-half star-left"
+                              :class="{ filled: (hoverRating || album.user_rating || 0) >= star - 0.5 }"
+                              @mouseenter="hoverRating = star - 0.5"
+                              @click.stop="handleSetRating(album.id, star - 0.5)"
+                            >★</span>
+                            <span
+                              class="star-half star-right"
+                              :class="{ filled: (hoverRating || album.user_rating || 0) >= star }"
+                              @mouseenter="hoverRating = star"
+                              @click.stop="handleSetRating(album.id, star)"
+                            >★</span>
+                          </template>
+                          <span v-if="album.user_rating != null" class="star-rating-value">{{ album.user_rating.toFixed(1) }}</span>
+                        </div>
                       </div>
                       <!-- 元数据信息 -->
                       <div class="detail-section detail-meta">
@@ -282,6 +314,7 @@ interface Album {
   artist: string
   mb_rating: number | null
   mb_rating_count: number | null
+  user_rating: number | null
   release_date: string | null
   genres?: string[]
   cover_url?: string | null
@@ -415,6 +448,48 @@ function openExternal(url: string, event: Event) {
   window.api.openExternal(url)
 }
 
+// ==================== 用户评分 ====================
+
+const hoverRating = ref(0)
+
+// 渲染只读星星（用于列表行）
+function renderStars(rating: number): string {
+  let stars = ''
+  for (let i = 1; i <= 5; i++) {
+    if (rating >= i) {
+      stars += '★'
+    } else if (rating >= i - 0.5) {
+      stars += '⯨'
+    } else {
+      stars += '☆'
+    }
+  }
+  return stars
+}
+
+// 设置评分（乐观更新）
+async function handleSetRating(albumId: number, rating: number) {
+  const album = albums.value.find((a) => a.id === albumId)
+  if (!album) return
+
+  const oldRating = album.user_rating
+  // 乐观更新
+  album.user_rating = rating
+
+  try {
+    const result = await window.api.albumSetRating(albumId, rating)
+    if (!result.success) {
+      // 回退
+      album.user_rating = oldRating
+      showMessage(`评分失败：${result.error}`, 'error')
+    }
+  } catch (error) {
+    // 回退
+    album.user_rating = oldRating
+    showMessage('评分失败：未知错误', 'error')
+  }
+}
+
 // 重新同步单张专辑
 const resyncingAlbumId = ref<number | null>(null)
 
@@ -515,7 +590,7 @@ const artists = ref<string[]>([])
 const genres = ref<string[]>([])
 
 // 排序
-const sortBy = ref<'mb_rating' | 'release_date' | undefined>(undefined)
+const sortBy = ref<'mb_rating' | 'release_date' | 'user_rating' | undefined>(undefined)
 const sortOrder = ref<'asc' | 'desc'>('desc')
 
 // 分页
@@ -597,7 +672,7 @@ function applyFilters() {
 
 // ==================== 排序 ====================
 
-function toggleSort(field: 'mb_rating' | 'release_date') {
+function toggleSort(field: 'mb_rating' | 'release_date' | 'user_rating') {
   if (sortBy.value === field) {
     // 点击同一列：切换排序方向
     sortOrder.value = sortOrder.value === 'desc' ? 'asc' : 'desc'
@@ -1425,12 +1500,13 @@ body {
 }
 
 /* Column widths */
-.col-index { width: 48px; text-align: center; color: var(--text-secondary); }
-.col-title { width: 28%; }
-.col-artist { width: 18%; }
-.col-rating { width: 80px; text-align: center; }
-.col-genre { width: 26%; }
-.col-date { width: 110px; }
+.col-index { width: 44px; text-align: center; color: var(--text-secondary); }
+.col-title { width: 24%; }
+.col-artist { width: 16%; }
+.col-user-rating { width: 120px; text-align: center; }
+.col-mb-rating { width: 80px; text-align: center; }
+.col-genre { width: 22%; }
+.col-date { width: 100px; }
 
 .album-title {
   font-weight: 500;
@@ -1547,4 +1623,68 @@ body {
 .table-container::-webkit-scrollbar-thumb:hover {
   background: #b0b5bd;
 }
+
+/* ==================== User Rating (list row - readonly) ==================== */
+.user-rating-display {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.user-stars-readonly {
+  font-size: 12px;
+  color: #f59e0b;
+  letter-spacing: -1px;
+  line-height: 1;
+}
+
+.user-rating-num {
+  font-size: 12px;
+  font-weight: 600;
+  color: #d97706;
+}
+
+/* ==================== Star Rating (detail - interactive) ==================== */
+.star-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  user-select: none;
+}
+
+.star-half {
+  display: inline-block;
+  font-size: 20px;
+  color: #d0d5dd;
+  cursor: pointer;
+  transition: color 0.1s;
+  line-height: 1;
+  overflow: hidden;
+  width: 0.5em;
+}
+
+.star-left {
+  text-align: left;
+}
+
+.star-right {
+  text-align: right;
+  direction: rtl;
+}
+
+.star-half.filled {
+  color: #f59e0b;
+}
+
+.star-half:hover {
+  transform: scale(1.15);
+}
+
+.star-rating-value {
+  margin-left: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #d97706;
+}
+
 </style>

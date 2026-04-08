@@ -14,6 +14,7 @@ export interface Album {
   release_date: string | null
   mb_rating: number | null
   mb_rating_count: number | null
+  user_rating: number | null
   track_count: number | null
   synced_at: string
   enriched_at: string | null
@@ -40,6 +41,7 @@ export interface AlbumUpdate {
   release_date?: string | null
   mb_rating?: number | null
   mb_rating_count?: number | null
+  user_rating?: number | null
   track_count?: number | null
   enriched_at?: string | null
 }
@@ -48,7 +50,7 @@ export interface AlbumQueryOptions {
   search?: string
   artist?: string
   genre?: string
-  sortBy?: 'mb_rating' | 'release_date'
+  sortBy?: 'mb_rating' | 'release_date' | 'user_rating'
   sortOrder?: 'asc' | 'desc'
   page?: number
   pageSize?: number
@@ -222,6 +224,10 @@ export class AlbumService {
       // Null dates go last
       const dir = sortOrder === 'asc' ? 'ASC' : 'DESC'
       orderClause = `ORDER BY CASE WHEN a.release_date IS NULL THEN 1 ELSE 0 END, a.release_date ${dir}`
+    } else if (sortBy === 'user_rating') {
+      // Null user ratings go last
+      const dir = sortOrder === 'asc' ? 'ASC' : 'DESC'
+      orderClause = `ORDER BY CASE WHEN a.user_rating IS NULL THEN 1 ELSE 0 END, a.user_rating ${dir}`
     }
 
     // Pagination

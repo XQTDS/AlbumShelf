@@ -12,7 +12,7 @@ const albumShelfAPI = {
     search?: string
     artist?: string
     genre?: string
-    sortBy?: 'mb_rating' | 'release_date'
+    sortBy?: 'mb_rating' | 'release_date' | 'user_rating'
     sortOrder?: 'asc' | 'desc'
     page?: number
     pageSize?: number
@@ -30,6 +30,10 @@ const albumShelfAPI = {
 
   // 单张专辑重新同步（封面 + 曲目 + 评分 + 风格）
   albumResync: (albumId: number) => ipcRenderer.invoke('album:resync', albumId),
+
+  // 用户评分
+  albumSetRating: (albumId: number, rating: number | null) =>
+    ipcRenderer.invoke('album:setRating', albumId, rating),
 
   // 播放控制
   playerPlayAlbum: (albumId: number) => ipcRenderer.invoke('player:playAlbum', albumId),
