@@ -32,8 +32,9 @@ const albumShelfAPI = {
   albumResync: (albumId: number) => ipcRenderer.invoke('album:resync', albumId),
 
   // 播放控制
-  playerPlayAlbum: (albumId: number, startTrackIndex?: number) =>
-    ipcRenderer.invoke('player:playAlbum', albumId, startTrackIndex),
+  playerPlayAlbum: (albumId: number) => ipcRenderer.invoke('player:playAlbum', albumId),
+  playerPlaySong: (encryptedId: string, originalId: number) =>
+    ipcRenderer.invoke('player:playSong', encryptedId, originalId),
 
   // 数据补全
   enrichStatus: () => ipcRenderer.invoke('enrich:status'),

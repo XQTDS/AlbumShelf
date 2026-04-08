@@ -200,8 +200,8 @@
                             <div v-for="(track, tIdx) in discTracks" :key="track.id" class="track-row">
                               <button
                                 class="btn-play btn-play-track"
-                                title="从此曲开始播放"
-                                @click.stop="handlePlayTrack(album.id, track, trackCache.get(album.id)!)"
+                                title="播放此曲"
+                                @click.stop="handlePlayTrack(album.id, track)"
                                 :disabled="playingTrackId === track.id"
                               >
                                 <span v-if="playingTrackId === track.id" class="spinner small"></span>
@@ -218,8 +218,8 @@
                           <div v-for="(track, tIdx) in trackCache.get(album.id)!" :key="track.id" class="track-row">
                             <button
                               class="btn-play btn-play-track"
-                              title="从此曲开始播放"
-                              @click.stop="handlePlayTrack(album.id, track, trackCache.get(album.id)!)"
+                              title="播放此曲"
+                              @click.stop="handlePlayTrack(album.id, track)"
                               :disabled="playingTrackId === track.id"
                             >
                               <span v-if="playingTrackId === track.id" class="spinner small"></span>
@@ -476,14 +476,19 @@ interface TrackInfo {
   netease_original_id: number | null
 }
 
-async function handlePlayTrack(albumId: number, track: TrackInfo, allTracks: TrackInfo[]) {
+async function handlePlayTrack(_albumId: number, track: TrackInfo) {
   if (playingTrackId.value !== null) return
+  if (!track.netease_song_id || !track.netease_original_id) {
+    console.error('该曲目缺少歌曲 ID，无法播放')
+    return
+  }
   playingTrackId.value = track.id
 
   try {
-    // 找到这首曲目在完整列表中的索引
-    const trackIndex = allTracks.findIndex((t) => t.id === track.id)
-    const result = await window.api.playerPlayAlbum(albumId, trackIndex >= 0 ? trackIndex : 0)
+    const result = await window.api.playerPlaySong(
+      track.netease_song_id,
+      track.netease_original_id
+    )
     if (!result.success) {
       console.error('播放曲目失败:', result.error)
     }

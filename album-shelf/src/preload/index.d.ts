@@ -80,10 +80,11 @@ interface AlbumShelfAPI {
     tracks_synced: boolean
     enrich_matched: boolean
   }>>
-  playerPlayAlbum: (albumId: number, startTrackIndex?: number) => Promise<IpcResult<{
+  playerPlayAlbum: (albumId: number) => Promise<IpcResult<{
     playing: string
     totalTracks: number
   }>>
+  playerPlaySong: (encryptedId: string, originalId: number) => Promise<IpcResult<void>>
   enrichStatus: () => Promise<
     IpcResult<{ pending: number; enriching: boolean; hasCredentials: boolean }>
   >

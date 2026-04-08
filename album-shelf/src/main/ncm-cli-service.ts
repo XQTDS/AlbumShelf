@@ -81,22 +81,28 @@ export class NcmCliService {
    */
   async execute<T>(args: string[]): Promise<T> {
     const fullArgs = [...args, '--output', 'json']
+    const cmdStr = `ncm-cli ${fullArgs.join(' ')}`
+    console.log(`[ncm-cli] 执行: ${cmdStr}`)
 
     try {
-      const { stdout } = await execFileAsync('ncm-cli', fullArgs, {
+      const { stdout, stderr } = await execFileAsync('ncm-cli', fullArgs, {
         timeout: NCM_CLI_TIMEOUT,
         maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large track lists
         windowsHide: true,
         shell: true // Windows 上需要通过 shell 执行 .cmd 文件
       })
 
-      // ncm-cli 输出可能包含非 JSON 前缀行（如 "Command executed successfully."）
-      // 需要找到 JSON 起始位置
+      if (stderr) {
+        console.warn(`[ncm-cli] stderr: ${stderr.substring(0, 500)}`)
+      }
+      console.log(`[ncm-cli] stdout: ${stdout.substring(0, 500)}`)
+
+      // ncm-cli 输出可能包含非 JSON 前缀行，找到 JSON 起始位置
       const jsonStart = stdout.indexOf('{')
       if (jsonStart === -1) {
-        throw new Error(`ncm-cli 返回了非 JSON 内容: ${stdout.substring(0, 200)}`)
+        // 命令没有返回 JSON 数据，返回 null
+        return null as T
       }
-
       const jsonStr = stdout.substring(jsonStart)
       const response: NcmCliResponse<T> = JSON.parse(jsonStr)
 
@@ -108,6 +114,7 @@ export class NcmCliService {
 
       return response.data
     } catch (error: unknown) {
+      console.error(`[ncm-cli] 命令失败: ${cmdStr}`, error)
       if (error instanceof Error) {
         // 超时
         if (error.message.includes('TIMEOUT') || (error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
@@ -151,20 +158,27 @@ export class NcmCliService {
    */
   private async executePlayerCmd(args: string[]): Promise<NcmCliPlayerResponse> {
     const fullArgs = [...args, '--output', 'json']
+    const cmdStr = `ncm-cli ${fullArgs.join(' ')}`
+    console.log(`[ncm-cli] 执行: ${cmdStr}`)
 
     try {
-      const { stdout } = await execFileAsync('ncm-cli', fullArgs, {
+      const { stdout, stderr } = await execFileAsync('ncm-cli', fullArgs, {
         timeout: NCM_CLI_TIMEOUT,
         maxBuffer: 10 * 1024 * 1024,
         windowsHide: true,
         shell: true
       })
 
+      if (stderr) {
+        console.warn(`[ncm-cli] stderr: ${stderr.substring(0, 500)}`)
+      }
+      console.log(`[ncm-cli] stdout: ${stdout.substring(0, 500)}`)
+
       const jsonStart = stdout.indexOf('{')
       if (jsonStart === -1) {
-        throw new Error(`ncm-cli 返回了非 JSON 内容: ${stdout.substring(0, 200)}`)
+        // 命令没有返回 JSON 数据，视为成功
+        return { success: true } as NcmCliPlayerResponse
       }
-
       const jsonStr = stdout.substring(jsonStart)
       const response: NcmCliPlayerResponse = JSON.parse(jsonStr)
 
@@ -174,6 +188,7 @@ export class NcmCliService {
 
       return response
     } catch (error: unknown) {
+      console.error(`[ncm-cli] 命令失败: ${cmdStr}`, error)
       if (error instanceof Error) {
         if (error.message.includes('TIMEOUT') || (error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
           throw new Error('ncm-cli 执行超时（15 秒），请检查网络连接')
@@ -221,5 +236,35 @@ export class NcmCliService {
       '--encrypted-id', encryptedId,
       '--original-id', String(originalId)
     ])
+  }
+
+  /**
+   * 查询当前播放器状态
+   */
+  async getState(): Promise<{ status: string; [key: string]: unknown }> {
+    const response = await this.executePlayerCmd(['state'])
+    return (response as { state: { status: string } }).state ?? { status: 'unknown' }
+  }
+
+  /**
+   * 等待播放器进入 playing 状态
+   * @param maxWaitMs 最大等待时间（毫秒），默认 10 秒
+   * @param intervalMs 轮询间隔（毫秒），默认 500ms
+   */
+  async waitForPlaying(maxWaitMs = 10_000, intervalMs = 500): Promise<boolean> {
+    const start = Date.now()
+    while (Date.now() - start < maxWaitMs) {
+      try {
+        const state = await this.getState()
+        if (state.status === 'playing') {
+          return true
+        }
+      } catch {
+        // 查询失败继续重试
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs))
+    }
+    console.warn('[ncm-cli] 等待播放超时')
+    return false
   }
 }

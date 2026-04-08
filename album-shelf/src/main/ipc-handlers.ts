@@ -243,53 +243,71 @@ export function registerIpcHandlers(): void {
   // ==================== 播放控制 ====================
 
   /**
-   * 播放专辑或从指定曲目开始播放
-   * 将整张专辑的曲目加入播放列表，从 startTrackIndex 开始播放
+   * 播放整张专辑
+   * 清空队列 → 播放第一首 → 等待播放开始 → 将剩余曲目加入队列
+   */
+  ipcMain.handle('player:playAlbum', async (_event, albumId: number) => {
+    try {
+      // 获取专辑的所有曲目
+      let tracks = trackService.getTracksByAlbumId(albumId)
+
+      // 本地无曲目，尝试自动拉取
+      if (tracks.length === 0) {
+        const album = albumService.getAlbumById(albumId)
+        if (album && album.netease_album_id) {
+          tracks = await trackSyncService.syncTracksByAlbum(albumId, album.netease_album_id)
+        }
+      }
+
+      if (tracks.length === 0) {
+        return { success: false, error: '该专辑没有可播放的曲目' }
+      }
+
+      // 过滤出有 netease_song_id 的曲目
+      const playable = tracks.filter((t) => t.netease_song_id && t.netease_original_id)
+      if (playable.length === 0) {
+        return { success: false, error: '该专辑没有可播放的曲目（缺少歌曲 ID）' }
+      }
+
+      // 1. 清空当前队列
+      await ncmCliService.queueClear()
+
+      // 2. 播放第一首
+      await ncmCliService.playSong(
+        playable[0].netease_song_id!,
+        playable[0].netease_original_id!
+      )
+
+      // 3. 等待播放器确认开始播放
+      await ncmCliService.waitForPlaying()
+
+      // 4. 将剩余曲目按顺序加入队列
+      for (let i = 1; i < playable.length; i++) {
+        await ncmCliService.queueAdd(
+          playable[i].netease_song_id!,
+          playable[i].netease_original_id!
+        )
+      }
+
+      return {
+        success: true,
+        data: { playing: playable[0].title, totalTracks: playable.length }
+      }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 播放单曲
+   * 直接播放指定歌曲，不修改播放队列中的其他曲目
    */
   ipcMain.handle(
-    'player:playAlbum',
-    async (_event, albumId: number, startTrackIndex?: number) => {
+    'player:playSong',
+    async (_event, encryptedId: string, originalId: number) => {
       try {
-        // 获取专辑的所有曲目
-        let tracks = trackService.getTracksByAlbumId(albumId)
-
-        // 本地无曲目，尝试自动拉取
-        if (tracks.length === 0) {
-          const album = albumService.getAlbumById(albumId)
-          if (album && album.netease_album_id) {
-            tracks = await trackSyncService.syncTracksByAlbum(albumId, album.netease_album_id)
-          }
-        }
-
-        if (tracks.length === 0) {
-          return { success: false, error: '该专辑没有可播放的曲目' }
-        }
-
-        // 过滤出有 netease_song_id 的曲目
-        const playable = tracks.filter((t) => t.netease_song_id && t.netease_original_id)
-        if (playable.length === 0) {
-          return { success: false, error: '该专辑没有可播放的曲目（缺少歌曲 ID）' }
-        }
-
-        const startIdx = Math.max(0, Math.min(startTrackIndex ?? 0, playable.length - 1))
-
-        // 1. 清空当前队列
-        await ncmCliService.queueClear()
-
-        // 2. 按顺序将曲目加入队列（从 startIdx 开始，再接前面的曲目）
-        //    第一首 add 进去后播放器会自动开始播放
-        for (let i = 0; i < playable.length; i++) {
-          const idx = (startIdx + i) % playable.length
-          await ncmCliService.queueAdd(
-            playable[idx].netease_song_id!,
-            playable[idx].netease_original_id!
-          )
-        }
-
-        return {
-          success: true,
-          data: { playing: playable[startIdx].title, totalTracks: playable.length }
-        }
+        await ncmCliService.playSong(encryptedId, originalId)
+        return { success: true }
       } catch (error) {
         return { success: false, error: (error as Error).message }
       }

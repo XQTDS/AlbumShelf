@@ -6,6 +6,15 @@ import { SyncService, NeteaseAlbum } from './sync-service'
  */
 const MOCK_ALBUMS: NeteaseAlbum[] = [
   {
+    netease_album_id: '439E80AEE95BE3A45DDAABC9DF5D7CFA',
+    netease_original_id: 34738739,
+    title: 'IV',
+    artist: 'BADBADNOTGOOD',
+    cover_url: 'https://p1.music.126.net/placeholder/IV.jpg',
+    release_date: '1997-06-16',
+    track_count: 12
+  },
+  {
     netease_album_id: '9077220C672889E105D6F8FCC420B144',
     netease_original_id: 2060534,
     title: 'OK Computer',
