@@ -76,7 +76,58 @@ const albumShelfAPI = {
   },
 
   // Shell
-  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url)
+  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+
+  // ==================== 网易云音乐认证 ====================
+
+  // 获取当前登录状态
+  authGetStatus: () => ipcRenderer.invoke('auth:getStatus'),
+
+  // 生成登录二维码
+  authGenerateQrcode: () => ipcRenderer.invoke('auth:generateQrcode'),
+
+  // 检查扫码状态
+  authCheckQrcode: (key: string) => ipcRenderer.invoke('auth:checkQrcode', key),
+
+  // 退出登录
+  authLogout: () => ipcRenderer.invoke('auth:logout'),
+
+  // 监听登录状态变化
+  onAuthStatusChanged: (
+    callback: (status: { isLoggedIn: boolean; user: { userId: number; nickname: string; avatarUrl: string | null } | null }) => void
+  ) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: any) => callback(status)
+    ipcRenderer.on('auth:statusChanged', handler)
+    return () => ipcRenderer.removeListener('auth:statusChanged', handler)
+  },
+
+  // 监听登录要求（应用启动时未登录）
+  onLoginRequired: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('auth:loginRequired', handler)
+    return () => ipcRenderer.removeListener('auth:loginRequired', handler)
+  },
+
+  // 监听菜单栏登录按钮点击
+  onMenuOpenLogin: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:openLogin', handler)
+    return () => ipcRenderer.removeListener('menu:openLogin', handler)
+  },
+
+  // 监听自动同步事件（启动时已登录）
+  onAutoSync: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('auth:autoSync', handler)
+    return () => ipcRenderer.removeListener('auth:autoSync', handler)
+  },
+
+  // 监听菜单栏同步专辑事件
+  onMenuSyncAlbums: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:syncAlbums', handler)
+    return () => ipcRenderer.removeListener('menu:syncAlbums', handler)
+  }
 }
 
 // Expose APIs to renderer via contextBridge

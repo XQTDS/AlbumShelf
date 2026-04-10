@@ -63,6 +63,27 @@ interface EnrichProgress {
   matched: boolean
 }
 
+interface NcmUser {
+  userId: number
+  nickname: string
+  avatarUrl: string | null
+}
+
+interface NcmLoginStatus {
+  isLoggedIn: boolean
+  user: NcmUser | null
+}
+
+interface NcmQrcodeResult {
+  qrcodeUrl: string
+  key: string
+}
+
+interface NcmQrcodeCheckResult {
+  status: 'waiting' | 'scanned' | 'confirmed' | 'expired'
+  user?: NcmUser
+}
+
 interface IpcResult<T = void> {
   success: boolean
   data?: T
@@ -107,6 +128,17 @@ interface AlbumShelfAPI {
   >
   mbClearCredentials: () => Promise<IpcResult>
   openExternal: (url: string) => Promise<void>
+
+  // 网易云音乐认证
+  authGetStatus: () => Promise<IpcResult<NcmLoginStatus>>
+  authGenerateQrcode: () => Promise<IpcResult<NcmQrcodeResult>>
+  authCheckQrcode: (key: string) => Promise<IpcResult<NcmQrcodeCheckResult>>
+  authLogout: () => Promise<IpcResult>
+  onAuthStatusChanged: (callback: (status: NcmLoginStatus) => void) => () => void
+  onLoginRequired: (callback: () => void) => () => void
+  onMenuOpenLogin: (callback: () => void) => () => void
+  onAutoSync: (callback: () => void) => () => void
+  onMenuSyncAlbums: (callback: () => void) => () => void
 }
 
 declare global {

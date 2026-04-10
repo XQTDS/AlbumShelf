@@ -15,6 +15,8 @@ import {
   isMbClientInitialized,
   type MbCredentials
 } from './enrich'
+import * as authService from './auth-service'
+import { NcmLoginRequiredError } from './ncm-cli-service'
 
 let albumService: AlbumService
 let trackService: TrackService
@@ -328,6 +330,10 @@ export function registerIpcHandlers(): void {
         data: { playing: playable[0].title, totalTracks: playable.length }
       }
     } catch (error) {
+      // 检查是否需要登录，如果是则自动打开登录弹窗
+      if (authService.handleLoginRequiredError(error)) {
+        return { success: false, error: '请先登录网易云音乐账号', loginRequired: true }
+      }
       return { success: false, error: (error as Error).message }
     }
   })
@@ -343,6 +349,10 @@ export function registerIpcHandlers(): void {
         await ncmCliService.playSong(encryptedId, originalId)
         return { success: true }
       } catch (error) {
+        // 检查是否需要登录，如果是则自动打开登录弹窗
+        if (authService.handleLoginRequiredError(error)) {
+          return { success: false, error: '请先登录网易云音乐账号', loginRequired: true }
+        }
         return { success: false, error: (error as Error).message }
       }
     }
@@ -457,6 +467,56 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('mb:clearCredentials', async () => {
     try {
       clearCredentials()
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  // ==================== 网易云音乐认证 ====================
+
+  /**
+   * 获取当前登录状态
+   */
+  ipcMain.handle('auth:getStatus', async () => {
+    try {
+      const status = authService.getLoginStatus()
+      return { success: true, data: status }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 生成登录二维码
+   */
+  ipcMain.handle('auth:generateQrcode', async () => {
+    try {
+      const result = await authService.generateQrcode()
+      return { success: true, data: result }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 检查扫码状态
+   */
+  ipcMain.handle('auth:checkQrcode', async (_event, key: string) => {
+    try {
+      const result = await authService.checkQrcodeStatus(key)
+      return { success: true, data: result }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 退出登录
+   */
+  ipcMain.handle('auth:logout', async () => {
+    try {
+      await authService.logout()
       return { success: true }
     } catch (error) {
       return { success: false, error: (error as Error).message }

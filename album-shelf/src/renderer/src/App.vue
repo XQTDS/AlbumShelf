@@ -72,12 +72,6 @@
           </div>
         </div>
       </div>
-      <div class="toolbar-right">
-        <button class="btn btn-primary" :disabled="syncing" @click="handleSync">
-          <span v-if="syncing" class="spinner"></span>
-          {{ syncing ? '同步中...' : '🔄 同步' }}
-        </button>
-      </div>
     </header>
 
     <!-- 已选风格标签区域 -->
@@ -345,10 +339,7 @@
     <main class="empty-state" v-else-if="!loading">
       <div class="empty-icon">📀</div>
       <h2>还没有专辑数据</h2>
-      <p>点击右上角的"同步"按钮，从网易云音乐导入你的收藏专辑</p>
-      <button class="btn btn-primary btn-lg" :disabled="syncing" @click="handleSync">
-        🔄 立即同步
-      </button>
+      <p>点击菜单栏「数据 → 同步专辑列表」从网易云音乐导入你的收藏专辑</p>
     </main>
 
     <!-- 加载状态 -->
@@ -367,11 +358,27 @@
         下一页 ›
       </button>
     </footer>
+
+    <!-- 登录弹窗 -->
+    <LoginModal
+      :visible="showLoginModal"
+      @close="showLoginModal = false"
+      @loginSuccess="handleLoginSuccess"
+    />
+
+    <!-- 登录引导弹窗 -->
+    <LoginGuideModal
+      :visible="showLoginGuide"
+      @login="handleLoginGuideLogin"
+      @later="showLoginGuide = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from 'vue'
+import LoginModal from './LoginModal.vue'
+import LoginGuideModal from './LoginGuideModal.vue'
 
 // ==================== 状态 ====================
 
@@ -964,6 +971,28 @@ async function handleReEnrichAll() {
   }
 }
 
+// ==================== 登录相关 ====================
+
+const showLoginModal = ref(false)
+const showLoginGuide = ref(false)
+let removeLoginRequiredListener: (() => void) | null = null
+let removeMenuOpenLoginListener: (() => void) | null = null
+let removeAuthStatusChangedListener: (() => void) | null = null
+let removeAutoSyncListener: (() => void) | null = null
+
+// 登录成功后的处理
+async function handleLoginSuccess() {
+  showMessage('登录成功！正在同步专辑数据...', 'success')
+  // 触发专辑同步
+  await handleSync()
+}
+
+// 登录引导弹窗点击"登录"
+function handleLoginGuideLogin() {
+  showLoginGuide.value = false
+  showLoginModal.value = true
+}
+
 // ==================== 生命周期 ====================
 
 onMounted(async () => {
@@ -972,6 +1001,41 @@ onMounted(async () => {
   // 监听菜单栏"重新补全所有专辑"事件
   removeMenuReEnrichListener = window.api.onMenuReEnrichAll(() => {
     handleReEnrichAll()
+  })
+
+  // 监听菜单栏"同步专辑列表"事件
+  const removeMenuSyncListener = window.api.onMenuSyncAlbums(async () => {
+    console.log('[App] 收到菜单同步事件')
+    await handleSync()
+  })
+
+  // 监听登录要求事件
+  // 首次启动时显示引导弹窗，之后直接显示登录弹窗
+  let isFirstLoginPrompt = true
+  removeLoginRequiredListener = window.api.onLoginRequired(() => {
+    if (isFirstLoginPrompt) {
+      showLoginGuide.value = true
+      isFirstLoginPrompt = false
+    } else {
+      // 非首次（如播放时触发）直接显示登录弹窗
+      showLoginModal.value = true
+    }
+  })
+
+  // 监听菜单栏"登录"按钮点击
+  removeMenuOpenLoginListener = window.api.onMenuOpenLogin(() => {
+    showLoginModal.value = true
+  })
+
+  // 监听登录状态变化
+  removeAuthStatusChangedListener = window.api.onAuthStatusChanged((status) => {
+    console.log('[App] 登录状态变化:', status.isLoggedIn ? status.user?.nickname : '未登录')
+  })
+
+  // 监听自动同步事件（启动时已登录）
+  removeAutoSyncListener = window.api.onAutoSync(async () => {
+    console.log('[App] 收到自动同步事件，开始同步专辑列表')
+    await handleSync()
   })
 
   await fetchFilters()
@@ -984,6 +1048,18 @@ onUnmounted(() => {
   }
   if (removeMenuReEnrichListener) {
     removeMenuReEnrichListener()
+  }
+  if (removeLoginRequiredListener) {
+    removeLoginRequiredListener()
+  }
+  if (removeMenuOpenLoginListener) {
+    removeMenuOpenLoginListener()
+  }
+  if (removeAuthStatusChangedListener) {
+    removeAuthStatusChangedListener()
+  }
+  if (removeAutoSyncListener) {
+    removeAutoSyncListener()
   }
   if (searchTimer) {
     clearTimeout(searchTimer)

@@ -61,9 +61,76 @@ export interface NcmCliAlbumDetail {
   publishTime: number
 }
 
+/** 用户信息 */
+export interface NcmUser {
+  userId: number
+  nickname: string
+  avatarUrl: string | null
+}
+
+/** 登录状态 */
+export interface NcmLoginStatus {
+  isLoggedIn: boolean
+  user: NcmUser | null
+}
+
+/** ncm-cli login status 返回结构 */
+interface NcmLoginStatusResponse {
+  account?: {
+    id: number
+  }
+  profile?: {
+    nickname: string
+    avatarUrl: string
+  }
+}
+
+/** 二维码生成结果 */
+export interface NcmQrcodeResult {
+  qrcodeUrl: string
+  key: string
+}
+
+/** 扫码状态 */
+export type NcmQrcodeStatus = 'waiting' | 'scanned' | 'confirmed' | 'expired'
+
+/** 扫码检查结果 */
+export interface NcmQrcodeCheckResult {
+  status: NcmQrcodeStatus
+  user?: NcmUser
+}
+
+/** 登录流程结果 */
+interface NcmLoginResult {
+  qrcodeUrl: string
+  key: string
+  status: string
+}
+
 // ==================== NcmCliService ====================
 
 const NCM_CLI_TIMEOUT = 15_000 // 15 seconds
+
+/** 需要登录的错误 */
+export class NcmLoginRequiredError extends Error {
+  constructor(message: string = '请先登录') {
+    super(message)
+    this.name = 'NcmLoginRequiredError'
+  }
+}
+
+/** 检查是否是需要登录的错误消息 */
+function isLoginRequiredMessage(message: string): boolean {
+  const loginRequiredPatterns = [
+    '请先登录',
+    '需要登录',
+    '未登录',
+    'login',
+    '登录'
+  ]
+  const lowerMessage = message.toLowerCase()
+  return loginRequiredPatterns.some(pattern => lowerMessage.includes(pattern.toLowerCase()))
+}
 
 /**
  * NcmCliService - 封装 ncm-cli 命令行工具调用
@@ -107,8 +174,13 @@ export class NcmCliService {
       const response: NcmCliResponse<T> = JSON.parse(jsonStr)
 
       if (response.code !== 200) {
+        const errorMessage = response.message || '未知错误'
+        // 检查是否需要登录
+        if (isLoginRequiredMessage(errorMessage)) {
+          throw new NcmLoginRequiredError(errorMessage)
+        }
         throw new Error(
-          `ncm-cli 业务错误 (code: ${response.code}): ${response.message || '未知错误'}`
+          `ncm-cli 业务错误 (code: ${response.code}): ${errorMessage}`
         )
       }
 
@@ -183,7 +255,12 @@ export class NcmCliService {
       const response: NcmCliPlayerResponse = JSON.parse(jsonStr)
 
       if (!response.success) {
-        throw new Error(`ncm-cli 播放控制失败: ${response.message || '未知错误'}`)
+        const errorMessage = response.message || '未知错误'
+        // 检查是否需要登录
+        if (isLoginRequiredMessage(errorMessage)) {
+          throw new NcmLoginRequiredError(errorMessage)
+        }
+        throw new Error(`ncm-cli 播放控制失败: ${errorMessage}`)
       }
 
       return response
@@ -266,5 +343,211 @@ export class NcmCliService {
     }
     console.warn('[ncm-cli] 等待播放超时')
     return false
+  }
+
+  // ==================== 登录相关 ====================
+
+  /**
+   * 获取当前登录用户信息
+   * user info 返回标准的 { code: 200, data } 格式
+   * @returns 用户信息，如果未登录则返回 null
+   */
+  async getUserInfo(): Promise<NcmUser | null> {
+    try {
+      const result = await this.execute<{
+        originalId: number
+        id: string
+        nickname: string
+        avatarUrl: string
+        signature?: string
+      }>(['user', 'info'])
+      
+      if (result && result.nickname) {
+        return {
+          userId: result.originalId,
+          nickname: result.nickname,
+          avatarUrl: result.avatarUrl || null
+        }
+      }
+      return null
+    } catch (error) {
+      console.error('[ncm-cli] 获取用户信息失败:', error)
+      return null
+    }
+  }
+
+  /**
+   * 检查当前登录状态
+   * login --check 返回 { success: boolean, message: string } 格式
+   * 如果已登录，会调用 user info 获取详细用户信息
+   * @returns 登录状态信息，包含 isLoggedIn 和 user 信息
+   */
+  async getLoginStatus(): Promise<NcmLoginStatus> {
+    try {
+      const fullArgs = ['login', '--check', '--output', 'json']
+      const cmdStr = `ncm-cli ${fullArgs.join(' ')}`
+      console.log(`[ncm-cli] 执行: ${cmdStr}`)
+
+      const { stdout, stderr } = await execFileAsync('ncm-cli', fullArgs, {
+        timeout: NCM_CLI_TIMEOUT,
+        maxBuffer: 10 * 1024 * 1024,
+        windowsHide: true,
+        shell: true
+      })
+
+      if (stderr) {
+        console.warn(`[ncm-cli] stderr: ${stderr.substring(0, 500)}`)
+      }
+      console.log(`[ncm-cli] stdout: ${stdout.substring(0, 500)}`)
+
+      const jsonStart = stdout.indexOf('{')
+      if (jsonStart === -1) {
+        return { isLoggedIn: false, user: null }
+      }
+      
+      const result = JSON.parse(stdout.substring(jsonStart)) as {
+        success: boolean
+        message?: string
+      }
+      
+      // success: true 表示已登录
+      if (result.success) {
+        // 获取详细用户信息（包含昵称）
+        const userInfo = await this.getUserInfo()
+        
+        return {
+          isLoggedIn: true,
+          user: userInfo || {
+            userId: 0,
+            nickname: '已登录用户',
+            avatarUrl: null
+          }
+        }
+      }
+      
+      return { isLoggedIn: false, user: null }
+    } catch (error) {
+      console.error('[ncm-cli] 检查登录状态失败:', error)
+      // 执行失败视为未登录
+      return { isLoggedIn: false, user: null }
+    }
+  }
+
+  /**
+   * 启动登录流程
+   * ncm-cli login --background 返回二维码链接并在后台轮询
+   */
+  async startLogin(): Promise<NcmLoginResult> {
+    // login --background 返回的是 { success, qrCodeUrl, clickableUrl, message } 格式
+    // 不是标准的 { code, data } 格式，需要使用 executePlayerCmd
+    const fullArgs = ['login', '--background', '--output', 'json']
+    const cmdStr = `ncm-cli ${fullArgs.join(' ')}`
+    console.log(`[ncm-cli] 执行: ${cmdStr}`)
+
+    const { stdout, stderr } = await execFileAsync('ncm-cli', fullArgs, {
+      timeout: NCM_CLI_TIMEOUT,
+      maxBuffer: 10 * 1024 * 1024,
+      windowsHide: true,
+      shell: true
+    })
+
+    if (stderr) {
+      console.warn(`[ncm-cli] stderr: ${stderr.substring(0, 500)}`)
+    }
+    console.log(`[ncm-cli] stdout: ${stdout.substring(0, 500)}`)
+
+    const jsonStart = stdout.indexOf('{')
+    if (jsonStart === -1) {
+      throw new Error('ncm-cli login 返回格式异常')
+    }
+    
+    const result = JSON.parse(stdout.substring(jsonStart)) as {
+      success: boolean
+      qrCodeUrl?: string
+      clickableUrl?: string
+      message?: string
+    }
+    
+    if (!result.success) {
+      throw new Error(result.message || '启动登录失败')
+    }
+    
+    return {
+      qrcodeUrl: result.qrCodeUrl || result.clickableUrl || '',
+      key: '', // ncm-cli 后台模式不需要 key，它自己会轮询
+      status: 'waiting'
+    }
+  }
+
+  /**
+   * 生成登录二维码
+   * 返回的是一个链接 URL，前端需要生成二维码图片展示
+   * @returns 二维码链接 URL
+   */
+  async generateQrcode(): Promise<NcmQrcodeResult> {
+    const result = await this.startLogin()
+    return {
+      qrcodeUrl: result.qrcodeUrl,
+      key: result.key
+    }
+  }
+
+  /**
+   * 检查登录状态（用于轮询）
+   * 使用 --check 选项检查当前状态
+   */
+  async checkQrcodeStatus(_key: string): Promise<NcmQrcodeCheckResult> {
+    try {
+      const status = await this.getLoginStatus()
+      
+      if (status.isLoggedIn && status.user) {
+        return {
+          status: 'confirmed',
+          user: status.user
+        }
+      }
+      
+      // 未登录则继续等待
+      return { status: 'waiting' }
+    } catch (error) {
+      console.error('[ncm-cli] 检查扫码状态失败:', error)
+      // 如果检查失败，返回等待状态继续轮询
+      return { status: 'waiting' }
+    }
+  }
+
+  /**
+   * 退出登录
+   * logout 返回 { success: boolean, message: string } 格式
+   */
+  async logout(): Promise<void> {
+    const fullArgs = ['logout', '--output', 'json']
+    const cmdStr = `ncm-cli ${fullArgs.join(' ')}`
+    console.log(`[ncm-cli] 执行: ${cmdStr}`)
+
+    const { stdout, stderr } = await execFileAsync('ncm-cli', fullArgs, {
+      timeout: NCM_CLI_TIMEOUT,
+      maxBuffer: 10 * 1024 * 1024,
+      windowsHide: true,
+      shell: true
+    })
+
+    if (stderr) {
+      console.warn(`[ncm-cli] stderr: ${stderr.substring(0, 500)}`)
+    }
+    console.log(`[ncm-cli] stdout: ${stdout.substring(0, 500)}`)
+
+    const jsonStart = stdout.indexOf('{')
+    if (jsonStart !== -1) {
+      const result = JSON.parse(stdout.substring(jsonStart)) as {
+        success: boolean
+        message?: string
+      }
+      
+      if (!result.success) {
+        throw new Error(result.message || '退出登录失败')
+      }
+    }
+    // success: true 或无 JSON 输出都视为成功
   }
 }
