@@ -20,10 +20,35 @@
           />
           <button v-if="searchQuery" class="search-clear" @click="clearSearch">✕</button>
         </div>
-        <select v-model="selectedArtist" class="filter-select" @change="applyFilters">
-          <option value="">全部艺术家</option>
-          <option v-for="artist in artists" :key="artist" :value="artist">{{ artist }}</option>
-        </select>
+        <!-- 艺术家筛选输入组件 -->
+        <div class="artist-filter-container">
+          <div class="artist-filter-input-wrapper">
+            <input
+              v-model="artistInput"
+              type="text"
+              placeholder="输入艺术家筛选..."
+              class="artist-filter-input"
+              @focus="onArtistInputFocus"
+              @blur="onArtistInputBlur"
+              :disabled="!!selectedArtist"
+            />
+            <span v-if="selectedArtist" class="selected-artist-tag">
+              {{ selectedArtist }}
+              <button class="selected-artist-remove" @click="clearArtist">✕</button>
+            </span>
+          </div>
+          <!-- 自动完成下拉列表 -->
+          <div v-if="showArtistSuggestions && filteredArtistSuggestions().length > 0" class="artist-suggestions">
+            <div
+              v-for="artist in filteredArtistSuggestions()"
+              :key="artist"
+              class="artist-suggestion-item"
+              @mousedown.prevent="selectArtistSuggestion(artist)"
+            >
+              {{ artist }}
+            </div>
+          </div>
+        </div>
         <!-- 多风格筛选输入组件 -->
         <div class="genre-filter-container">
           <input
@@ -635,6 +660,10 @@ const genres = ref<string[]>([])
 const genreInput = ref('')
 const showGenreSuggestions = ref(false)
 
+// 艺术家输入相关
+const artistInput = ref('')
+const showArtistSuggestions = ref(false)
+
 // 排序
 const sortBy = ref<'mb_rating' | 'release_date' | 'user_rating' | undefined>(undefined)
 const sortOrder = ref<'asc' | 'desc'>('desc')
@@ -781,6 +810,46 @@ function onGenreInputFocus() {
 function onGenreInputBlur() {
   setTimeout(() => {
     showGenreSuggestions.value = false
+  }, 200)
+}
+
+// ==================== 艺术家筛选 ====================
+
+// 过滤艺术家建议列表
+function filteredArtistSuggestions(): string[] {
+  const input = artistInput.value.toLowerCase().trim()
+  if (!input) return []
+  return artists.value
+    .filter(a => a.toLowerCase().includes(input))
+    .slice(0, 10)  // 最多显示 10 个
+}
+
+// 从建议列表选择艺术家
+function selectArtistSuggestion(artist: string) {
+  selectedArtist.value = artist
+  artistInput.value = ''
+  showArtistSuggestions.value = false
+  currentPage.value = 1
+  fetchAlbums()
+}
+
+// 清除已选艺术家
+function clearArtist() {
+  selectedArtist.value = ''
+  artistInput.value = ''
+  currentPage.value = 1
+  fetchAlbums()
+}
+
+// 处理艺术家输入框聚焦
+function onArtistInputFocus() {
+  showArtistSuggestions.value = true
+}
+
+// 处理艺术家输入框失焦（延迟以允许点击建议）
+function onArtistInputBlur() {
+  setTimeout(() => {
+    showArtistSuggestions.value = false
   }, 200)
 }
 
@@ -1685,6 +1754,109 @@ body {
 
 .genre-tag.selected:hover {
   background: #4f46e5;
+}
+
+/* ==================== 艺术家筛选组件 ==================== */
+.artist-filter-container {
+  position: relative;
+}
+
+.artist-filter-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.artist-filter-input {
+  width: 140px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: white;
+  transition: border-color 0.2s;
+}
+
+.artist-filter-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+}
+
+.artist-filter-input::placeholder {
+  color: #aaa;
+}
+
+.artist-filter-input:disabled {
+  width: 0;
+  padding: 0;
+  border: none;
+  opacity: 0;
+}
+
+.selected-artist-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px 5px 10px;
+  background: #10b981;
+  color: white;
+  border-radius: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.selected-artist-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: rgba(255, 255, 255, 0.3);
+  color: white;
+  border-radius: 50%;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.selected-artist-remove:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.artist-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 200px;
+  margin-top: 4px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.artist-suggestion-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+.artist-suggestion-item:hover {
+  background: #f3f4f6;
+}
+
+.artist-suggestion-item:first-child {
+  border-radius: 6px 6px 0 0;
+}
+
+.artist-suggestion-item:last-child {
+  border-radius: 0 0 6px 6px;
 }
 
 /* ==================== 多风格筛选组件 ==================== */
