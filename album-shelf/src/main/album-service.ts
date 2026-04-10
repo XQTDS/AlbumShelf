@@ -49,7 +49,7 @@ export interface AlbumUpdate {
 export interface AlbumQueryOptions {
   search?: string
   artist?: string
-  genre?: string
+  genres?: string  // 逗号分隔的风格列表，如 "Rock,Jazz"
   sortBy?: 'mb_rating' | 'release_date' | 'user_rating'
   sortOrder?: 'asc' | 'desc'
   page?: number
@@ -175,7 +175,7 @@ export class AlbumService {
     const {
       search,
       artist,
-      genre,
+      genres,
       sortBy,
       sortOrder = 'desc',
       page = 1,
@@ -197,21 +197,32 @@ export class AlbumService {
       params.artist = artist
     }
 
-    // Genre filter (join with album_genre and genre)
-    let genreJoin = ''
-    if (genre) {
-      genreJoin = `
-        INNER JOIN album_genre ag ON a.id = ag.album_id
-        INNER JOIN genre g ON ag.genre_id = g.id
-      `
-      conditions.push('g.name = @genre')
-      params.genre = genre
+    // Multi-genre filter with AND logic
+    // 使用子查询实现：专辑必须同时包含所有选中的风格
+    if (genres) {
+      const genreList = genres.split(',').map(g => g.trim()).filter(g => g.length > 0)
+      if (genreList.length > 0) {
+        // 构建 IN 子句的占位符
+        const placeholders = genreList.map((_, i) => `@genre${i}`).join(', ')
+        genreList.forEach((g, i) => {
+          params[`genre${i}`] = g
+        })
+        params.genreCount = genreList.length
+
+        conditions.push(`a.id IN (
+          SELECT ag.album_id FROM album_genre ag
+          JOIN genre g ON ag.genre_id = g.id
+          WHERE g.name IN (${placeholders})
+          GROUP BY ag.album_id
+          HAVING COUNT(DISTINCT g.name) = @genreCount
+        )`)
+      }
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
     // Count total
-    const countSql = `SELECT COUNT(DISTINCT a.id) as total FROM album a ${genreJoin} ${whereClause}`
+    const countSql = `SELECT COUNT(DISTINCT a.id) as total FROM album a ${whereClause}`
     const { total } = this.db.prepare(countSql).get(params) as { total: number }
 
     // Sort clause
@@ -237,7 +248,6 @@ export class AlbumService {
 
     const dataSql = `
       SELECT DISTINCT a.* FROM album a
-      ${genreJoin}
       ${whereClause}
       ${orderClause}
       LIMIT @limit OFFSET @offset

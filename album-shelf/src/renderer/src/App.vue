@@ -24,10 +24,28 @@
           <option value="">全部艺术家</option>
           <option v-for="artist in artists" :key="artist" :value="artist">{{ artist }}</option>
         </select>
-        <select v-model="selectedGenre" class="filter-select" @change="applyFilters">
-          <option value="">全部风格</option>
-          <option v-for="genre in genres" :key="genre" :value="genre">{{ genre }}</option>
-        </select>
+        <!-- 多风格筛选输入组件 -->
+        <div class="genre-filter-container">
+          <input
+            v-model="genreInput"
+            type="text"
+            placeholder="输入风格筛选..."
+            class="genre-filter-input"
+            @focus="onGenreInputFocus"
+            @blur="onGenreInputBlur"
+          />
+          <!-- 自动完成下拉列表 -->
+          <div v-if="showGenreSuggestions && filteredGenreSuggestions().length > 0" class="genre-suggestions">
+            <div
+              v-for="genre in filteredGenreSuggestions()"
+              :key="genre"
+              class="genre-suggestion-item"
+              @mousedown.prevent="selectGenreSuggestion(genre)"
+            >
+              {{ genre }}
+            </div>
+          </div>
+        </div>
       </div>
       <div class="toolbar-right">
         <button class="btn btn-primary" :disabled="syncing" @click="handleSync">
@@ -36,6 +54,18 @@
         </button>
       </div>
     </header>
+
+    <!-- 已选风格标签区域 -->
+    <div v-if="selectedGenres.length > 0" class="selected-genres-bar">
+      <span class="selected-genres-label">已选风格：</span>
+      <div class="selected-genres-tags">
+        <span v-for="genre in selectedGenres" :key="genre" class="selected-genre-tag">
+          {{ genre }}
+          <button class="selected-genre-remove" @click="removeGenre(genre)">✕</button>
+        </span>
+        <button class="clear-genres-btn" @click="clearGenres">清除全部</button>
+      </div>
+    </div>
 
     <!-- 补全进度条 -->
     <div v-if="enrichProgress" class="enrich-bar">
@@ -114,7 +144,13 @@
               </td>
               <td class="col-genre">
                 <div class="genre-tags" v-if="album.genres && album.genres.length > 0">
-                  <span v-for="genre in album.genres.slice(0, 3)" :key="genre" class="genre-tag">{{ genre }}</span>
+                  <span
+                    v-for="genre in album.genres.slice(0, 3)"
+                    :key="genre"
+                    class="genre-tag clickable"
+                    :class="{ selected: isGenreSelected(genre) }"
+                    @click.stop="toggleGenre(genre)"
+                  >{{ genre }}</span>
                   <span v-if="album.genres.length > 3" class="genre-more">+{{ album.genres.length - 3 }}</span>
                 </div>
                 <span v-else class="rating-na">—</span>
@@ -149,7 +185,13 @@
                       <div class="detail-section">
                         <div class="detail-label">风格</div>
                         <div class="genre-tags" v-if="album.genres && album.genres.length > 0">
-                          <span v-for="genre in album.genres" :key="genre" class="genre-tag">{{ genre }}</span>
+                          <span
+                            v-for="genre in album.genres"
+                            :key="genre"
+                            class="genre-tag clickable"
+                            :class="{ selected: isGenreSelected(genre) }"
+                            @click.stop="toggleGenre(genre)"
+                          >{{ genre }}</span>
                         </div>
                         <span v-else class="rating-na">—</span>
                       </div>
@@ -585,9 +627,13 @@ function onCoverError(albumId: number) {
 // 搜索 & 筛选
 const searchQuery = ref('')
 const selectedArtist = ref('')
-const selectedGenre = ref('')
+const selectedGenres = ref<string[]>([])  // 多风格筛选
 const artists = ref<string[]>([])
 const genres = ref<string[]>([])
+
+// 风格输入相关
+const genreInput = ref('')
+const showGenreSuggestions = ref(false)
 
 // 排序
 const sortBy = ref<'mb_rating' | 'release_date' | 'user_rating' | undefined>(undefined)
@@ -613,7 +659,7 @@ async function fetchAlbums() {
     const result = await window.api.albumList({
       search: searchQuery.value || undefined,
       artist: selectedArtist.value || undefined,
-      genre: selectedGenre.value || undefined,
+      genres: selectedGenres.value.length > 0 ? selectedGenres.value.join(',') : undefined,
       sortBy: sortBy.value,
       sortOrder: sortOrder.value,
       page: currentPage.value,
@@ -668,6 +714,74 @@ function clearSearch() {
 function applyFilters() {
   currentPage.value = 1
   fetchAlbums()
+}
+
+// ==================== 多风格筛选 ====================
+
+// 切换风格选中状态
+function toggleGenre(genre: string) {
+  const index = selectedGenres.value.indexOf(genre)
+  if (index === -1) {
+    // 添加
+    selectedGenres.value = [...selectedGenres.value, genre]
+  } else {
+    // 移除
+    selectedGenres.value = selectedGenres.value.filter(g => g !== genre)
+  }
+  currentPage.value = 1
+  fetchAlbums()
+}
+
+// 清除所有已选风格
+function clearGenres() {
+  selectedGenres.value = []
+  currentPage.value = 1
+  fetchAlbums()
+}
+
+// 判断风格是否已选中
+function isGenreSelected(genre: string): boolean {
+  return selectedGenres.value.includes(genre)
+}
+
+// 过滤风格建议列表（排除已选、匹配输入）
+function filteredGenreSuggestions(): string[] {
+  const input = genreInput.value.toLowerCase().trim()
+  if (!input) return []
+  return genres.value
+    .filter(g => !selectedGenres.value.includes(g))
+    .filter(g => g.toLowerCase().includes(input))
+    .slice(0, 10)  // 最多显示 10 个
+}
+
+// 从建议列表选择风格
+function selectGenreSuggestion(genre: string) {
+  if (!selectedGenres.value.includes(genre)) {
+    selectedGenres.value = [...selectedGenres.value, genre]
+    currentPage.value = 1
+    fetchAlbums()
+  }
+  genreInput.value = ''
+  showGenreSuggestions.value = false
+}
+
+// 移除单个已选风格
+function removeGenre(genre: string) {
+  selectedGenres.value = selectedGenres.value.filter(g => g !== genre)
+  currentPage.value = 1
+  fetchAlbums()
+}
+
+// 处理风格输入框聚焦
+function onGenreInputFocus() {
+  showGenreSuggestions.value = true
+}
+
+// 处理风格输入框失焦（延迟以允许点击建议）
+function onGenreInputBlur() {
+  setTimeout(() => {
+    showGenreSuggestions.value = false
+  }, 200)
 }
 
 // ==================== 排序 ====================
@@ -1550,6 +1664,155 @@ body {
   padding: 2px 6px;
   color: var(--text-secondary);
   font-size: 11px;
+}
+
+/* 可点击的风格标签 */
+.genre-tag.clickable {
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.genre-tag.clickable:hover {
+  background: #dbeafe;
+  transform: scale(1.05);
+}
+
+/* 已选中的风格标签 */
+.genre-tag.selected {
+  background: var(--primary);
+  color: white;
+}
+
+.genre-tag.selected:hover {
+  background: #4f46e5;
+}
+
+/* ==================== 多风格筛选组件 ==================== */
+.genre-filter-container {
+  position: relative;
+}
+
+.genre-filter-input {
+  width: 160px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: white;
+  transition: border-color 0.2s;
+}
+
+.genre-filter-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+}
+
+.genre-filter-input::placeholder {
+  color: #aaa;
+}
+
+.genre-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.genre-suggestion-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+.genre-suggestion-item:hover {
+  background: #f3f4f6;
+}
+
+.genre-suggestion-item:first-child {
+  border-radius: 6px 6px 0 0;
+}
+
+.genre-suggestion-item:last-child {
+  border-radius: 0 0 6px 6px;
+}
+
+/* ==================== 已选风格标签区域 ==================== */
+.selected-genres-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  background: #fefce8;
+  border-bottom: 1px solid #fde68a;
+}
+
+.selected-genres-label {
+  font-size: 13px;
+  color: #92400e;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.selected-genres-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.selected-genre-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 4px 10px;
+  background: var(--primary);
+  color: white;
+  border-radius: 14px;
+  font-size: 12px;
+}
+
+.selected-genre-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: rgba(255, 255, 255, 0.3);
+  color: white;
+  border-radius: 50%;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.selected-genre-remove:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.clear-genres-btn {
+  padding: 4px 10px;
+  border: 1px solid #fbbf24;
+  background: transparent;
+  color: #92400e;
+  border-radius: 14px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.clear-genres-btn:hover {
+  background: #fde68a;
 }
 
 /* ==================== Empty State ==================== */
