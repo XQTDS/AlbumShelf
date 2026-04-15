@@ -8,7 +8,12 @@ export default defineConfig({
       externalizeDepsPlugin({
         exclude: ['musicbrainz-api']
       })
-    ]
+    ],
+    build: {
+      rollupOptions: {
+        external: ['electron']
+      }
+    }
   },
   preload: {
     plugins: [externalizeDepsPlugin()]

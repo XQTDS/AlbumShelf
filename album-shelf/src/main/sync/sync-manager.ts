@@ -1,5 +1,6 @@
 import { SyncService } from './sync-service'
 import { AlbumService, AlbumInsert } from '../album-service'
+import { writeNeteaseIdsToCsv, AlbumWithNeteaseId } from './csv-writer'
 
 export interface SyncResult {
   /** 本次同步新增的专辑数量 */
@@ -29,6 +30,7 @@ export class SyncManager {
    * 执行同步操作
    * - 从同步源获取收藏专辑列表
    * - 通过 netease_album_id 增量去重写入数据库
+   * - 回写 netease_id 到 CSV 文件
    * - 返回同步结果统计
    */
   async sync(): Promise<SyncResult> {
@@ -48,6 +50,7 @@ export class SyncManager {
 
       // 2. 逐个检查并写入数据库（通过 netease_album_id 去重）
       const albumsToInsert: AlbumInsert[] = []
+      const albumsForCsvWriteback: AlbumWithNeteaseId[] = []
 
       for (const album of neteaseAlbums) {
         const existing = this.albumService.getAlbumByNeteaseAlbumId(album.netease_album_id)
@@ -66,11 +69,26 @@ export class SyncManager {
           })
           added++
         }
+
+        // 收集所有专辑用于 CSV 回写
+        albumsForCsvWriteback.push({
+          title: album.title,
+          artist: album.artist,
+          netease_id: album.netease_album_id
+        })
       }
 
       // 3. 批量插入新专辑
       if (albumsToInsert.length > 0) {
         this.albumService.insertAlbums(albumsToInsert)
+      }
+
+      // 4. 回写 netease_id 到 CSV 文件
+      try {
+        writeNeteaseIdsToCsv(albumsForCsvWriteback)
+      } catch (error) {
+        console.error('CSV 回写失败:', error)
+        // 回写失败不影响同步结果
       }
 
       return {

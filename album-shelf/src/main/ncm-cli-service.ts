@@ -61,6 +61,29 @@ export interface NcmCliAlbumDetail {
   publishTime: number
 }
 
+/** ncm-cli search album 返回的搜索结果 */
+export interface NcmCliAlbumSearchResult {
+  originalId: number
+  id: string // 32位 hex，用于 ncm-cli 命令参数
+  name: string
+  language: string
+  coverImgUrl: string | null
+  company: string | null
+  transName: string | null
+  aliaName: string
+  genre: string
+  artists: NcmCliArtist[]
+  briefDesc: string
+  description: string
+  publishTime: number
+}
+
+/** ncm-cli search album 返回的数据结构 */
+interface NcmCliAlbumSearchResponse {
+  recordCount: number
+  records: NcmCliAlbumSearchResult[]
+}
+
 /** 用户信息 */
 export interface NcmUser {
   userId: number
@@ -220,6 +243,27 @@ export class NcmCliService {
    */
   async getAlbumDetail(albumId: string): Promise<NcmCliAlbumDetail> {
     return this.execute<NcmCliAlbumDetail>(['album', 'get', '--albumId', albumId])
+  }
+
+  /**
+   * 搜索专辑
+   *
+   * @param keyword 搜索关键字（通常是"专辑名 艺术家名"）
+   * @param limit 返回数量，默认 10
+   * @returns 搜索结果数组
+   */
+  async searchAlbum(keyword: string, limit: number = 10): Promise<NcmCliAlbumSearchResult[]> {
+    // 用引号包裹关键字，防止空格和特殊字符被 shell 解析
+    const quotedKeyword = `"${keyword.replace(/"/g, '\\"')}"`
+    const response = await this.execute<NcmCliAlbumSearchResponse>([
+      'search',
+      'album',
+      '--keyword',
+      quotedKeyword,
+      '--limit',
+      String(limit)
+    ])
+    return response.records || []
   }
 
   // ==================== 播放控制 ====================
