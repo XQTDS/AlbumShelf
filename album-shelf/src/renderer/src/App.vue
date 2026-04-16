@@ -103,8 +103,9 @@
     </div>
 
     <!-- 表格区域 -->
-    <main class="table-container" v-if="albums.length > 0">
-      <table class="album-table">
+    <main class="table-wrapper" v-if="albums.length > 0 || loadingMore">
+      <div class="table-scroll-container" ref="scrollContainerRef">
+        <table class="album-table">
         <thead>
           <tr>
             <th class="col-index">#</th>
@@ -132,7 +133,7 @@
               :class="{ 'row-expanded': expandedAlbumId === album.id }"
               @click="toggleExpand(album.id)"
             >
-              <td class="col-index">{{ (currentPage - 1) * pageSize + index + 1 }}</td>
+              <td class="col-index">{{ index + 1 }}</td>
               <td class="col-title">
                 <div class="album-title-cell">
                   <button
@@ -331,8 +332,25 @@
               </td>
             </tr>
           </template>
+          <!-- 哨兵元素和加载更多 -->
+          <tr v-if="hasMore || loadingMore" class="sentinel-row">
+            <td colspan="7" style="padding: 0; border: none;">
+              <div ref="sentinelRef" class="load-more-sentinel">
+                <div v-if="loadingMore" class="load-more-spinner">
+                  <span class="spinner small"></span>
+                  <span>加载中...</span>
+                </div>
+              </div>
+            </td>
+          </tr>
         </tbody>
       </table>
+      </div>
+      <!-- 滚动进度条 -->
+      <ScrollProgressBar
+        :scrollContainer="scrollContainerRef"
+        @seek="handleScrollSeek"
+      />
     </main>
 
     <!-- 空状态 -->
@@ -348,16 +366,6 @@
       <p>正在加载...</p>
     </main>
 
-    <!-- 底部分页 -->
-    <footer class="pagination" v-if="totalPages > 1">
-      <button class="btn btn-sm" :disabled="currentPage <= 1" @click="goToPage(currentPage - 1)">
-        ‹ 上一页
-      </button>
-      <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页（共 {{ totalAlbums }} 张专辑）</span>
-      <button class="btn btn-sm" :disabled="currentPage >= totalPages" @click="goToPage(currentPage + 1)">
-        下一页 ›
-      </button>
-    </footer>
 
     <!-- 登录弹窗 -->
     <LoginModal
@@ -388,6 +396,7 @@ import { ref, watch, onMounted, onUnmounted } from 'vue'
 import LoginModal from './LoginModal.vue'
 import LoginGuideModal from './LoginGuideModal.vue'
 import FuzzyMatchModal from './FuzzyMatchModal.vue'
+import ScrollProgressBar from './ScrollProgressBar.vue'
 
 // ==================== 状态 ====================
 
@@ -695,11 +704,17 @@ const showArtistSuggestions = ref(false)
 const sortBy = ref<'mb_rating' | 'release_date' | 'user_rating' | undefined>(undefined)
 const sortOrder = ref<'asc' | 'desc'>('desc')
 
-// 分页
+// 无限滚动
 const currentPage = ref(1)
-const totalPages = ref(1)
 const totalAlbums = ref(0)
 const pageSize = 20
+const loadingMore = ref(false)
+const hasMore = ref(true)
+
+// 滚动容器和哨兵
+const scrollContainerRef = ref<HTMLElement | null>(null)
+const sentinelRef = ref<HTMLElement | null>(null)
+let intersectionObserver: IntersectionObserver | null = null
 
 // 消息提示
 const message = ref('')
@@ -710,7 +725,7 @@ const enrichProgress = ref<{ current: number; total: number; albumTitle: string 
 
 // ==================== 数据获取 ====================
 
-async function fetchAlbums() {
+async function fetchAlbums(append = false) {
   try {
     const result = await window.api.albumList({
       search: searchQuery.value || undefined,
@@ -723,16 +738,32 @@ async function fetchAlbums() {
     })
 
     if (result.success && result.data) {
-      albums.value = result.data.albums
-      totalPages.value = result.data.totalPages
+      if (append) {
+        // 追加模式：将新数据添加到现有列表
+        albums.value = [...albums.value, ...result.data.albums]
+      } else {
+        // 重置模式：替换整个列表
+        albums.value = result.data.albums
+      }
       totalAlbums.value = result.data.total
       currentPage.value = result.data.page
+      // 判断是否还有更多数据
+      hasMore.value = albums.value.length < result.data.total
     }
   } catch (error) {
     showMessage('加载专辑列表失败', 'error')
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
+}
+
+// 加载更多
+async function loadMore() {
+  if (loadingMore.value || !hasMore.value) return
+  loadingMore.value = true
+  currentPage.value++
+  await fetchAlbums(true)
 }
 
 async function fetchFilters() {
@@ -747,6 +778,19 @@ async function fetchFilters() {
   }
 }
 
+// ==================== 重置列表（筛选/搜索/排序变化时） ====================
+
+function resetAndFetch() {
+  albums.value = []
+  currentPage.value = 1
+  hasMore.value = true
+  // 重置滚动位置
+  if (scrollContainerRef.value) {
+    scrollContainerRef.value.scrollTop = 0
+  }
+  fetchAlbums()
+}
+
 // ==================== 搜索 ====================
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
@@ -754,22 +798,19 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null
 function debouncedSearch() {
   if (searchTimer) clearTimeout(searchTimer)
   searchTimer = setTimeout(() => {
-    currentPage.value = 1
-    fetchAlbums()
+    resetAndFetch()
   }, 300)
 }
 
 function clearSearch() {
   searchQuery.value = ''
-  currentPage.value = 1
-  fetchAlbums()
+  resetAndFetch()
 }
 
 // ==================== 筛选 ====================
 
 function applyFilters() {
-  currentPage.value = 1
-  fetchAlbums()
+  resetAndFetch()
 }
 
 // ==================== 多风格筛选 ====================
@@ -784,15 +825,13 @@ function toggleGenre(genre: string) {
     // 移除
     selectedGenres.value = selectedGenres.value.filter(g => g !== genre)
   }
-  currentPage.value = 1
-  fetchAlbums()
+  resetAndFetch()
 }
 
 // 清除所有已选风格
 function clearGenres() {
   selectedGenres.value = []
-  currentPage.value = 1
-  fetchAlbums()
+  resetAndFetch()
 }
 
 // 判断风格是否已选中
@@ -891,17 +930,65 @@ function toggleSort(field: 'mb_rating' | 'release_date' | 'user_rating') {
     sortBy.value = field
     sortOrder.value = 'desc'
   }
-  currentPage.value = 1
-  fetchAlbums()
+  resetAndFetch()
 }
 
-// ==================== 分页 ====================
+// ==================== 滚动进度条处理 ====================
 
-function goToPage(page: number) {
-  if (page < 1 || page > totalPages.value) return
-  currentPage.value = page
-  fetchAlbums()
+function handleScrollSeek(scrollTop: number) {
+  if (scrollContainerRef.value) {
+    scrollContainerRef.value.scrollTop = scrollTop
+  }
 }
+
+// ==================== 无限滚动 Observer ====================
+
+function setupIntersectionObserver() {
+  if (intersectionObserver) {
+    intersectionObserver.disconnect()
+  }
+  
+  intersectionObserver = new IntersectionObserver(
+    (entries) => {
+      const entry = entries[0]
+      if (entry && entry.isIntersecting && hasMore.value && !loadingMore.value) {
+        loadMore()
+      }
+    },
+    {
+      root: scrollContainerRef.value,
+      rootMargin: '200px',
+      threshold: 0
+    }
+  )
+}
+
+function observeSentinel() {
+  if (intersectionObserver && sentinelRef.value) {
+    intersectionObserver.observe(sentinelRef.value)
+  }
+}
+
+// 监听哨兵元素变化
+watch(sentinelRef, (newVal) => {
+  if (newVal && intersectionObserver) {
+    intersectionObserver.disconnect()
+    intersectionObserver.observe(newVal)
+  }
+})
+
+// 监听滚动容器变化，重新设置 observer
+watch(scrollContainerRef, (newVal) => {
+  if (newVal) {
+    setupIntersectionObserver()
+    if (sentinelRef.value) {
+      intersectionObserver?.observe(sentinelRef.value)
+    }
+  }
+})
+
+// ==================== 以下为移除的分页代码 ====================
+// goToPage 函数已移除，改为无限滚动
 
 // ==================== 同步 ====================
 
@@ -1033,6 +1120,9 @@ function handleLoginGuideLogin() {
 
 onMounted(async () => {
   setupProgressListener()
+  
+  // 设置无限滚动的 IntersectionObserver
+  setupIntersectionObserver()
 
   // 监听菜单栏"重新补全所有专辑"事件
   removeMenuReEnrichListener = window.api.onMenuReEnrichAll(() => {
@@ -1079,6 +1169,12 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // 清理 IntersectionObserver
+  if (intersectionObserver) {
+    intersectionObserver.disconnect()
+    intersectionObserver = null
+  }
+  
   if (removeProgressListener) {
     removeProgressListener()
   }
@@ -1398,7 +1494,33 @@ body {
   to { transform: translateY(0); opacity: 1; }
 }
 
-/* ==================== Table ==================== */
+/* ==================== Table Wrapper (无限滚动布局) ==================== */
+.table-wrapper {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+  padding: 0;
+  min-height: 0; /* 允许 flex 子元素收缩 */
+}
+
+.table-scroll-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+/* 隐藏原生滚动条 */
+.table-scroll-container::-webkit-scrollbar {
+  display: none;
+}
+
+.table-scroll-container {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+/* 旧的 table-container 样式保留以防万一 */
 .table-container {
   flex: 1;
   overflow-y: auto;
@@ -2136,7 +2258,31 @@ body {
   color: var(--text-secondary);
 }
 
-/* ==================== Pagination ==================== */
+/* ==================== 无限滚动 - 哨兵和加载更多 ==================== */
+.sentinel-row {
+  background: none !important;
+}
+
+.sentinel-row:hover {
+  background: none !important;
+}
+
+.load-more-sentinel {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.load-more-spinner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* ==================== Pagination (已弃用，保留样式以防万一) ==================== */
 .pagination {
   display: flex;
   align-items: center;
