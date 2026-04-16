@@ -165,9 +165,9 @@ export class MockSyncService implements SyncService {
 
         if (searchResult.type === 'exact' && searchResult.result) {
           foundCount++
-          albums.push(this.csvToNeteaseAlbum(album, searchResult.result.id))
+          albums.push(this.csvToNeteaseAlbum(album, searchResult.result.id, searchResult.result.originalId))
           console.log(
-            `[CsvSyncService] 精确匹配: "${album.title}" -> "${searchResult.result.name}" (ID: ${searchResult.result.id})`
+            `[CsvSyncService] 精确匹配: "${album.title}" -> "${searchResult.result.name}" (ID: ${searchResult.result.id}, originalId: ${searchResult.result.originalId})`
           )
         } else if (searchResult.type === 'fuzzy' && searchResult.result) {
           // 模糊匹配需要用户确认
@@ -232,9 +232,10 @@ export class MockSyncService implements SyncService {
   /**
    * 将 CSV 专辑转换为 NeteaseAlbum 格式
    */
-  private csvToNeteaseAlbum(album: CsvAlbum, neteaseId: string): NeteaseAlbum {
+  private csvToNeteaseAlbum(album: CsvAlbum, neteaseId: string, originalId?: number): NeteaseAlbum {
     return {
       netease_album_id: neteaseId,
+      netease_original_id: originalId,
       title: album.title,
       artist: album.artist,
       cover_url: undefined,

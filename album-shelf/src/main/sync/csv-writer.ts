@@ -1,6 +1,7 @@
 import { parse } from 'csv-parse/sync'
 import { stringify } from 'csv-stringify/sync'
-import { readFileSync, writeFileSync, copyFileSync, existsSync } from 'fs'
+import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync } from 'fs'
+import { dirname } from 'path'
 import { getCsvPath } from './csv-reader'
 
 export interface AlbumWithNeteaseId {
@@ -127,4 +128,65 @@ export function updateAlbumTitleInCsv(
   writeFileSync(filePath, output, 'utf-8')
 
   console.log(`CSV 已更新专辑名: "${originalTitle}" -> "${newTitle}"`)
+}
+
+/**
+ * 追加单张专辑到 CSV 文件
+ * 用于搜索添加场景
+ * @param album 要追加的专辑信息
+ * @param csvPath 可选的 CSV 文件路径
+ */
+export function appendAlbumToCsv(
+  album: AlbumWithNeteaseId,
+  csvPath?: string
+): void {
+  const filePath = csvPath || getCsvPath()
+
+  // 如果文件不存在，创建带表头的新文件
+  if (!existsSync(filePath)) {
+    // 确保目录存在
+    const dir = dirname(filePath)
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true })
+    }
+
+    // 创建带表头的新 CSV 文件
+    const output = stringify([album], {
+      header: true,
+      columns: ['title', 'artist', 'netease_id']
+    })
+    writeFileSync(filePath, output, 'utf-8')
+    console.log(`CSV 文件已创建: ${filePath}`)
+    return
+  }
+
+  // 备份原文件
+  const backupPath = filePath + '.bak'
+  copyFileSync(filePath, backupPath)
+
+  // 读取现有 CSV
+  const content = readFileSync(filePath, 'utf-8')
+  const records = parse(content, {
+    columns: true,
+    skip_empty_lines: true,
+    trim: true
+  }) as Array<{ title: string; artist: string; netease_id: string }>
+
+  // 追加新记录
+  records.push({
+    title: album.title,
+    artist: album.artist,
+    netease_id: album.netease_id
+  })
+
+  // 写回 CSV
+  const output = stringify(records, {
+    header: true,
+    columns: ['title', 'artist', 'netease_id']
+  })
+
+  writeFileSync(filePath, output, 'utf-8')
+
+  console.log(`CSV 已追加专辑: "${album.title}" - ${album.artist}`)
+  console.log(`备份文件: ${backupPath}`)
 }

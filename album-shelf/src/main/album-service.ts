@@ -363,4 +363,22 @@ export class AlbumService {
       .all(albumId) as { name: string }[]
     return rows.map((r) => r.name)
   }
+
+  /**
+   * Get all collected netease IDs for duplicate detection.
+   * Returns both original IDs and encrypted album IDs.
+   */
+  getCollectedNeteaseIds(): { originalIds: number[], albumIds: string[] } {
+    const rows = this.db
+      .prepare('SELECT netease_original_id, netease_album_id FROM album')
+      .all() as { netease_original_id: number | null, netease_album_id: string }[]
+    
+    const originalIds = rows
+      .filter((r) => r.netease_original_id !== null)
+      .map((r) => r.netease_original_id as number)
+    
+    const albumIds = rows.map((r) => r.netease_album_id)
+    
+    return { originalIds, albumIds }
+  }
 }

@@ -88,6 +88,33 @@ interface IpcResult<T = void> {
   success: boolean
   data?: T
   error?: string
+  loginRequired?: boolean
+}
+
+/** 搜索结果中的专辑 */
+interface NcmSearchAlbum {
+  originalId: number
+  id: string
+  name: string
+  language: string
+  coverImgUrl: string | null
+  company: string | null
+  transName: string | null
+  aliaName: string
+  genre: string
+  artists: { originalId: number; id: string; name: string; coverImgUrl: string | null }[]
+  briefDesc: string
+  description: string
+  publishTime: number
+}
+
+/** 添加专辑请求 */
+interface AddAlbumRequest {
+  netease_album_id: string
+  netease_original_id: number
+  title: string
+  artist: string
+  cover_url?: string | null
 }
 
 interface AlbumShelfAPI {
@@ -139,6 +166,11 @@ interface AlbumShelfAPI {
   onMenuOpenLogin: (callback: () => void) => () => void
   onAutoSync: (callback: () => void) => () => void
   onMenuSyncAlbums: (callback: () => void) => () => void
+
+  // 在线搜索
+  albumSearchOnline: (keyword: string) => Promise<IpcResult<NcmSearchAlbum[]>>
+  albumAddToCollection: (album: AddAlbumRequest) => Promise<IpcResult<{ albumId: number }>>
+  albumGetCollectedNeteaseIds: () => Promise<IpcResult<{ originalIds: number[], albumIds: string[] }>>
 }
 
 declare global {

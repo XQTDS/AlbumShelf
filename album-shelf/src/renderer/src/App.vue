@@ -4,6 +4,9 @@
     <header class="toolbar">
       <div class="toolbar-left">
         <h1 class="logo">📀 AlbumShelf</h1>
+        <button class="search-online-btn" @click="showSearchModal = true" title="搜索网易云音乐专辑">
+          🔍 搜索专辑
+        </button>
       </div>
       <div class="toolbar-center">
         <div class="search-box">
@@ -388,6 +391,13 @@
       @close="showFuzzyMatchModal = false"
       @confirmed="handleFuzzyMatchConfirmed"
     />
+
+    <!-- 在线搜索弹窗 -->
+    <AlbumSearchModal
+      :visible="showSearchModal"
+      @close="showSearchModal = false"
+      @added="handleSearchAlbumAdded"
+    />
   </div>
 </template>
 
@@ -397,6 +407,7 @@ import LoginModal from './LoginModal.vue'
 import LoginGuideModal from './LoginGuideModal.vue'
 import FuzzyMatchModal from './FuzzyMatchModal.vue'
 import ScrollProgressBar from './ScrollProgressBar.vue'
+import AlbumSearchModal from './AlbumSearchModal.vue'
 
 // ==================== 状态 ====================
 
@@ -432,6 +443,9 @@ interface FuzzyMatch {
 }
 const showFuzzyMatchModal = ref(false)
 const pendingFuzzyMatches = ref<FuzzyMatch[]>([])
+
+// 在线搜索弹窗
+const showSearchModal = ref(false)
 
 // 展开详情
 const expandedAlbumId = ref<number | null>(null)
@@ -1034,6 +1048,14 @@ async function handleFuzzyMatchConfirmed(count: number) {
   }
 }
 
+// 处理搜索添加专辑
+async function handleSearchAlbumAdded() {
+  showMessage('专辑已添加到收藏', 'success')
+  // 刷新数据
+  await fetchFilters()
+  await fetchAlbums()
+}
+
 // ==================== 消息提示 ====================
 
 function showMessage(msg: string, type: 'success' | 'error' | 'info' = 'info') {
@@ -1253,6 +1275,9 @@ body {
 
 .toolbar-left {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .logo {
@@ -1260,6 +1285,24 @@ body {
   font-weight: 700;
   color: var(--primary);
   user-select: none;
+}
+
+.search-online-btn {
+  padding: 6px 12px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.search-online-btn:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
 }
 
 .toolbar-center {

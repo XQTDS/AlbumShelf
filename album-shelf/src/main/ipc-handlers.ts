@@ -549,6 +549,74 @@ export function registerIpcHandlers(): void {
       return { success: false, error: (error as Error).message }
     }
   })
+
+  // ==================== 在线搜索 ====================
+
+  /**
+   * 在线搜索专辑（通过 ncm-cli 搜索网易云音乐）
+   */
+  ipcMain.handle('album:searchOnline', async (_event, keyword: string) => {
+    try {
+      if (!keyword || keyword.trim().length === 0) {
+        return { success: false, error: '请输入搜索关键词' }
+      }
+      const results = await ncmCliService.searchAlbum(keyword.trim(), 10)
+      return { success: true, data: results }
+    } catch (error) {
+      // 检查是否需要登录
+      if (error instanceof NcmLoginRequiredError) {
+        return { success: false, error: '请先登录网易云音乐账号', loginRequired: true }
+      }
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 添加专辑到收藏（写入 CSV + 同步到数据库 + 自动补全）
+   */
+  ipcMain.handle('album:addToCollection', async (_event, album: {
+    netease_album_id: string
+    netease_original_id: number
+    title: string
+    artist: string
+    cover_url?: string | null
+  }) => {
+    try {
+      // 1. 追加到 CSV 并同步到数据库
+      const albumId = syncManager.addAlbumToCollection(album)
+
+      // 2. 自动触发 MusicBrainz 补全（如果客户端可用）
+      if (isMbClientInitialized()) {
+        try {
+          ensureMbClient()
+          const freshAlbum = albumService.getAlbumById(albumId)
+          if (freshAlbum) {
+            await enrichService.enrichAlbum(freshAlbum)
+          }
+        } catch (enrichError) {
+          console.error(`[IPC] 补全专辑失败 (albumId: ${albumId}):`, enrichError)
+          // 补全失败不影响添加结果
+        }
+      }
+
+      return { success: true, data: { albumId } }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 获取已收藏专辑的 ID 列表（用于重复检测）
+   * 返回 originalIds 和 albumIds 两种 ID
+   */
+  ipcMain.handle('album:getCollectedNeteaseIds', async () => {
+    try {
+      const result = albumService.getCollectedNeteaseIds()
+      return { success: true, data: result }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
 }
 
 /**

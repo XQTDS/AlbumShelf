@@ -1,6 +1,6 @@
 import { SyncService, FuzzyMatchAlbum } from './sync-service'
 import { AlbumService, AlbumInsert } from '../album-service'
-import { writeNeteaseIdsToCsv, updateAlbumTitleInCsv, AlbumWithNeteaseId } from './csv-writer'
+import { writeNeteaseIdsToCsv, updateAlbumTitleInCsv, appendAlbumToCsv, AlbumWithNeteaseId } from './csv-writer'
 
 export interface SyncResult {
   /** 本次同步新增的专辑数量 */
@@ -181,5 +181,59 @@ export class SyncManager {
    */
   get syncing(): boolean {
     return this.isSyncing
+  }
+
+  /**
+   * 同步单张专辑到数据库
+   * 用于搜索添加场景，直接传入专辑信息写入数据库
+   * @param album 专辑信息
+   * @returns 新增的专辑 ID，如果已存在则返回已有 ID
+   */
+  syncSingleAlbum(album: {
+    netease_album_id: string
+    netease_original_id: number
+    title: string
+    artist: string
+    cover_url?: string | null
+  }): number {
+    const now = new Date().toISOString()
+
+    // 写入数据库（insertAlbum 会自动去重）
+    const albumId = this.albumService.insertAlbum({
+      netease_album_id: album.netease_album_id,
+      netease_original_id: album.netease_original_id,
+      title: album.title,
+      artist: album.artist,
+      cover_url: album.cover_url ?? null,
+      release_date: null,
+      track_count: null,
+      synced_at: now
+    })
+
+    return albumId
+  }
+
+  /**
+   * 追加专辑到 CSV 并同步到数据库
+   * 用于搜索添加场景的完整流程
+   * @param album 专辑信息
+   * @returns 新增的专辑 ID
+   */
+  addAlbumToCollection(album: {
+    netease_album_id: string
+    netease_original_id: number
+    title: string
+    artist: string
+    cover_url?: string | null
+  }): number {
+    // 1. 追加到 CSV 文件
+    appendAlbumToCsv({
+      title: album.title,
+      artist: album.artist,
+      netease_id: album.netease_album_id
+    })
+
+    // 2. 同步到数据库
+    return this.syncSingleAlbum(album)
   }
 }

@@ -139,7 +139,26 @@ const albumShelfAPI = {
     const handler = () => callback()
     ipcRenderer.on('menu:syncAlbums', handler)
     return () => ipcRenderer.removeListener('menu:syncAlbums', handler)
-  }
+  },
+
+  // ==================== 在线搜索 ====================
+
+  // 在线搜索专辑
+  albumSearchOnline: (keyword: string) =>
+    ipcRenderer.invoke('album:searchOnline', keyword),
+
+  // 添加专辑到收藏
+  albumAddToCollection: (album: {
+    netease_album_id: string
+    netease_original_id: number
+    title: string
+    artist: string
+    cover_url?: string | null
+  }) => ipcRenderer.invoke('album:addToCollection', album),
+
+  // 获取已收藏专辑的网易云 ID 列表（用于重复检测）
+  albumGetCollectedNeteaseIds: () =>
+    ipcRenderer.invoke('album:getCollectedNeteaseIds')
 }
 
 // Expose APIs to renderer via contextBridge
