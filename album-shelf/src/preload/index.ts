@@ -3,9 +3,21 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 // ==================== AlbumShelf API ====================
 
+/** 模糊匹配确认项 */
+interface ConfirmedFuzzyMatch {
+  originalTitle: string
+  matchedTitle: string
+  artist: string
+  neteaseId: string
+}
+
 const albumShelfAPI = {
   // 同步操作
   syncStart: () => ipcRenderer.invoke('sync:start'),
+
+  // 确认模糊匹配
+  syncConfirmFuzzyMatches: (confirmedMatches: ConfirmedFuzzyMatch[]) =>
+    ipcRenderer.invoke('sync:confirmFuzzyMatches', confirmedMatches),
 
   // 专辑查询
   albumList: (options: {

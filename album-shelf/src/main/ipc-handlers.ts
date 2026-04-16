@@ -55,7 +55,7 @@ export function registerIpcHandlers(): void {
 
   /**
    * 触发同步操作
-   * 返回同步结果统计
+   * 返回同步结果统计（包含待确认的模糊匹配列表）
    */
   ipcMain.handle('sync:start', async () => {
     try {
@@ -71,6 +71,33 @@ export function registerIpcHandlers(): void {
       }
 
       return { success: true, data: result }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 确认模糊匹配的专辑
+   * 用户确认后将专辑写入数据库并更新 CSV
+   */
+  ipcMain.handle('sync:confirmFuzzyMatches', async (_event, confirmedMatches: Array<{
+    originalTitle: string
+    matchedTitle: string
+    artist: string
+    neteaseId: string
+  }>) => {
+    try {
+      const addedCount = await syncManager.confirmFuzzyMatches(confirmedMatches)
+
+      // 如果有新增专辑且 MB 客户端已初始化，自动触发补全
+      if (addedCount > 0 && isMbClientInitialized()) {
+        const mainWindow = BrowserWindow.getAllWindows()[0]
+        enrichAll(mainWindow).catch((err) =>
+          console.error('自动补全失败:', err)
+        )
+      }
+
+      return { success: true, data: { added: addedCount } }
     } catch (error) {
       return { success: false, error: (error as Error).message }
     }

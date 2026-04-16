@@ -372,6 +372,14 @@
       @login="handleLoginGuideLogin"
       @later="showLoginGuide = false"
     />
+
+    <!-- 模糊匹配确认弹窗 -->
+    <FuzzyMatchModal
+      :visible="showFuzzyMatchModal"
+      :fuzzyMatches="pendingFuzzyMatches"
+      @close="showFuzzyMatchModal = false"
+      @confirmed="handleFuzzyMatchConfirmed"
+    />
   </div>
 </template>
 
@@ -379,6 +387,7 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import LoginModal from './LoginModal.vue'
 import LoginGuideModal from './LoginGuideModal.vue'
+import FuzzyMatchModal from './FuzzyMatchModal.vue'
 
 // ==================== 状态 ====================
 
@@ -403,6 +412,17 @@ interface Album {
 const albums = ref<Album[]>([])
 const loading = ref(true)
 const syncing = ref(false)
+
+// 模糊匹配确认弹窗
+interface FuzzyMatch {
+  originalTitle: string
+  matchedTitle: string
+  artist: string
+  neteaseId: string
+  similarity: number
+}
+const showFuzzyMatchModal = ref(false)
+const pendingFuzzyMatches = ref<FuzzyMatch[]>([])
 
 // 展开详情
 const expandedAlbumId = ref<number | null>(null)
@@ -892,7 +912,7 @@ async function handleSync() {
   try {
     const result = await window.api.syncStart()
     if (result.success && result.data) {
-      const { added, skipped, total } = result.data
+      const { added, skipped, total, fuzzyMatches } = result.data
       if (added > 0) {
         showMessage(`同步完成！新增 ${added} 张专辑，跳过 ${skipped} 张已存在`, 'success')
       } else {
@@ -901,6 +921,12 @@ async function handleSync() {
       // 刷新数据
       await fetchFilters()
       await fetchAlbums()
+
+      // 如果有模糊匹配的专辑，显示确认弹窗
+      if (fuzzyMatches && fuzzyMatches.length > 0) {
+        pendingFuzzyMatches.value = fuzzyMatches
+        showFuzzyMatchModal.value = true
+      }
     } else {
       showMessage(`同步失败：${result.error}`, 'error')
     }
@@ -908,6 +934,16 @@ async function handleSync() {
     showMessage('同步失败：网络错误', 'error')
   } finally {
     syncing.value = false
+  }
+}
+
+// 处理模糊匹配确认
+async function handleFuzzyMatchConfirmed(count: number) {
+  if (count > 0) {
+    showMessage(`已确认并添加 ${count} 张专辑`, 'success')
+    // 刷新数据
+    await fetchFilters()
+    await fetchAlbums()
   }
 }
 

@@ -19,6 +19,32 @@ export interface NeteaseAlbum {
 }
 
 /**
+ * 模糊匹配的专辑信息，需要用户确认
+ */
+export interface FuzzyMatchAlbum {
+  /** CSV 中的原始专辑名 */
+  originalTitle: string
+  /** 网易云返回的专辑名 */
+  matchedTitle: string
+  /** 艺术家名 */
+  artist: string
+  /** 网易云专辑 ID */
+  neteaseId: string
+  /** 相似度百分比 */
+  similarity: number
+}
+
+/**
+ * 同步结果（包含专辑列表和待确认的模糊匹配）
+ */
+export interface SyncFetchResult {
+  /** 已确认的专辑列表 */
+  albums: NeteaseAlbum[]
+  /** 需要用户确认的模糊匹配专辑 */
+  fuzzyMatches: FuzzyMatchAlbum[]
+}
+
+/**
  * SyncService 抽象接口
  *
  * 定义从网易云音乐获取收藏专辑的通用接口。
@@ -26,7 +52,7 @@ export interface NeteaseAlbum {
  */
 export interface SyncService {
   /** 获取用户收藏的专辑列表 */
-  fetchCollectedAlbums(): Promise<NeteaseAlbum[]>
+  fetchCollectedAlbums(): Promise<SyncFetchResult>
   /** 检查登录状态 */
   checkLoginStatus(): Promise<boolean>
 }
