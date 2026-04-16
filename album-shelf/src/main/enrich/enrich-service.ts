@@ -139,13 +139,24 @@ export class EnrichService {
     const mbApi = getMbClient()
 
     try {
-      // 搜索 Release Group
-      const searchResult = await mbApi.search('release-group', {
-        query: { releasegroup: title, artist: artist },
-        limit: 10
-      })
+      // 构建搜索查询列表，按优先级依次尝试
+      const queries = this.buildSearchQueries(title, artist)
 
-      const releaseGroups = searchResult['release-groups']
+      let releaseGroups: IReleaseGroupMatch[] | null = null
+
+      for (const query of queries) {
+        const searchResult = await mbApi.search('release-group', {
+          query,
+          limit: 10
+        })
+
+        const groups = (searchResult['release-groups'] as IReleaseGroupMatch[] | undefined)
+        if (groups && groups.length > 0) {
+          releaseGroups = groups
+          break
+        }
+      }
+
       if (!releaseGroups || releaseGroups.length === 0) {
         return null
       }
@@ -189,6 +200,50 @@ export class EnrichService {
       console.error(`MusicBrainz 匹配失败 [${title} - ${artist}]:`, error)
       return null
     }
+  }
+
+  /**
+   * 构建搜索查询列表，按优先级排列。
+   *
+   * 问题背景：
+   *   - MusicBrainz 的 Lucene 搜索对 artist 字段做短语精确匹配，
+   *     当 artist 包含多个艺术家（如 "潘越云 齐豫"）时，
+   *     artist:"潘越云 齐豫" 会匹配不到（MB 中是两个独立 artist-credit）。
+   *   - 中文简繁体差异（如 "回声" vs "回聲"）也会导致标题匹配失败。
+   *
+   * 策略：
+   *   1. 完整标题 + 完整艺术家（原逻辑，适用于大多数情况）
+   *   2. 完整标题 + 第一个艺术家（处理多艺术家场景）
+   *   3. 标题首词 + 第一个艺术家（处理简繁体/标点差异导致标题匹配失败的场景）
+   *
+   * @param title 专辑名
+   * @param artist 艺术家名（可能包含多个艺术家，空格分隔）
+   */
+  buildSearchQueries(title: string, artist: string): string[] {
+    const queries: string[] = []
+
+    // 策略 1: 完整标题 + 完整艺术家（原逻辑）
+    queries.push(`releasegroup:"${title}" AND artist:"${artist}"`)
+
+    // 检测是否为多艺术家（空格分隔且不止一个词）
+    const artistParts = artist.split(/\s+/).filter(Boolean)
+
+    if (artistParts.length > 1) {
+      // 策略 2: 完整标题 + 第一个艺术家
+      queries.push(`releasegroup:"${title}" AND artist:"${artistParts[0]}"`)
+    }
+
+    // 提取标题首词（以空格或中文标点为分隔）
+    // 匹配连续的 CJK 字符或连续的非空格非标点字符
+    const titleFirstWordMatch = title.match(/^[\u4e00-\u9fff\u3400-\u4dbf\w]+/)
+    const titleFirstWord = titleFirstWordMatch ? titleFirstWordMatch[0] : null
+
+    if (titleFirstWord && titleFirstWord !== title) {
+      // 策略 3: 标题首词 + 第一个艺术家
+      queries.push(`releasegroup:"${titleFirstWord}" AND artist:"${artistParts[0]}"`)
+    }
+
+    return queries
   }
 
   /**
