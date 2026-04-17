@@ -387,6 +387,59 @@ export class EnrichService {
   }
 
   /**
+   * 补全所有缺失风格标签的专辑：针对已补全过但风格标签为空的专辑重新补全。
+   *
+   * @param onProgress 进度回调函数，每处理完一个专辑调用一次
+   * @returns 补全结果统计
+   */
+  async enrichAlbumsWithoutGenres(
+    onProgress?: (progress: EnrichProgress) => void
+  ): Promise<{ matched: number; failed: number; total: number }> {
+    if (this.isEnriching) {
+      throw new Error('数据补全正在进行中，请勿重复触发。')
+    }
+
+    this.isEnriching = true
+
+    try {
+      const albumsWithoutGenres = this.albumService.getAlbumsWithoutGenres()
+      const total = albumsWithoutGenres.length
+
+      if (total === 0) {
+        return { matched: 0, failed: 0, total: 0 }
+      }
+
+      let matched = 0
+      let failed = 0
+
+      for (let i = 0; i < albumsWithoutGenres.length; i++) {
+        const album = albumsWithoutGenres[i]
+        const success = await this.enrichAlbum(album)
+
+        if (success) {
+          matched++
+        } else {
+          failed++
+        }
+
+        // 进度回调
+        if (onProgress) {
+          onProgress({
+            current: i + 1,
+            total,
+            albumTitle: album.title,
+            matched: success
+          })
+        }
+      }
+
+      return { matched, failed, total }
+    } finally {
+      this.isEnriching = false
+    }
+  }
+
+  /**
    * 是否正在补全
    */
   get enriching(): boolean {

@@ -114,16 +114,16 @@
             <th class="col-index">#</th>
             <th class="col-title">专辑</th>
             <th class="col-artist">艺术家</th>
-            <th class="col-user-rating sortable" @click="toggleSort('user_rating')">
+            <th class="col-user-rating sortable" @click="toggleSort('user_rating')" @contextmenu.prevent="cancelSort('user_rating')">
               我的评分
               <span class="sort-arrow" v-if="sortBy === 'user_rating'">{{ sortOrder === 'desc' ? '▼' : '▲' }}</span>
             </th>
-            <th class="col-mb-rating sortable" @click="toggleSort('mb_rating')">
+            <th class="col-mb-rating sortable" @click="toggleSort('mb_rating')" @contextmenu.prevent="cancelSort('mb_rating')">
               MB评分
               <span class="sort-arrow" v-if="sortBy === 'mb_rating'">{{ sortOrder === 'desc' ? '▼' : '▲' }}</span>
             </th>
             <th class="col-genre">风格</th>
-            <th class="col-date sortable" @click="toggleSort('release_date')">
+            <th class="col-date sortable" @click="toggleSort('release_date')" @contextmenu.prevent="cancelSort('release_date')">
               发行日期
               <span class="sort-arrow" v-if="sortBy === 'release_date'">{{ sortOrder === 'desc' ? '▼' : '▲' }}</span>
             </th>
@@ -947,6 +947,15 @@ function toggleSort(field: 'mb_rating' | 'release_date' | 'user_rating') {
   resetAndFetch()
 }
 
+function cancelSort(field: 'mb_rating' | 'release_date' | 'user_rating') {
+  // 右键点击排序列头：如果当前正在按此列排序，则取消排序
+  if (sortBy.value === field) {
+    sortBy.value = undefined
+    sortOrder.value = 'desc'
+    resetAndFetch()
+  }
+}
+
 // ==================== 滚动进度条处理 ====================
 
 function handleScrollSeek(scrollTop: number) {
@@ -1093,6 +1102,29 @@ function setupProgressListener() {
   })
 }
 
+// ==================== 补全缺失风格标签的专辑 ====================
+
+let removeMenuEnrichAlbumsWithoutGenresListener: (() => void) | null = null
+
+async function handleEnrichAlbumsWithoutGenres() {
+  if (enrichProgress.value) {
+    showMessage('补全正在进行中，请等待完成', 'info')
+    return
+  }
+
+  showMessage('正在补全缺失风格标签的专辑...', 'info')
+
+  try {
+    const result = await window.api.enrichAlbumsWithoutGenres()
+    if (!result.success) {
+      showMessage(`补全失败：${result.error}`, 'error')
+    }
+    // 进度和完成提示由 onEnrichProgress 回调处理
+  } catch (error) {
+    showMessage('补全失败：未知错误', 'error')
+  }
+}
+
 // ==================== 重新补全所有 ====================
 
 let removeMenuReEnrichListener: (() => void) | null = null
@@ -1145,6 +1177,11 @@ onMounted(async () => {
   
   // 设置无限滚动的 IntersectionObserver
   setupIntersectionObserver()
+
+  // 监听菜单栏"补全缺失风格标签的专辑"事件
+  removeMenuEnrichAlbumsWithoutGenresListener = window.api.onMenuEnrichAlbumsWithoutGenres(() => {
+    handleEnrichAlbumsWithoutGenres()
+  })
 
   // 监听菜单栏"重新补全所有专辑"事件
   removeMenuReEnrichListener = window.api.onMenuReEnrichAll(() => {
@@ -1199,6 +1236,9 @@ onUnmounted(() => {
   
   if (removeProgressListener) {
     removeProgressListener()
+  }
+  if (removeMenuEnrichAlbumsWithoutGenresListener) {
+    removeMenuEnrichAlbumsWithoutGenresListener()
   }
   if (removeMenuReEnrichListener) {
     removeMenuReEnrichListener()

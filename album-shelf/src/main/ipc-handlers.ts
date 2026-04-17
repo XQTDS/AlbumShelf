@@ -442,6 +442,21 @@ export function registerIpcHandlers(): void {
   })
 
   /**
+   * 补全所有缺失风格标签的专辑
+   */
+  ipcMain.handle('enrich:enrichAlbumsWithoutGenres', async (event) => {
+    try {
+      ensureMbClient()
+
+      const mainWindow = BrowserWindow.fromWebContents(event.sender)
+      const result = await enrichAlbumsWithoutGenres(mainWindow)
+      return { success: true, data: result }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
    * 重新补全所有专辑（重置后全部重新匹配）
    */
   ipcMain.handle('enrich:reEnrichAll', async (event) => {
@@ -638,6 +653,18 @@ function ensureMbClient(): void {
  */
 async function enrichAll(mainWindow: BrowserWindow | null) {
   const result = await enrichService.enrichAll((progress) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('enrich:progress', progress)
+    }
+  })
+  return result
+}
+
+/**
+ * 补全所有缺失风格标签的专辑，发送进度到渲染进程
+ */
+async function enrichAlbumsWithoutGenres(mainWindow: BrowserWindow | null) {
+  const result = await enrichService.enrichAlbumsWithoutGenres((progress) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('enrich:progress', progress)
     }

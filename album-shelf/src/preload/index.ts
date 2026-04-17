@@ -55,6 +55,7 @@ const albumShelfAPI = {
   // 数据补全
   enrichStatus: () => ipcRenderer.invoke('enrich:status'),
   enrichStart: () => ipcRenderer.invoke('enrich:start'),
+  enrichAlbumsWithoutGenres: () => ipcRenderer.invoke('enrich:enrichAlbumsWithoutGenres'),
   enrichReEnrichAll: () => ipcRenderer.invoke('enrich:reEnrichAll'),
 
   // 补全进度监听
@@ -81,6 +82,12 @@ const albumShelfAPI = {
   mbClearCredentials: () => ipcRenderer.invoke('mb:clearCredentials'),
 
   // 菜单事件监听
+  onMenuEnrichAlbumsWithoutGenres: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:enrichAlbumsWithoutGenres', handler)
+    return () => ipcRenderer.removeListener('menu:enrichAlbumsWithoutGenres', handler)
+  },
+
   onMenuReEnrichAll: (callback: () => void) => {
     const handler = () => callback()
     ipcRenderer.on('menu:reEnrichAll', handler)

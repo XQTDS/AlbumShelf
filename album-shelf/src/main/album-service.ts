@@ -225,20 +225,20 @@ export class AlbumService {
     const countSql = `SELECT COUNT(DISTINCT a.id) as total FROM album a ${whereClause}`
     const { total } = this.db.prepare(countSql).get(params) as { total: number }
 
-    // Sort clause
-    let orderClause = 'ORDER BY a.created_at DESC'
+    // Sort clause (with id DESC as secondary sort key)
+    let orderClause = 'ORDER BY a.id DESC'
     if (sortBy === 'mb_rating') {
       // Null ratings go last
       const dir = sortOrder === 'asc' ? 'ASC' : 'DESC'
-      orderClause = `ORDER BY CASE WHEN a.mb_rating IS NULL THEN 1 ELSE 0 END, a.mb_rating ${dir}`
+      orderClause = `ORDER BY CASE WHEN a.mb_rating IS NULL THEN 1 ELSE 0 END, a.mb_rating ${dir}, a.id DESC`
     } else if (sortBy === 'release_date') {
       // Null dates go last
       const dir = sortOrder === 'asc' ? 'ASC' : 'DESC'
-      orderClause = `ORDER BY CASE WHEN a.release_date IS NULL THEN 1 ELSE 0 END, a.release_date ${dir}`
+      orderClause = `ORDER BY CASE WHEN a.release_date IS NULL THEN 1 ELSE 0 END, a.release_date ${dir}, a.id DESC`
     } else if (sortBy === 'user_rating') {
       // Null user ratings go last
       const dir = sortOrder === 'asc' ? 'ASC' : 'DESC'
-      orderClause = `ORDER BY CASE WHEN a.user_rating IS NULL THEN 1 ELSE 0 END, a.user_rating ${dir}`
+      orderClause = `ORDER BY CASE WHEN a.user_rating IS NULL THEN 1 ELSE 0 END, a.user_rating ${dir}, a.id DESC`
     }
 
     // Pagination
@@ -297,6 +297,25 @@ export class AlbumService {
   getUnenrichedAlbums(): Album[] {
     const rows = this.db
       .prepare('SELECT * FROM album WHERE enriched_at IS NULL ORDER BY id')
+      .all() as Album[]
+    return rows
+  }
+
+  /**
+   * Get albums without genres (风格标签缺失的专辑).
+   * 这些是已经尝试补全过，但没有获得任何风格标签的专辑。
+   * 按 id 倒序排列，最新收藏的在前面。
+   */
+  getAlbumsWithoutGenres(): Album[] {
+    const rows = this.db
+      .prepare(`
+        SELECT a.* FROM album a
+        WHERE a.enriched_at IS NOT NULL 
+          AND a.id NOT IN (
+            SELECT DISTINCT album_id FROM album_genre
+          )
+        ORDER BY a.id DESC
+      `)
       .all() as Album[]
     return rows
   }
