@@ -1,6 +1,8 @@
 import { getMbClient } from './mb-client'
 import { AlbumService, Album } from '../album-service'
 import type { IReleaseGroupMatch, IRating } from 'musicbrainz-api'
+import { getAliases, addAlias } from './artist-alias'
+import { getEnrichStrategies, type EnrichStrategies } from './settings'
 
 /**
  * MusicBrainz Genre 条目（官方审核的风格分类）
@@ -31,6 +33,34 @@ export interface MbMatchResult {
 }
 
 /**
+ * 模糊匹配候选（仅含搜索信息，不含 rating/genres，推迟到用户确认后获取）
+ */
+export interface MbFuzzyCandidate {
+  /** MusicBrainz Release Group MBID */
+  mbid: string
+  /** MB 上的标题 */
+  mbTitle: string
+  /** MB 上的艺术家信用 */
+  mbArtist: string
+  /** 匹配分数 (0-100) */
+  score: number
+  /** 首次发行日期 */
+  releaseDate: string | null
+}
+
+/**
+ * 模糊匹配回调类型：由调用方实现，用于逐条确认
+ *
+ * @param album 当前专辑
+ * @param candidates 候选列表
+ * @returns 用户选择的候选 mbid，或 null 表示拒绝
+ */
+export type OnFuzzyMatchCallback = (
+  album: Album,
+  candidates: MbFuzzyCandidate[]
+) => Promise<{ mbid: string } | null>
+
+/**
  * 补全进度信息
  */
 export interface EnrichProgress {
@@ -42,6 +72,27 @@ export interface EnrichProgress {
   albumTitle: string
   /** 当前专辑是否匹配成功 */
   matched: boolean
+}
+
+/**
+ * 补全结果统计
+ */
+export interface EnrichResult {
+  /** 精确匹配成功数 */
+  matched: number
+  /** 完全失败数 */
+  failed: number
+  /** 用户确认的模糊匹配数 */
+  confirmed: number
+  /** 总数 */
+  total: number
+}
+
+/**
+ * 转义正则表达式特殊字符
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 /**
@@ -221,72 +272,313 @@ export class EnrichService {
    */
   buildSearchQueries(title: string, artist: string): string[] {
     const queries: string[] = []
-
-    // 策略 1: 完整标题 + 完整艺术家（原逻辑）
-    queries.push(`releasegroup:"${title}" AND artist:"${artist}"`)
+    const strategies = getEnrichStrategies()
+    const aliases = getAliases(artist)
+    const allArtists = [artist, ...aliases]
 
     // 检测是否为多艺术家（空格分隔且不止一个词）
     const artistParts = artist.split(/\s+/).filter(Boolean)
-
-    if (artistParts.length > 1) {
-      // 策略 2: 完整标题 + 第一个艺术家
-      queries.push(`releasegroup:"${title}" AND artist:"${artistParts[0]}"`)
-    }
 
     // 提取标题首词（以空格或中文标点为分隔）
     // 匹配连续的 CJK 字符或连续的非空格非标点字符
     const titleFirstWordMatch = title.match(/^[\u4e00-\u9fff\u3400-\u4dbf\w]+/)
     const titleFirstWord = titleFirstWordMatch ? titleFirstWordMatch[0] : null
 
-    if (titleFirstWord && titleFirstWord !== title) {
-      // 策略 3: 标题首词 + 第一个艺术家
-      queries.push(`releasegroup:"${titleFirstWord}" AND artist:"${artistParts[0]}"`)
+    // Q1: 完整标题 + 完整艺术家（B-2 优先级：同策略内先原名后别名）
+    if (strategies.Q1_fullTitleFullArtist) {
+      for (const a of allArtists) {
+        queries.push(`releasegroup:"${title}" AND artist:"${a}"`)
+      }
     }
 
-    return queries
+    // Q2: 完整标题 + 第一个艺术家
+    if (strategies.Q2_fullTitleFirstArtist && artistParts.length > 1) {
+      // 原名取第一个词
+      queries.push(`releasegroup:"${title}" AND artist:"${artistParts[0]}"`)
+      // 别名各自作为完整艺术家名使用（别名本身就是单个艺术家名）
+      for (const alias of aliases) {
+        queries.push(`releasegroup:"${title}" AND artist:"${alias}"`)
+      }
+    }
+
+    // Q3: 标题首词 + 第一个艺术家
+    if (strategies.Q3_titleFirstWordFirstArtist && titleFirstWord && titleFirstWord !== title) {
+      queries.push(`releasegroup:"${titleFirstWord}" AND artist:"${artistParts[0]}"`)
+      for (const alias of aliases) {
+        queries.push(`releasegroup:"${titleFirstWord}" AND artist:"${alias}"`)
+      }
+    }
+
+    // 去除重复查询
+    return [...new Set(queries)]
+  }
+
+  /**
+   * 构建模糊查询列表，按优先级排列。
+   *
+   * 仅在精确匹配完全失败时调用。
+   *
+   * 策略：
+   *   F1. 去除标题中的艺术家名前缀后搜索
+   *   F2. 去除标题末尾的括号后缀后搜索
+   *   F3. Lucene 分词搜索（去掉 releasegroup 字段的引号）
+   *
+   * @param title 专辑名
+   * @param artist 艺术家名
+   */
+  buildFuzzyQueries(title: string, artist: string): string[] {
+    const queries: string[] = []
+    const strategies = getEnrichStrategies()
+    const aliases = getAliases(artist)
+    const artistParts = artist.split(/\s+/).filter(Boolean)
+    const primaryArtist = artistParts[0]
+
+    // F1: 去除标题中的艺术家名前缀（B-2 优先级：同策略内先原名后别名）
+    if (strategies.F1_removeArtistPrefix) {
+      // 匹配 "Tim Berne's Fractured Fairy Tales" → "Fractured Fairy Tales"
+      const artistPrefixPattern = new RegExp(
+        '^' + escapeRegex(artist) + "[''']?s?[\\s\\-–—:]+",
+        'i'
+      )
+      const titleWithoutArtist = title.replace(artistPrefixPattern, '')
+      if (titleWithoutArtist && titleWithoutArtist !== title) {
+        // 原名
+        queries.push(
+          `releasegroup:"${titleWithoutArtist}" AND artist:"${primaryArtist}"`
+        )
+        // 别名
+        for (const alias of aliases) {
+          queries.push(
+            `releasegroup:"${titleWithoutArtist}" AND artist:"${alias}"`
+          )
+        }
+      }
+    }
+
+    // F2: 去除标题末尾的括号后缀
+    if (strategies.F2_removeParenSuffix) {
+      // 匹配 "OK Computer (Deluxe Edition)" → "OK Computer"
+      const titleWithoutParens = title.replace(/\s*[(\uFF08\[].+?[)\uFF09\]]\s*$/, '').trim()
+      if (titleWithoutParens && titleWithoutParens !== title) {
+        // 原名
+        queries.push(
+          `releasegroup:"${titleWithoutParens}" AND artist:"${primaryArtist}"`
+        )
+        // 别名
+        for (const alias of aliases) {
+          queries.push(
+            `releasegroup:"${titleWithoutParens}" AND artist:"${alias}"`
+          )
+        }
+      }
+    }
+
+    // F3: Lucene 分词搜索（去掉 releasegroup 引号）
+    // 按各词分别匹配而非短语精确匹配，覆盖面更广
+    if (strategies.F3_luceneTokenSearch) {
+      // 原名
+      queries.push(
+        `releasegroup:${title} AND artist:"${primaryArtist}"`
+      )
+      // 别名
+      for (const alias of aliases) {
+        queries.push(
+          `releasegroup:${title} AND artist:"${alias}"`
+        )
+      }
+    }
+
+    // 去除重复查询
+    return [...new Set(queries)]
+  }
+
+  /**
+   * 模糊匹配专辑：在精确匹配失败后调用。
+   *
+   * 与 matchAlbum 不同，不调用 lookup 获取 rating/genres，
+   * 仅返回搜索信息，推迟到用户确认后再获取详细信息。
+   *
+   * @returns 最多 5 个候选（按 score 降序），或空数组表示无结果
+   */
+  async fuzzyMatchAlbum(
+    title: string,
+    artist: string,
+    _releaseDate?: string | null
+  ): Promise<MbFuzzyCandidate[]> {
+    const mbApi = getMbClient()
+
+    try {
+      const queries = this.buildFuzzyQueries(title, artist)
+
+      let releaseGroups: IReleaseGroupMatch[] | null = null
+
+      for (const query of queries) {
+        const searchResult = await mbApi.search('release-group', {
+          query,
+          limit: 10
+        })
+
+        const groups = searchResult['release-groups'] as IReleaseGroupMatch[] | undefined
+        if (groups && groups.length > 0) {
+          releaseGroups = groups
+          break
+        }
+      }
+
+      if (!releaseGroups || releaseGroups.length === 0) {
+        return []
+      }
+
+      // 筛选出 score >= 50 的候选项，取前 5 个
+      const viable = releaseGroups.filter((rg) => rg.score >= 50).slice(0, 5)
+      if (viable.length === 0) {
+        return []
+      }
+
+      // 将每个候选转换为 MbFuzzyCandidate
+      return viable.map((rg) => {
+        const mbTitle = rg.title || title
+        const mbArtist =
+          (rg as unknown as { 'artist-credit'?: { name: string }[] })[
+            'artist-credit'
+          ]
+            ?.map((ac) => ac.name)
+            .join(', ') || artist
+        const firstReleaseDate =
+          (rg as unknown as Record<string, string>)['first-release-date'] || null
+
+        return {
+          mbid: rg.id,
+          mbTitle,
+          mbArtist,
+          score: rg.score,
+          releaseDate: firstReleaseDate
+        }
+      })
+    } catch (error) {
+      console.error(`MusicBrainz 模糊匹配失败 [${title} - ${artist}]:`, error)
+      return []
+    }
   }
 
   /**
    * 数据补全逻辑：将匹配结果写入数据库
+   *
+   * @param album 待补全的专辑
+   * @param onFuzzyMatch 模糊匹配回调，用于逐条确认（可选，无则模糊匹配视为失败）
+   * @returns 'matched' 匹配成功（含用户确认）, 'failed' 完全失败
    */
-  async enrichAlbum(album: Album): Promise<boolean> {
+  async enrichAlbum(
+    album: Album,
+    onFuzzyMatch?: OnFuzzyMatchCallback
+  ): Promise<'matched' | 'failed'> {
     const result = await this.matchAlbum(album.title, album.artist, album.release_date)
 
-    if (!result) {
-      // 匹配失败，仍然标记为已尝试补全（设置 enriched_at）
-      // 避免重复尝试
+    if (result) {
+      // 精确匹配成功，直接写入
       this.albumService.updateAlbum(album.id, {
+        musicbrainz_id: result.mbid,
+        mb_rating: result.rating,
+        mb_rating_count: result.ratingCount,
+        release_date: result.releaseDate ?? album.release_date,
         enriched_at: new Date().toISOString()
       })
-      return false
+
+      if (result.genres.length > 0) {
+        this.albumService.setAlbumGenres(album.id, result.genres)
+      }
+
+      return 'matched'
     }
 
-    // 更新 Album 表（包括发行日期：优先使用 MusicBrainz 的数据）
+    // 精确匹配失败，尝试模糊查询
+    const fuzzyCandidates = await this.fuzzyMatchAlbum(
+      album.title,
+      album.artist,
+      album.release_date
+    )
+
+    if (fuzzyCandidates.length > 0 && onFuzzyMatch) {
+      // 模糊匹配有候选，立即请求用户确认
+      const reply = await onFuzzyMatch(album, fuzzyCandidates)
+
+      if (reply) {
+        // 用户确认了某个候选
+        const confirmed = await this.processConfirmedMatch(album, reply.mbid, fuzzyCandidates)
+        return confirmed ? 'matched' : 'failed'
+      }
+    }
+
+    // 完全失败或用户拒绝，标记 enriched_at 避免重复尝试
     this.albumService.updateAlbum(album.id, {
-      musicbrainz_id: result.mbid,
-      mb_rating: result.rating,
-      mb_rating_count: result.ratingCount,
-      release_date: result.releaseDate ?? album.release_date,
       enriched_at: new Date().toISOString()
     })
+    return 'failed'
+  }
 
-    // 更新 Genre 关联
-    if (result.genres.length > 0) {
-      this.albumService.setAlbumGenres(album.id, result.genres)
+  /**
+   * 处理用户确认的模糊匹配：获取详细信息、写入数据库、自动学习别名
+   */
+  private async processConfirmedMatch(
+    album: Album,
+    mbid: string,
+    candidates: MbFuzzyCandidate[]
+  ): Promise<boolean> {
+    const mbApi = getMbClient()
+
+    try {
+      // 获取详细信息
+      const details = await mbApi.lookup('release-group', mbid, ['ratings', 'genres'])
+      const rating = (details as unknown as { rating?: IRating }).rating
+      const genres = (details as unknown as { genres?: IMbGenre[] }).genres
+
+      // 从候选中找到选中项，以获取 releaseDate
+      const selectedCandidate = candidates.find((c) => c.mbid === mbid)
+
+      // 写入数据库
+      this.albumService.updateAlbum(album.id, {
+        musicbrainz_id: mbid,
+        mb_rating: rating?.value ?? null,
+        mb_rating_count: rating?.['votes-count'] ?? 0,
+        release_date: selectedCandidate?.releaseDate ?? undefined,
+        enriched_at: new Date().toISOString()
+      })
+
+      // 更新 Genre 关联
+      const genreNames = genres?.map((g) => g.name).filter(Boolean) ?? []
+      if (genreNames.length > 0) {
+        this.albumService.setAlbumGenres(album.id, genreNames)
+      }
+
+      // 自动别名学习：比较本地完整艺术家名与 MB 返回的艺术家名
+      if (selectedCandidate) {
+        const localArtist = album.artist.trim()
+        const mbArtist = selectedCandidate.mbArtist.trim()
+
+        if (localArtist.toLowerCase() !== mbArtist.toLowerCase()) {
+          addAlias(localArtist, mbArtist)
+          console.log(`自动学习别名: "${localArtist}" → "${mbArtist}"`)
+        }
+      }
+
+      return true
+    } catch (error) {
+      console.error(`确认模糊匹配失败 [albumId=${album.id}, mbid=${mbid}]:`, error)
+      return false
     }
-
-    return true
   }
 
   /**
    * 批量补全流程：对所有未补全的专辑逐个发起匹配
    *
    * @param onProgress 进度回调函数，每处理完一个专辑调用一次
+   * @param onFuzzyMatch 模糊匹配回调，用于逐条确认
    * @returns 补全结果统计
    */
   async enrichAll(
-    onProgress?: (progress: EnrichProgress) => void
-  ): Promise<{ matched: number; failed: number; total: number }> {
+    onProgress?: (progress: EnrichProgress) => void,
+    onFuzzyMatch?: OnFuzzyMatchCallback
+  ): Promise<EnrichResult> {
     if (this.isEnriching) {
       throw new Error('数据补全正在进行中，请勿重复触发。')
     }
@@ -298,19 +590,29 @@ export class EnrichService {
       const total = unenrichedAlbums.length
 
       if (total === 0) {
-        return { matched: 0, failed: 0, total: 0 }
+        return { matched: 0, failed: 0, confirmed: 0, total: 0 }
       }
 
       let matched = 0
       let failed = 0
+      let confirmed = 0
+
+      // 包装 onFuzzyMatch 回调以计数用户确认次数
+      const wrappedOnFuzzyMatch: OnFuzzyMatchCallback | undefined = onFuzzyMatch
+        ? async (album, candidates) => {
+            const reply = await onFuzzyMatch(album, candidates)
+            if (reply) confirmed++
+            return reply
+          }
+        : undefined
 
       for (let i = 0; i < unenrichedAlbums.length; i++) {
         const album = unenrichedAlbums[i]
-        const success = await this.enrichAlbum(album)
+        const status = await this.enrichAlbum(album, wrappedOnFuzzyMatch)
 
-        if (success) {
+        if (status === 'matched') {
           matched++
-        } else {
+        } else if (status === 'failed') {
           failed++
         }
 
@@ -320,12 +622,12 @@ export class EnrichService {
             current: i + 1,
             total,
             albumTitle: album.title,
-            matched: success
+            matched: status === 'matched'
           })
         }
       }
 
-      return { matched, failed, total }
+      return { matched, failed, confirmed, total }
     } finally {
       this.isEnriching = false
     }
@@ -338,8 +640,9 @@ export class EnrichService {
    * @returns 补全结果统计
    */
   async reEnrichAll(
-    onProgress?: (progress: EnrichProgress) => void
-  ): Promise<{ matched: number; failed: number; total: number }> {
+    onProgress?: (progress: EnrichProgress) => void,
+    onFuzzyMatch?: OnFuzzyMatchCallback
+  ): Promise<EnrichResult> {
     if (this.isEnriching) {
       throw new Error('数据补全正在进行中，请勿重复触发。')
     }
@@ -354,19 +657,28 @@ export class EnrichService {
       const total = allAlbums.length
 
       if (total === 0) {
-        return { matched: 0, failed: 0, total: 0 }
+        return { matched: 0, failed: 0, confirmed: 0, total: 0 }
       }
 
       let matched = 0
       let failed = 0
+      let confirmed = 0
+
+      const wrappedOnFuzzyMatch: OnFuzzyMatchCallback | undefined = onFuzzyMatch
+        ? async (album, candidates) => {
+            const reply = await onFuzzyMatch(album, candidates)
+            if (reply) confirmed++
+            return reply
+          }
+        : undefined
 
       for (let i = 0; i < allAlbums.length; i++) {
         const album = allAlbums[i]
-        const success = await this.enrichAlbum(album)
+        const status = await this.enrichAlbum(album, wrappedOnFuzzyMatch)
 
-        if (success) {
+        if (status === 'matched') {
           matched++
-        } else {
+        } else if (status === 'failed') {
           failed++
         }
 
@@ -375,12 +687,12 @@ export class EnrichService {
             current: i + 1,
             total,
             albumTitle: album.title,
-            matched: success
+            matched: status === 'matched'
           })
         }
       }
 
-      return { matched, failed, total }
+      return { matched, failed, confirmed, total }
     } finally {
       this.isEnriching = false
     }
@@ -393,8 +705,9 @@ export class EnrichService {
    * @returns 补全结果统计
    */
   async enrichAlbumsWithoutGenres(
-    onProgress?: (progress: EnrichProgress) => void
-  ): Promise<{ matched: number; failed: number; total: number }> {
+    onProgress?: (progress: EnrichProgress) => void,
+    onFuzzyMatch?: OnFuzzyMatchCallback
+  ): Promise<EnrichResult> {
     if (this.isEnriching) {
       throw new Error('数据补全正在进行中，请勿重复触发。')
     }
@@ -406,19 +719,28 @@ export class EnrichService {
       const total = albumsWithoutGenres.length
 
       if (total === 0) {
-        return { matched: 0, failed: 0, total: 0 }
+        return { matched: 0, failed: 0, confirmed: 0, total: 0 }
       }
 
       let matched = 0
       let failed = 0
+      let confirmed = 0
+
+      const wrappedOnFuzzyMatch: OnFuzzyMatchCallback | undefined = onFuzzyMatch
+        ? async (album, candidates) => {
+            const reply = await onFuzzyMatch(album, candidates)
+            if (reply) confirmed++
+            return reply
+          }
+        : undefined
 
       for (let i = 0; i < albumsWithoutGenres.length; i++) {
         const album = albumsWithoutGenres[i]
-        const success = await this.enrichAlbum(album)
+        const status = await this.enrichAlbum(album, wrappedOnFuzzyMatch)
 
-        if (success) {
+        if (status === 'matched') {
           matched++
-        } else {
+        } else if (status === 'failed') {
           failed++
         }
 
@@ -428,12 +750,12 @@ export class EnrichService {
             current: i + 1,
             total,
             albumTitle: album.title,
-            matched: success
+            matched: status === 'matched'
           })
         }
       }
 
-      return { matched, failed, total }
+      return { matched, failed, confirmed, total }
     } finally {
       this.isEnriching = false
     }

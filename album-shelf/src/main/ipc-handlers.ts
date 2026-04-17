@@ -13,6 +13,9 @@ import {
   hasCredentials,
   clearCredentials,
   isMbClientInitialized,
+  getEnrichStrategies,
+  loadSettings,
+  saveSettings,
   type MbCredentials
 } from './enrich'
 import * as authService from './auth-service'
@@ -257,7 +260,8 @@ export function registerIpcHandlers(): void {
           })
           albumService.setAlbumGenres(albumId, [])
           const freshAlbum = albumService.getAlbumById(albumId)!
-          result.enrich_matched = await enrichService.enrichAlbum(freshAlbum)
+          const enrichStatus = await enrichService.enrichAlbum(freshAlbum)
+          result.enrich_matched = enrichStatus === 'matched'
         } catch (err) {
           console.error(`重新补全失败 (albumId: ${albumId}):`, err)
         }
@@ -515,6 +519,28 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  // ==================== 应用设置 ====================
+
+  ipcMain.handle('settings:getEnrichStrategies', async () => {
+    try {
+      const strategies = getEnrichStrategies()
+      return { success: true, data: strategies }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  ipcMain.handle('settings:saveEnrichStrategies', async (_event, strategies) => {
+    try {
+      const settings = loadSettings()
+      settings.enrichStrategies = strategies
+      saveSettings(settings)
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
   // ==================== 网易云音乐认证 ====================
 
   /**
@@ -649,37 +675,70 @@ function ensureMbClient(): void {
 }
 
 /**
- * 执行批量补全，发送进度到渲染进程
+ * 构建逐条模糊确认回调：通过 IPC 与渲染进程交互
+ */
+function createFuzzyMatchCallback(mainWindow: BrowserWindow | null) {
+  if (!mainWindow || mainWindow.isDestroyed()) return undefined
+
+  return async (album: { id: number; title: string; artist: string }, candidates: unknown[]) => {
+    return new Promise<{ mbid: string } | null>((resolve) => {
+      // 发送候选到前端
+      mainWindow.webContents.send('enrich:fuzzy-confirm-request', {
+        albumId: album.id,
+        albumTitle: album.title,
+        albumArtist: album.artist,
+        candidates
+      })
+
+      // 监听前端回复（一次性）
+      ipcMain.once('enrich:fuzzy-confirm-reply', (_event, reply: { mbid: string } | null) => {
+        resolve(reply)
+      })
+    })
+  }
+}
+
+/**
+ * 执行批量补全，发送进度到渲染进程，逐条确认模糊匹配
  */
 async function enrichAll(mainWindow: BrowserWindow | null) {
-  const result = await enrichService.enrichAll((progress) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('enrich:progress', progress)
-    }
-  })
+  const result = await enrichService.enrichAll(
+    (progress) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('enrich:progress', progress)
+      }
+    },
+    createFuzzyMatchCallback(mainWindow)
+  )
   return result
 }
 
 /**
- * 补全所有缺失风格标签的专辑，发送进度到渲染进程
+ * 补全所有缺失风格标签的专辑，发送进度到渲染进程，逐条确认模糊匹配
  */
 async function enrichAlbumsWithoutGenres(mainWindow: BrowserWindow | null) {
-  const result = await enrichService.enrichAlbumsWithoutGenres((progress) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('enrich:progress', progress)
-    }
-  })
+  const result = await enrichService.enrichAlbumsWithoutGenres(
+    (progress) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('enrich:progress', progress)
+      }
+    },
+    createFuzzyMatchCallback(mainWindow)
+  )
   return result
 }
 
 /**
- * 执行全量重新补全，发送进度到渲染进程
+ * 执行全量重新补全，发送进度到渲染进程，逐条确认模糊匹配
  */
 async function reEnrichAll(mainWindow: BrowserWindow | null) {
-  const result = await enrichService.reEnrichAll((progress) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('enrich:progress', progress)
-    }
-  })
+  const result = await enrichService.reEnrichAll(
+    (progress) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('enrich:progress', progress)
+      }
+    },
+    createFuzzyMatchCallback(mainWindow)
+  )
   return result
 }

@@ -63,6 +63,28 @@ interface EnrichProgress {
   matched: boolean
 }
 
+interface EnrichResult {
+  matched: number
+  failed: number
+  confirmed: number
+  total: number
+}
+
+interface MbFuzzyCandidate {
+  mbid: string
+  mbTitle: string
+  mbArtist: string
+  score: number
+  releaseDate: string | null
+}
+
+interface FuzzyConfirmRequest {
+  albumId: number
+  albumTitle: string
+  albumArtist: string
+  candidates: MbFuzzyCandidate[]
+}
+
 interface NcmUser {
   userId: number
   nickname: string
@@ -138,14 +160,23 @@ interface AlbumShelfAPI {
   enrichStatus: () => Promise<
     IpcResult<{ pending: number; enriching: boolean; hasCredentials: boolean }>
   >
-  enrichStart: () => Promise<
-    IpcResult<{ matched: number; failed: number; total: number }>
-  >
-  enrichReEnrichAll: () => Promise<
-    IpcResult<{ matched: number; failed: number; total: number }>
-  >
+  enrichStart: () => Promise<IpcResult<EnrichResult>>
+  enrichAlbumsWithoutGenres: () => Promise<IpcResult<EnrichResult>>
+  enrichReEnrichAll: () => Promise<IpcResult<EnrichResult>>
+  onFuzzyConfirmRequest: (callback: (data: FuzzyConfirmRequest) => void) => () => void
+  sendFuzzyConfirmReply: (reply: { mbid: string } | null) => void
   onEnrichProgress: (callback: (progress: EnrichProgress) => void) => () => void
   onMenuReEnrichAll: (callback: () => void) => () => void
+  onMenuOpenSettings: (callback: () => void) => () => void
+  settingsGetEnrichStrategies: () => Promise<IpcResult<{
+    Q1_fullTitleFullArtist: boolean
+    Q2_fullTitleFirstArtist: boolean
+    Q3_titleFirstWordFirstArtist: boolean
+    F1_removeArtistPrefix: boolean
+    F2_removeParenSuffix: boolean
+    F3_luceneTokenSearch: boolean
+  }>>
+  settingsSetEnrichStrategies: (strategies: Record<string, boolean>) => Promise<IpcResult>
   mbSetCredentials: (credentials: {
     username: string
     password: string

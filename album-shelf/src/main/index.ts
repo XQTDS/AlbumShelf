@@ -147,6 +147,21 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
         }
       ]
     },
+    // 设置菜单
+    {
+      label: '设置',
+      submenu: [
+        {
+          label: '匹配策略...',
+          click: (): void => {
+            const mainWindow = BrowserWindow.getAllWindows()[0]
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('menu:openSettings')
+            }
+          }
+        }
+      ]
+    },
     // 视图菜单
     {
       label: '视图',

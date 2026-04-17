@@ -384,13 +384,11 @@
       @later="showLoginGuide = false"
     />
 
-    <!-- 模糊匹配确认弹窗 -->
-    <FuzzyMatchModal
-      :visible="showFuzzyMatchModal"
-      :fuzzyMatches="pendingFuzzyMatches"
-      @close="showFuzzyMatchModal = false"
-      @confirmed="handleFuzzyMatchConfirmed"
-    />
+    <!-- 模糊匹配逐条确认弹窗（补全流程中自动弹出） -->
+    <FuzzyMatchModal />
+
+    <!-- 设置弹窗（菜单栏触发） -->
+    <SettingsModal />
 
     <!-- 在线搜索弹窗 -->
     <AlbumSearchModal
@@ -408,6 +406,7 @@ import LoginGuideModal from './LoginGuideModal.vue'
 import FuzzyMatchModal from './FuzzyMatchModal.vue'
 import ScrollProgressBar from './ScrollProgressBar.vue'
 import AlbumSearchModal from './AlbumSearchModal.vue'
+import SettingsModal from './SettingsModal.vue'
 
 // ==================== 状态 ====================
 
@@ -432,17 +431,6 @@ interface Album {
 const albums = ref<Album[]>([])
 const loading = ref(true)
 const syncing = ref(false)
-
-// 模糊匹配确认弹窗
-interface FuzzyMatch {
-  originalTitle: string
-  matchedTitle: string
-  artist: string
-  neteaseId: string
-  similarity: number
-}
-const showFuzzyMatchModal = ref(false)
-const pendingFuzzyMatches = ref<FuzzyMatch[]>([])
 
 // 在线搜索弹窗
 const showSearchModal = ref(false)
@@ -1032,11 +1020,6 @@ async function handleSync() {
       await fetchFilters()
       await fetchAlbums()
 
-      // 如果有模糊匹配的专辑，显示确认弹窗
-      if (fuzzyMatches && fuzzyMatches.length > 0) {
-        pendingFuzzyMatches.value = fuzzyMatches
-        showFuzzyMatchModal.value = true
-      }
     } else {
       showMessage(`同步失败：${result.error}`, 'error')
     }
@@ -1044,16 +1027,6 @@ async function handleSync() {
     showMessage('同步失败：网络错误', 'error')
   } finally {
     syncing.value = false
-  }
-}
-
-// 处理模糊匹配确认
-async function handleFuzzyMatchConfirmed(count: number) {
-  if (count > 0) {
-    showMessage(`已确认并添加 ${count} 张专辑`, 'success')
-    // 刷新数据
-    await fetchFilters()
-    await fetchAlbums()
   }
 }
 
@@ -1092,10 +1065,11 @@ function setupProgressListener() {
 
     // 补全完成
     if (progress.current >= progress.total) {
-      setTimeout(() => {
+      setTimeout(async () => {
         enrichProgress.value = null
-        fetchAlbums()
-        fetchFilters()
+        await fetchAlbums()
+        await fetchFilters()
+
         showMessage('数据补全完成！', 'success')
       }, 1000)
     }

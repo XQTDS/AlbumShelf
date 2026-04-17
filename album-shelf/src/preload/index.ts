@@ -58,6 +58,28 @@ const albumShelfAPI = {
   enrichAlbumsWithoutGenres: () => ipcRenderer.invoke('enrich:enrichAlbumsWithoutGenres'),
   enrichReEnrichAll: () => ipcRenderer.invoke('enrich:reEnrichAll'),
 
+  // 模糊匹配逐条确认（新机制）
+  onFuzzyConfirmRequest: (
+    callback: (data: {
+      albumId: number
+      albumTitle: string
+      albumArtist: string
+      candidates: {
+        mbid: string
+        mbTitle: string
+        mbArtist: string
+        score: number
+        releaseDate: string | null
+      }[]
+    }) => void
+  ) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data)
+    ipcRenderer.on('enrich:fuzzy-confirm-request', handler)
+    return () => ipcRenderer.removeListener('enrich:fuzzy-confirm-request', handler)
+  },
+  sendFuzzyConfirmReply: (reply: { mbid: string } | null) =>
+    ipcRenderer.send('enrich:fuzzy-confirm-reply', reply),
+
   // 补全进度监听
   onEnrichProgress: (
     callback: (progress: {
@@ -72,6 +94,16 @@ const albumShelfAPI = {
     // 返回取消监听函数
     return () => ipcRenderer.removeListener('enrich:progress', handler)
   },
+
+  // 应用设置
+  onMenuOpenSettings: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:openSettings', handler)
+    return () => ipcRenderer.removeListener('menu:openSettings', handler)
+  },
+  settingsGetEnrichStrategies: () => ipcRenderer.invoke('settings:getEnrichStrategies'),
+  settingsSetEnrichStrategies: (strategies: Record<string, boolean>) =>
+    ipcRenderer.invoke('settings:saveEnrichStrategies', strategies),
 
   // MusicBrainz 凭据管理
   mbSetCredentials: (credentials: { username: string; password: string }) =>

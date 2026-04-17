@@ -1,59 +1,61 @@
 <template>
-  <div v-if="visible" class="modal-overlay" @click.self="handleClose">
+  <div v-if="visible" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
         <h3>确认专辑匹配</h3>
-        <button class="close-btn" @click="handleClose">×</button>
       </div>
-      
+
       <div class="modal-body">
         <p class="description">
-          以下专辑通过模糊匹配找到，请确认是否为同一张专辑。
-          确认后将更新专辑名称并添加到收藏库。
+          以下专辑通过模糊匹配找到了可能的 MusicBrainz 对应项，请选择正确的匹配。
+          确认后将补全评分和风格标签。
         </p>
-        
-        <div class="match-list">
-          <div
-            v-for="(match, index) in fuzzyMatches"
-            :key="index"
-            class="match-item"
-            :class="{ selected: selectedIndices.has(index) }"
-            @click="toggleSelect(index)"
-          >
-            <div class="checkbox">
-              <input
-                type="checkbox"
-                :checked="selectedIndices.has(index)"
-                @click.stop
-                @change="toggleSelect(index)"
-              />
+
+        <div class="match-group">
+          <div class="match-group-header">
+            <div class="album-info">
+              <span class="album-artist">{{ currentRequest?.albumArtist }}</span>
+              <span class="album-title">{{ currentRequest?.albumTitle }}</span>
             </div>
-            <div class="match-info">
-              <div class="artist">{{ match.artist }}</div>
-              <div class="title-compare">
-                <span class="original-title">{{ match.originalTitle }}</span>
-                <span class="arrow">→</span>
-                <span class="matched-title">{{ match.matchedTitle }}</span>
+            <button
+              v-if="selectedMbid"
+              class="clear-btn"
+              @click="selectedMbid = undefined"
+            >取消选择</button>
+          </div>
+          <div class="candidate-list">
+            <div
+              v-for="candidate in currentRequest?.candidates"
+              :key="candidate.mbid"
+              class="candidate-item"
+              :class="{ selected: selectedMbid === candidate.mbid }"
+              @click="toggleCandidate(candidate.mbid)"
+            >
+              <div class="radio">
+                <div class="radio-dot" :class="{ active: selectedMbid === candidate.mbid }"></div>
               </div>
-              <div class="similarity">相似度: {{ match.similarity }}%</div>
+              <div class="candidate-info">
+                <div class="candidate-title">{{ candidate.mbTitle }}</div>
+                <div class="candidate-meta">
+                  <span class="score">匹配度: {{ candidate.score }}%</span>
+                  <span v-if="candidate.mbArtist !== currentRequest?.albumArtist" class="mb-artist">{{ candidate.mbArtist }}</span>
+                  <span v-if="candidate.releaseDate" class="release-date">{{ candidate.releaseDate }}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
-      
+
       <div class="modal-footer">
-        <div class="select-actions">
-          <button class="select-btn" @click="selectAll">全选</button>
-          <button class="select-btn" @click="deselectAll">全不选</button>
-        </div>
         <div class="main-actions">
-          <button class="cancel-btn" @click="handleClose">取消</button>
+          <button class="cancel-btn" @click="handleReject">跳过</button>
           <button
             class="confirm-btn"
-            :disabled="selectedIndices.size === 0 || isConfirming"
+            :disabled="!selectedMbid"
             @click="handleConfirm"
           >
-            {{ isConfirming ? '确认中...' : `确认选中 (${selectedIndices.size})` }}
+            确认
           </button>
         </div>
       </div>
@@ -62,93 +64,63 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
-interface FuzzyMatch {
-  originalTitle: string
-  matchedTitle: string
-  artist: string
-  neteaseId: string
-  similarity: number
+interface FuzzyCandidate {
+  mbid: string
+  mbTitle: string
+  mbArtist: string
+  score: number
+  releaseDate: string | null
 }
 
-const props = defineProps<{
-  visible: boolean
-  fuzzyMatches: FuzzyMatch[]
-}>()
+interface FuzzyConfirmRequest {
+  albumId: number
+  albumTitle: string
+  albumArtist: string
+  candidates: FuzzyCandidate[]
+}
 
-const emit = defineEmits<{
-  (e: 'close'): void
-  (e: 'confirmed', count: number): void
-}>()
+const visible = ref(false)
+const currentRequest = ref<FuzzyConfirmRequest | null>(null)
+const selectedMbid = ref<string | undefined>(undefined)
 
-const selectedIndices = ref<Set<number>>(new Set())
-const isConfirming = ref(false)
+let cleanupListener: (() => void) | null = null
 
-// 当弹窗打开时，默认全选
-watch(() => props.visible, (newVal) => {
-  if (newVal) {
-    selectAll()
+onMounted(() => {
+  // 监听主进程发来的逐条确认请求
+  cleanupListener = window.api.onFuzzyConfirmRequest((data: FuzzyConfirmRequest) => {
+    currentRequest.value = data
+    // 默认选中第一个候选
+    selectedMbid.value = data.candidates.length > 0 ? data.candidates[0].mbid : undefined
+    visible.value = true
+  })
+})
+
+onUnmounted(() => {
+  if (cleanupListener) {
+    cleanupListener()
+    cleanupListener = null
   }
 })
 
-function selectAll() {
-  selectedIndices.value = new Set(props.fuzzyMatches.map((_, i) => i))
+function toggleCandidate(mbid: string) {
+  selectedMbid.value = selectedMbid.value === mbid ? undefined : mbid
 }
 
-function deselectAll() {
-  selectedIndices.value = new Set()
+function handleConfirm() {
+  if (!selectedMbid.value) return
+  window.api.sendFuzzyConfirmReply({ mbid: selectedMbid.value })
+  visible.value = false
+  currentRequest.value = null
+  selectedMbid.value = undefined
 }
 
-function toggleSelect(index: number) {
-  const newSet = new Set(selectedIndices.value)
-  if (newSet.has(index)) {
-    newSet.delete(index)
-  } else {
-    newSet.add(index)
-  }
-  selectedIndices.value = newSet
-}
-
-async function handleConfirm() {
-  if (selectedIndices.value.size === 0) return
-
-  isConfirming.value = true
-
-  try {
-    // 收集选中的匹配项
-    const confirmedMatches = Array.from(selectedIndices.value).map(index => {
-      const match = props.fuzzyMatches[index]
-      return {
-        originalTitle: match.originalTitle,
-        matchedTitle: match.matchedTitle,
-        artist: match.artist,
-        neteaseId: match.neteaseId
-      }
-    })
-
-    // 调用 API 确认
-    const result = await window.api.syncConfirmFuzzyMatches(confirmedMatches)
-
-    if (result.success) {
-      emit('confirmed', result.data.added)
-      emit('close')
-    } else {
-      console.error('确认失败:', result.error)
-      alert(`确认失败: ${result.error}`)
-    }
-  } catch (error) {
-    console.error('确认模糊匹配失败:', error)
-    alert('确认失败，请查看控制台')
-  } finally {
-    isConfirming.value = false
-  }
-}
-
-function handleClose() {
-  if (!isConfirming.value) {
-    emit('close')
-  }
+function handleReject() {
+  window.api.sendFuzzyConfirmReply(null)
+  visible.value = false
+  currentRequest.value = null
+  selectedMbid.value = undefined
 }
 </script>
 
@@ -169,7 +141,7 @@ function handleClose() {
 .modal-content {
   background: #fff;
   border-radius: 12px;
-  width: 600px;
+  width: 650px;
   max-width: 90%;
   max-height: 80vh;
   display: flex;
@@ -221,83 +193,142 @@ function handleClose() {
   line-height: 1.5;
 }
 
-.match-list {
+.match-group {
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.match-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #f8f8f8;
+  border-bottom: 1px solid #eee;
+}
+
+.album-info {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 2px;
+  min-width: 0;
 }
 
-.match-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+.album-artist {
+  font-size: 12px;
+  color: #888;
+}
+
+.album-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clear-btn {
+  background: none;
+  border: none;
+  font-size: 12px;
+  color: #999;
   cursor: pointer;
-  transition: all 0.2s;
+  flex-shrink: 0;
+  padding: 2px 6px;
 }
 
-.match-item:hover {
-  border-color: #c62f2f;
+.clear-btn:hover {
+  color: #c62f2f;
+}
+
+.candidate-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.candidate-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.candidate-item:last-child {
+  border-bottom: none;
+}
+
+.candidate-item:hover {
   background: #fafafa;
 }
 
-.match-item.selected {
-  border-color: #c62f2f;
+.candidate-item.selected {
   background: #fff5f5;
 }
 
-.checkbox {
-  padding-top: 2px;
-}
-
-.checkbox input {
+.radio {
   width: 18px;
   height: 18px;
-  cursor: pointer;
-  accent-color: #c62f2f;
+  border: 2px solid #ccc;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color 0.15s;
 }
 
-.match-info {
+.candidate-item.selected .radio {
+  border-color: #c62f2f;
+}
+
+.radio-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.radio-dot.active {
+  background: #c62f2f;
+}
+
+.candidate-info {
   flex: 1;
   min-width: 0;
 }
 
-.artist {
-  font-size: 12px;
-  color: #888;
-  margin-bottom: 4px;
+.candidate-title {
+  font-size: 14px;
+  color: #333;
+  font-weight: 500;
 }
 
-.title-compare {
+.candidate-meta {
+  margin-top: 3px;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-.original-title {
-  color: #999;
-  text-decoration: line-through;
-  font-size: 14px;
-}
-
-.arrow {
-  color: #c62f2f;
-  font-weight: bold;
-}
-
-.matched-title {
-  color: #333;
-  font-weight: 500;
-  font-size: 14px;
-}
-
-.similarity {
-  margin-top: 4px;
+.score {
   font-size: 12px;
   color: #52c41a;
+}
+
+.mb-artist {
+  font-size: 12px;
+  color: #1890ff;
+}
+
+.release-date {
+  font-size: 12px;
+  color: #999;
 }
 
 .modal-footer {
@@ -332,7 +363,13 @@ function handleClose() {
 
 .main-actions {
   display: flex;
+  align-items: center;
   gap: 12px;
+}
+
+.selected-count {
+  font-size: 13px;
+  color: #888;
 }
 
 .cancel-btn {
