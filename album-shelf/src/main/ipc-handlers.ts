@@ -446,14 +446,14 @@ export function registerIpcHandlers(): void {
   })
 
   /**
-   * 补全所有缺失风格标签的专辑
+   * 补全所有缺失 MB 数据的专辑
    */
-  ipcMain.handle('enrich:enrichAlbumsWithoutGenres', async (event) => {
+  ipcMain.handle('enrich:enrichAlbumsWithoutMbData', async (event) => {
     try {
       ensureMbClient()
 
       const mainWindow = BrowserWindow.fromWebContents(event.sender)
-      const result = await enrichAlbumsWithoutGenres(mainWindow)
+      const result = await enrichAlbumsWithoutMbData(mainWindow)
       return { success: true, data: result }
     } catch (error) {
       return { success: false, error: (error as Error).message }
@@ -680,13 +680,29 @@ function ensureMbClient(): void {
 function createFuzzyMatchCallback(mainWindow: BrowserWindow | null) {
   if (!mainWindow || mainWindow.isDestroyed()) return undefined
 
-  return async (album: { id: number; title: string; artist: string }, candidates: unknown[]) => {
-    return new Promise<{ mbid: string } | null>((resolve) => {
+  return async (album: { id: number; title: string; artist: string; netease_album_id?: string | null; cover_url?: string | null }, candidates: unknown[]) => {
+    return new Promise<{ mbid: string } | null>(async (resolve) => {
+      // 获取网易云封面 URL（优先数据库缓存，其次实时获取）
+      let coverUrl: string | null = album.cover_url ?? null
+      if (!coverUrl && album.netease_album_id) {
+        try {
+          const detail = await ncmCliService.getAlbumDetail(album.netease_album_id)
+          if (detail.coverImgUrl) {
+            coverUrl = detail.coverImgUrl.replace(/^http:\/\//, 'https://')
+            // 持久化到数据库
+            albumService.updateAlbum(album.id, { cover_url: coverUrl })
+          }
+        } catch (err) {
+          console.error(`获取封面失败 (albumId: ${album.id}):`, err)
+        }
+      }
+
       // 发送候选到前端
       mainWindow.webContents.send('enrich:fuzzy-confirm-request', {
         albumId: album.id,
         albumTitle: album.title,
         albumArtist: album.artist,
+        coverUrl,
         candidates
       })
 
@@ -714,10 +730,10 @@ async function enrichAll(mainWindow: BrowserWindow | null) {
 }
 
 /**
- * 补全所有缺失风格标签的专辑，发送进度到渲染进程，逐条确认模糊匹配
+ * 补全所有缺失 MB 数据的专辑，发送进度到渲染进程，逐条确认模糊匹配
  */
-async function enrichAlbumsWithoutGenres(mainWindow: BrowserWindow | null) {
-  const result = await enrichService.enrichAlbumsWithoutGenres(
+async function enrichAlbumsWithoutMbData(mainWindow: BrowserWindow | null) {
+  const result = await enrichService.enrichAlbumsWithoutMbData(
     (progress) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('enrich:progress', progress)

@@ -13,9 +13,23 @@
 
         <div class="match-group">
           <div class="match-group-header">
-            <div class="album-info">
-              <span class="album-artist">{{ currentRequest?.albumArtist }}</span>
-              <span class="album-title">{{ currentRequest?.albumTitle }}</span>
+            <div class="album-info-row">
+              <div class="cover-wrapper">
+                <img
+                  v-if="currentRequest?.coverUrl"
+                  :src="currentRequest.coverUrl"
+                  class="cover-img"
+                  @error="onNcmCoverError"
+                />
+                <div v-else class="cover-placeholder">
+                  <span class="cover-placeholder-icon">♫</span>
+                </div>
+                <span class="cover-source">网易云</span>
+              </div>
+              <div class="album-info">
+                <span class="album-artist">{{ currentRequest?.albumArtist }}</span>
+                <span class="album-title">{{ currentRequest?.albumTitle }}</span>
+              </div>
             </div>
             <button
               v-if="selectedMbid"
@@ -33,6 +47,17 @@
             >
               <div class="radio">
                 <div class="radio-dot" :class="{ active: selectedMbid === candidate.mbid }"></div>
+              </div>
+              <div class="cover-wrapper cover-wrapper-sm">
+                <img
+                  v-if="!coverErrors[candidate.mbid]"
+                  :src="getMbCoverUrl(candidate.mbid)"
+                  class="cover-img"
+                  @error="onMbCoverError(candidate.mbid)"
+                />
+                <div v-else class="cover-placeholder">
+                  <span class="cover-placeholder-icon">♫</span>
+                </div>
               </div>
               <div class="candidate-info">
                 <div class="candidate-title">{{ candidate.mbTitle }}</div>
@@ -64,7 +89,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
 
 interface FuzzyCandidate {
   mbid: string
@@ -78,12 +103,14 @@ interface FuzzyConfirmRequest {
   albumId: number
   albumTitle: string
   albumArtist: string
+  coverUrl: string | null
   candidates: FuzzyCandidate[]
 }
 
 const visible = ref(false)
 const currentRequest = ref<FuzzyConfirmRequest | null>(null)
 const selectedMbid = ref<string | undefined>(undefined)
+const coverErrors = reactive<Record<string, boolean>>({})
 
 let cleanupListener: (() => void) | null = null
 
@@ -93,6 +120,8 @@ onMounted(() => {
     currentRequest.value = data
     // 默认选中第一个候选
     selectedMbid.value = data.candidates.length > 0 ? data.candidates[0].mbid : undefined
+    // 重置封面错误状态
+    Object.keys(coverErrors).forEach((key) => delete coverErrors[key])
     visible.value = true
   })
 })
@@ -103,6 +132,24 @@ onUnmounted(() => {
     cleanupListener = null
   }
 })
+
+/**
+ * 构建 MusicBrainz Cover Art Archive 封面 URL
+ * 使用 250px 缩略图，适合弹窗展示
+ */
+function getMbCoverUrl(mbid: string): string {
+  return `https://coverartarchive.org/release-group/${mbid}/front-250`
+}
+
+function onNcmCoverError(event: Event) {
+  const img = event.target as HTMLImageElement
+  img.style.display = 'none'
+  // 显示占位图（通过 v-if 切换由父级控制）
+}
+
+function onMbCoverError(mbid: string) {
+  coverErrors[mbid] = true
+}
 
 function toggleCandidate(mbid: string) {
   selectedMbid.value = selectedMbid.value === mbid ? undefined : mbid
@@ -206,6 +253,66 @@ function handleReject() {
   padding: 10px 14px;
   background: #f8f8f8;
   border-bottom: 1px solid #eee;
+}
+
+.album-info-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+/* 封面通用样式 */
+.cover-wrapper {
+  width: 60px;
+  height: 60px;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.cover-wrapper-sm {
+  width: 54px;
+  height: 54px;
+}
+
+.cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #f0f0f0;
+}
+
+.cover-placeholder {
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  background: #e8e8e8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cover-placeholder-icon {
+  font-size: 20px;
+  color: #bbb;
+}
+
+.cover-wrapper-sm .cover-placeholder-icon {
+  font-size: 18px;
+}
+
+.cover-source {
+  position: absolute;
+  bottom: 2px;
+  left: 2px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  line-height: 1.3;
 }
 
 .album-info {

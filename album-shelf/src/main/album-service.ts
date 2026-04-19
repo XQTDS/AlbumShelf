@@ -306,14 +306,11 @@ export class AlbumService {
    * 这些是已经尝试补全过，但没有获得任何风格标签的专辑。
    * 按 id 倒序排列，最新收藏的在前面。
    */
-  getAlbumsWithoutGenres(): Album[] {
+  getAlbumsWithoutMbData(): Album[] {
     const rows = this.db
       .prepare(`
         SELECT a.* FROM album a
-        WHERE a.enriched_at IS NOT NULL 
-          AND a.id NOT IN (
-            SELECT DISTINCT album_id FROM album_genre
-          )
+        WHERE a.musicbrainz_id IS NULL
         ORDER BY a.id DESC
       `)
       .all() as Album[]

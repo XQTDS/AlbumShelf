@@ -699,12 +699,13 @@ export class EnrichService {
   }
 
   /**
-   * 补全所有缺失风格标签的专辑：针对已补全过但风格标签为空的专辑重新补全。
+   * 补全所有缺失 MB 数据的专辑：针对没有 musicbrainz_id 的专辑进行匹配补全。
    *
    * @param onProgress 进度回调函数，每处理完一个专辑调用一次
+   * @param onFuzzyMatch 模糊匹配回调，用于逐条确认
    * @returns 补全结果统计
    */
-  async enrichAlbumsWithoutGenres(
+  async enrichAlbumsWithoutMbData(
     onProgress?: (progress: EnrichProgress) => void,
     onFuzzyMatch?: OnFuzzyMatchCallback
   ): Promise<EnrichResult> {
@@ -715,8 +716,8 @@ export class EnrichService {
     this.isEnriching = true
 
     try {
-      const albumsWithoutGenres = this.albumService.getAlbumsWithoutGenres()
-      const total = albumsWithoutGenres.length
+      const albumsWithoutMb = this.albumService.getAlbumsWithoutMbData()
+      const total = albumsWithoutMb.length
 
       if (total === 0) {
         return { matched: 0, failed: 0, confirmed: 0, total: 0 }
@@ -734,8 +735,8 @@ export class EnrichService {
           }
         : undefined
 
-      for (let i = 0; i < albumsWithoutGenres.length; i++) {
-        const album = albumsWithoutGenres[i]
+      for (let i = 0; i < albumsWithoutMb.length; i++) {
+        const album = albumsWithoutMb[i]
         const status = await this.enrichAlbum(album, wrappedOnFuzzyMatch)
 
         if (status === 'matched') {

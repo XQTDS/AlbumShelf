@@ -1076,20 +1076,20 @@ function setupProgressListener() {
   })
 }
 
-// ==================== 补全缺失风格标签的专辑 ====================
+// ==================== 补全缺失MB数据的专辑 ====================
 
-let removeMenuEnrichAlbumsWithoutGenresListener: (() => void) | null = null
+let removeMenuEnrichAlbumsWithoutMbDataListener: (() => void) | null = null
 
-async function handleEnrichAlbumsWithoutGenres() {
+async function handleEnrichAlbumsWithoutMbData() {
   if (enrichProgress.value) {
     showMessage('补全正在进行中，请等待完成', 'info')
     return
   }
 
-  showMessage('正在补全缺失风格标签的专辑...', 'info')
+  showMessage('正在补全缺失MB数据的专辑...', 'info')
 
   try {
-    const result = await window.api.enrichAlbumsWithoutGenres()
+    const result = await window.api.enrichAlbumsWithoutMbData()
     if (!result.success) {
       showMessage(`补全失败：${result.error}`, 'error')
     }
@@ -1152,9 +1152,9 @@ onMounted(async () => {
   // 设置无限滚动的 IntersectionObserver
   setupIntersectionObserver()
 
-  // 监听菜单栏"补全缺失风格标签的专辑"事件
-  removeMenuEnrichAlbumsWithoutGenresListener = window.api.onMenuEnrichAlbumsWithoutGenres(() => {
-    handleEnrichAlbumsWithoutGenres()
+  // 监听菜单栏"补全缺失MB数据的专辑"事件
+  removeMenuEnrichAlbumsWithoutMbDataListener = window.api.onMenuEnrichAlbumsWithoutMbData(() => {
+    handleEnrichAlbumsWithoutMbData()
   })
 
   // 监听菜单栏"重新补全所有专辑"事件
@@ -1211,8 +1211,8 @@ onUnmounted(() => {
   if (removeProgressListener) {
     removeProgressListener()
   }
-  if (removeMenuEnrichAlbumsWithoutGenresListener) {
-    removeMenuEnrichAlbumsWithoutGenresListener()
+  if (removeMenuEnrichAlbumsWithoutMbDataListener) {
+    removeMenuEnrichAlbumsWithoutMbDataListener()
   }
   if (removeMenuReEnrichListener) {
     removeMenuReEnrichListener()

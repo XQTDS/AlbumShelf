@@ -161,7 +161,7 @@ interface AlbumShelfAPI {
     IpcResult<{ pending: number; enriching: boolean; hasCredentials: boolean }>
   >
   enrichStart: () => Promise<IpcResult<EnrichResult>>
-  enrichAlbumsWithoutGenres: () => Promise<IpcResult<EnrichResult>>
+  enrichAlbumsWithoutMbData: () => Promise<IpcResult<EnrichResult>>
   enrichReEnrichAll: () => Promise<IpcResult<EnrichResult>>
   onFuzzyConfirmRequest: (callback: (data: FuzzyConfirmRequest) => void) => () => void
   sendFuzzyConfirmReply: (reply: { mbid: string } | null) => void

@@ -128,11 +128,11 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
         },
         { type: 'separator' },
         {
-          label: '补全缺失风格标签的专辑',
+          label: '补全缺失MB数据的专辑',
           click: (): void => {
             const mainWindow = BrowserWindow.getAllWindows()[0]
             if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('menu:enrichAlbumsWithoutGenres')
+              mainWindow.webContents.send('menu:enrichAlbumsWithoutMbData')
             }
           }
         },

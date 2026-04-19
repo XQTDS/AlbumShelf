@@ -55,7 +55,7 @@ const albumShelfAPI = {
   // 数据补全
   enrichStatus: () => ipcRenderer.invoke('enrich:status'),
   enrichStart: () => ipcRenderer.invoke('enrich:start'),
-  enrichAlbumsWithoutGenres: () => ipcRenderer.invoke('enrich:enrichAlbumsWithoutGenres'),
+  enrichAlbumsWithoutMbData: () => ipcRenderer.invoke('enrich:enrichAlbumsWithoutMbData'),
   enrichReEnrichAll: () => ipcRenderer.invoke('enrich:reEnrichAll'),
 
   // 模糊匹配逐条确认（新机制）
@@ -64,6 +64,7 @@ const albumShelfAPI = {
       albumId: number
       albumTitle: string
       albumArtist: string
+      coverUrl: string | null
       candidates: {
         mbid: string
         mbTitle: string
@@ -114,10 +115,10 @@ const albumShelfAPI = {
   mbClearCredentials: () => ipcRenderer.invoke('mb:clearCredentials'),
 
   // 菜单事件监听
-  onMenuEnrichAlbumsWithoutGenres: (callback: () => void) => {
+  onMenuEnrichAlbumsWithoutMbData: (callback: () => void) => {
     const handler = () => callback()
-    ipcRenderer.on('menu:enrichAlbumsWithoutGenres', handler)
-    return () => ipcRenderer.removeListener('menu:enrichAlbumsWithoutGenres', handler)
+    ipcRenderer.on('menu:enrichAlbumsWithoutMbData', handler)
+    return () => ipcRenderer.removeListener('menu:enrichAlbumsWithoutMbData', handler)
   },
 
   onMenuReEnrichAll: (callback: () => void) => {
