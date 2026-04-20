@@ -34,19 +34,21 @@
             <button
               v-if="selectedMbid"
               class="clear-btn"
-              @click="selectedMbid = undefined"
+              @click="clearSelection"
             >取消选择</button>
           </div>
-          <div class="candidate-list">
+
+          <!-- 候选列表 -->
+          <div v-if="currentRequest?.candidates?.length" class="candidate-list">
             <div
-              v-for="candidate in currentRequest?.candidates"
+              v-for="candidate in currentRequest.candidates"
               :key="candidate.mbid"
               class="candidate-item"
-              :class="{ selected: selectedMbid === candidate.mbid }"
-              @click="toggleCandidate(candidate.mbid)"
+              :class="{ selected: !manualMode && selectedMbid === candidate.mbid }"
+              @click="selectCandidate(candidate.mbid)"
             >
               <div class="radio">
-                <div class="radio-dot" :class="{ active: selectedMbid === candidate.mbid }"></div>
+                <div class="radio-dot" :class="{ active: !manualMode && selectedMbid === candidate.mbid }"></div>
               </div>
               <div class="cover-wrapper cover-wrapper-sm">
                 <img
@@ -69,6 +71,37 @@
               </div>
             </div>
           </div>
+
+          <!-- 手动指定 MusicBrainz 链接 -->
+          <div class="manual-input-section">
+            <div class="manual-input-label">手动指定 MusicBrainz 链接</div>
+            <div class="manual-input-row">
+              <input
+                v-model="manualUrl"
+                type="text"
+                class="manual-input"
+                placeholder="粘贴 release-group 链接或 MBID"
+                @input="onManualInput"
+              />
+              <div v-if="manualMode && parsedManualMbid" class="manual-cover-wrapper cover-wrapper-sm">
+                <img
+                  v-if="!coverErrors[parsedManualMbid]"
+                  :src="getMbCoverUrl(parsedManualMbid)"
+                  class="cover-img"
+                  @error="onMbCoverError(parsedManualMbid)"
+                />
+                <div v-else class="cover-placeholder">
+                  <span class="cover-placeholder-icon">♫</span>
+                </div>
+              </div>
+            </div>
+            <div v-if="manualUrl && !parsedManualMbid" class="manual-input-error">
+              无法识别链接，请粘贴类似 https://musicbrainz.org/release-group/xxxx 的链接或直接输入 MBID
+            </div>
+            <div v-if="manualMode && parsedManualMbid" class="manual-input-hint">
+              ✓ 已识别 MBID: {{ parsedManualMbid.substring(0, 8) }}...
+            </div>
+          </div>
         </div>
       </div>
 
@@ -89,7 +122,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 
 interface FuzzyCandidate {
   mbid: string
@@ -112,15 +145,52 @@ const currentRequest = ref<FuzzyConfirmRequest | null>(null)
 const selectedMbid = ref<string | undefined>(undefined)
 const coverErrors = reactive<Record<string, boolean>>({})
 
+// 手动输入相关
+const manualUrl = ref('')
+const manualMode = ref(false) // 是否处于手动指定模式
+
 let cleanupListener: (() => void) | null = null
 
+/** UUID v4 格式正则 */
+const MBID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * 从用户输入中解析 MusicBrainz release-group MBID
+ * 支持：
+ * - 完整 URL: https://musicbrainz.org/release-group/{mbid}
+ * - 带查询参数的 URL: https://musicbrainz.org/release-group/{mbid}?...
+ * - 直接粘贴 MBID: 6edde49b-af91-40dc-8c74-c654ec80ff81
+ */
+const parsedManualMbid = computed<string | null>(() => {
+  const input = manualUrl.value.trim()
+  if (!input) return null
+
+  // 直接粘贴 MBID
+  if (MBID_REGEX.test(input)) {
+    return input.toLowerCase()
+  }
+
+  // URL 格式解析
+  try {
+    const url = new URL(input)
+    // 匹配 /release-group/{mbid} 路径
+    const match = url.pathname.match(/\/release-group\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i)
+    if (match) {
+      return match[1].toLowerCase()
+    }
+  } catch {
+    // 不是合法 URL，忽略
+  }
+
+  return null
+})
+
 onMounted(() => {
-  // 监听主进程发来的逐条确认请求
   cleanupListener = window.api.onFuzzyConfirmRequest((data: FuzzyConfirmRequest) => {
     currentRequest.value = data
-    // 默认选中第一个候选
     selectedMbid.value = data.candidates.length > 0 ? data.candidates[0].mbid : undefined
-    // 重置封面错误状态
+    manualUrl.value = ''
+    manualMode.value = false
     Object.keys(coverErrors).forEach((key) => delete coverErrors[key])
     visible.value = true
   })
@@ -133,10 +203,6 @@ onUnmounted(() => {
   }
 })
 
-/**
- * 构建 MusicBrainz Cover Art Archive 封面 URL
- * 使用 250px 缩略图，适合弹窗展示
- */
 function getMbCoverUrl(mbid: string): string {
   return `https://coverartarchive.org/release-group/${mbid}/front-250`
 }
@@ -144,15 +210,42 @@ function getMbCoverUrl(mbid: string): string {
 function onNcmCoverError(event: Event) {
   const img = event.target as HTMLImageElement
   img.style.display = 'none'
-  // 显示占位图（通过 v-if 切换由父级控制）
 }
 
 function onMbCoverError(mbid: string) {
   coverErrors[mbid] = true
 }
 
-function toggleCandidate(mbid: string) {
+/** 从候选列表中选择 */
+function selectCandidate(mbid: string) {
+  manualMode.value = false
+  manualUrl.value = ''
   selectedMbid.value = selectedMbid.value === mbid ? undefined : mbid
+}
+
+/** 手动输入框变化时 */
+function onManualInput() {
+  const mbid = parsedManualMbid.value
+  if (mbid) {
+    manualMode.value = true
+    selectedMbid.value = mbid
+  } else if (manualUrl.value.trim()) {
+    // 输入了内容但无法解析
+    manualMode.value = true
+    selectedMbid.value = undefined
+  } else {
+    // 输入为空，恢复到候选模式
+    manualMode.value = false
+    // 恢复默认选中第一个候选
+    selectedMbid.value = currentRequest.value?.candidates?.[0]?.mbid
+  }
+}
+
+/** 清除所有选择 */
+function clearSelection() {
+  selectedMbid.value = undefined
+  manualUrl.value = ''
+  manualMode.value = false
 }
 
 function handleConfirm() {
@@ -161,6 +254,8 @@ function handleConfirm() {
   visible.value = false
   currentRequest.value = null
   selectedMbid.value = undefined
+  manualUrl.value = ''
+  manualMode.value = false
 }
 
 function handleReject() {
@@ -168,6 +263,8 @@ function handleReject() {
   visible.value = false
   currentRequest.value = null
   selectedMbid.value = undefined
+  manualUrl.value = ''
+  manualMode.value = false
 }
 </script>
 
@@ -211,20 +308,6 @@ function handleReject() {
   font-size: 18px;
   font-weight: 600;
   color: #333;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 24px;
-  color: #999;
-  cursor: pointer;
-  padding: 0;
-  line-height: 1;
-}
-
-.close-btn:hover {
-  color: #666;
 }
 
 .modal-body {
@@ -438,45 +521,74 @@ function handleReject() {
   color: #999;
 }
 
-.modal-footer {
+/* 手动指定区域 */
+.manual-input-section {
+  padding: 12px 14px;
+  border-top: 1px solid #eee;
+  background: #fcfcfc;
+}
+
+.manual-input-label {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 6px;
+}
+
+.manual-input-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-top: 1px solid #eee;
+  gap: 10px;
+}
+
+.manual-input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #333;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.manual-input:focus {
+  border-color: #c62f2f;
+}
+
+.manual-input::placeholder {
+  color: #bbb;
+}
+
+.manual-cover-wrapper {
   flex-shrink: 0;
 }
 
-.select-actions {
+.manual-input-error {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #e65c5c;
+  line-height: 1.4;
+}
+
+.manual-input-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #52c41a;
+}
+
+.modal-footer {
   display: flex;
-  gap: 8px;
-}
-
-.select-btn {
-  background: none;
-  border: 1px solid #ddd;
-  padding: 6px 12px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 13px;
-  color: #666;
-  transition: all 0.2s;
-}
-
-.select-btn:hover {
-  border-color: #999;
-  color: #333;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 16px 20px;
+  border-top: 1px solid #eee;
+  flex-shrink: 0;
 }
 
 .main-actions {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.selected-count {
-  font-size: 13px;
-  color: #888;
 }
 
 .cancel-btn {

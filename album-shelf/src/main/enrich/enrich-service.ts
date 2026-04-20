@@ -498,12 +498,12 @@ export class EnrichService {
       album.release_date
     )
 
-    if (fuzzyCandidates.length > 0 && onFuzzyMatch) {
-      // 模糊匹配有候选，立即请求用户确认
+    if (onFuzzyMatch) {
+      // 弹窗请求用户确认（即使候选为空，用户也可以手动粘贴 MusicBrainz 链接）
       const reply = await onFuzzyMatch(album, fuzzyCandidates)
 
       if (reply) {
-        // 用户确认了某个候选
+        // 用户确认了某个候选或手动指定了 MBID
         const confirmed = await this.processConfirmedMatch(album, reply.mbid, fuzzyCandidates)
         return confirmed ? 'matched' : 'failed'
       }
