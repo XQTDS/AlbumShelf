@@ -7,9 +7,6 @@
         <button class="search-online-btn" @click="showSearchModal = true" title="搜索网易云音乐专辑">
           🔍 搜索专辑
         </button>
-        <button class="search-online-btn" @click="idVerifyModalRef?.startVerify()" title="校验专辑 ID 正确性">
-          🔧 校验ID
-        </button>
       </div>
       <div class="toolbar-center">
         <div class="search-box">
@@ -456,6 +453,12 @@
 
     <!-- 专辑 ID 校验弹窗 -->
     <IdVerifyModal ref="idVerifyModalRef" @done="loadAlbums()" />
+
+    <!-- 风格统计弹窗 -->
+    <GenreStatsModal
+      :visible="showGenreStatsModal"
+      @close="showGenreStatsModal = false"
+    />
   </div>
 </template>
 
@@ -468,6 +471,7 @@ import ScrollProgressBar from './ScrollProgressBar.vue'
 import AlbumSearchModal from './AlbumSearchModal.vue'
 import SettingsModal from './SettingsModal.vue'
 import IdVerifyModal from './IdVerifyModal.vue'
+import GenreStatsModal from './GenreStatsModal.vue'
 
 // ==================== 状态 ====================
 
@@ -498,6 +502,11 @@ const showSearchModal = ref(false)
 
 // 专辑 ID 校验弹窗
 const idVerifyModalRef = ref<InstanceType<typeof IdVerifyModal> | null>(null)
+
+// 风格统计弹窗
+const showGenreStatsModal = ref(false)
+let removeMenuGenreStatsListener: (() => void) | null = null
+let removeMenuVerifyIdsListener: (() => void) | null = null
 
 // 展开详情
 const expandedAlbumId = ref<number | null>(null)
@@ -1367,6 +1376,16 @@ onMounted(async () => {
     await handleSync()
   })
 
+  // 监听菜单栏"风格统计"事件
+  removeMenuGenreStatsListener = window.api.onMenuGenreStats(() => {
+    showGenreStatsModal.value = true
+  })
+
+  // 监听菜单栏"校验专辑 ID"事件
+  removeMenuVerifyIdsListener = window.api.onMenuVerifyIds(() => {
+    idVerifyModalRef.value?.startVerify()
+  })
+
   await fetchFilters()
   await fetchAlbums()
 })
@@ -1398,6 +1417,12 @@ onUnmounted(() => {
   }
   if (removeAutoSyncListener) {
     removeAutoSyncListener()
+  }
+  if (removeMenuGenreStatsListener) {
+    removeMenuGenreStatsListener()
+  }
+  if (removeMenuVerifyIdsListener) {
+    removeMenuVerifyIdsListener()
   }
   if (searchTimer) {
     clearTimeout(searchTimer)

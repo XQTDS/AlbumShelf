@@ -366,6 +366,35 @@ export class AlbumService {
   }
 
   /**
+   * Get genre statistics: each genre name with its album count,
+   * plus total albums and albums that have at least one genre.
+   */
+  getGenreStats(): { stats: { name: string; count: number }[]; totalAlbums: number; albumsWithGenre: number } {
+    // 各风格关联的专辑数量（降序）
+    const stats = this.db
+      .prepare(
+        `SELECT g.name, COUNT(ag.album_id) as count
+         FROM genre g
+         JOIN album_genre ag ON g.id = ag.genre_id
+         GROUP BY g.id, g.name
+         ORDER BY count DESC`
+      )
+      .all() as { name: string; count: number }[]
+
+    // 收藏总数
+    const { totalAlbums } = this.db
+      .prepare('SELECT COUNT(*) as totalAlbums FROM album')
+      .get() as { totalAlbums: number }
+
+    // 有风格标签的专辑数（至少关联一个 genre 的专辑）
+    const { albumsWithGenre } = this.db
+      .prepare('SELECT COUNT(DISTINCT album_id) as albumsWithGenre FROM album_genre')
+      .get() as { albumsWithGenre: number }
+
+    return { stats, totalAlbums, albumsWithGenre }
+  }
+
+  /**
    * Get genre names for a specific album.
    */
   private getGenresForAlbum(albumId: number): string[] {

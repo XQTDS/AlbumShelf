@@ -147,6 +147,30 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
         }
       ]
     },
+    // 工具菜单
+    {
+      label: '工具',
+      submenu: [
+        {
+          label: '风格统计',
+          click: (): void => {
+            const mainWindow = BrowserWindow.getAllWindows()[0]
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('menu:genreStats')
+            }
+          }
+        },
+        {
+          label: '校验专辑 ID',
+          click: (): void => {
+            const mainWindow = BrowserWindow.getAllWindows()[0]
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('menu:verifyIds')
+            }
+          }
+        }
+      ]
+    },
     // 设置菜单
     {
       label: '设置',

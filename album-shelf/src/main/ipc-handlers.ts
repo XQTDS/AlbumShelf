@@ -310,6 +310,20 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // ==================== 风格统计 ====================
+
+  /**
+   * 获取风格统计数据（各风格的专辑数量、收藏总数、有标签的专辑数）
+   */
+  ipcMain.handle('genre:stats', async () => {
+    try {
+      const data = albumService.getGenreStats()
+      return { success: true, data }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
   // ==================== 风格标签管理 ====================
 
   /**

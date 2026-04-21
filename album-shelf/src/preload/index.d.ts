@@ -187,6 +187,11 @@ interface AlbumShelfAPI {
   trackSyncByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   albumFetchCover: (albumId: number, force?: boolean) => Promise<IpcResult<{ cover_url: string | null }>>
   albumSetRating: (albumId: number, rating: number | null) => Promise<IpcResult>
+  genreStats: () => Promise<IpcResult<{
+    stats: { name: string; count: number }[]
+    totalAlbums: number
+    albumsWithGenre: number
+  }>>
   setAlbumGenres: (albumId: number, genres: string[]) => Promise<IpcResult>
   albumResync: (albumId: number) => Promise<IpcResult<{
     cover_url: string | null
@@ -238,6 +243,8 @@ interface AlbumShelfAPI {
   onMenuOpenLogin: (callback: () => void) => () => void
   onAutoSync: (callback: () => void) => () => void
   onMenuSyncAlbums: (callback: () => void) => () => void
+  onMenuGenreStats: (callback: () => void) => () => void
+  onMenuVerifyIds: (callback: () => void) => () => void
 
   // 在线搜索
   albumSearchOnline: (keyword: string) => Promise<IpcResult<NcmSearchAlbum[]>>

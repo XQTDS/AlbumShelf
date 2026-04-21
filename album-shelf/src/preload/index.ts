@@ -47,6 +47,9 @@ const albumShelfAPI = {
   albumSetRating: (albumId: number, rating: number | null) =>
     ipcRenderer.invoke('album:setRating', albumId, rating),
 
+  // 风格统计
+  genreStats: () => ipcRenderer.invoke('genre:stats'),
+
   // 风格标签管理
   setAlbumGenres: (albumId: number, genres: string[]) =>
     ipcRenderer.invoke('album:setGenres', albumId, genres),
@@ -183,6 +186,20 @@ const albumShelfAPI = {
     const handler = () => callback()
     ipcRenderer.on('menu:syncAlbums', handler)
     return () => ipcRenderer.removeListener('menu:syncAlbums', handler)
+  },
+
+  // 监听菜单栏风格统计事件
+  onMenuGenreStats: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:genreStats', handler)
+    return () => ipcRenderer.removeListener('menu:genreStats', handler)
+  },
+
+  // 监听菜单栏校验 ID 事件
+  onMenuVerifyIds: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:verifyIds', handler)
+    return () => ipcRenderer.removeListener('menu:verifyIds', handler)
   },
 
   // ==================== 在线搜索 ====================
