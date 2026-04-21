@@ -61,6 +61,7 @@
             class="genre-filter-input"
             @focus="onGenreInputFocus"
             @blur="onGenreInputBlur"
+            @input="onGenreInputChange"
           />
           <!-- 自动完成下拉列表 -->
           <div v-if="showGenreSuggestions && filteredGenreSuggestions().length > 0" class="genre-suggestions">
@@ -248,6 +249,7 @@
                               class="genre-edit-input"
                               @focus="onGenreEditInputFocus"
                               @blur="onGenreEditInputBlur"
+                              @input="onGenreEditInputChange"
                             />
                             <div v-if="showGenreEditSuggestions && filteredGenreEditSuggestions().length > 0" class="genre-edit-suggestions">
                               <div
@@ -956,6 +958,11 @@ function removeEditGenre(genre: string) {
 }
 
 // 编辑态输入框聚焦
+// 处理风格编辑输入内容变化（确保选中建议后继续输入仍能弹出下拉框）
+function onGenreEditInputChange() {
+  showGenreEditSuggestions.value = true
+}
+
 function onGenreEditInputFocus() {
   showGenreEditSuggestions.value = true
 }
@@ -1046,6 +1053,11 @@ function removeGenre(genre: string) {
   selectedGenres.value = selectedGenres.value.filter(g => g !== genre)
   currentPage.value = 1
   fetchAlbums()
+}
+
+// 处理风格输入内容变化（确保选中建议后继续输入仍能弹出下拉框）
+function onGenreInputChange() {
+  showGenreSuggestions.value = true
 }
 
 // 处理风格输入框聚焦
