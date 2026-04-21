@@ -933,14 +933,21 @@ function cancelEditGenres() {
   showGenreEditSuggestions.value = false
 }
 
-// 自动补全筛选（仅从已有风格库）
+// 自动补全筛选（仅从已有风格库；以输入开头的优先）
 function filteredGenreEditSuggestions(): string[] {
   const input = genreEditInput.value.toLowerCase().trim()
   if (!input) return []
-  return genres.value
+  const candidates = genres.value
     .filter(g => !editingGenres.value.includes(g))
     .filter(g => g.toLowerCase().includes(input))
-    .slice(0, 10)
+  // 以输入开头的排在前面，其余保持字母序
+  candidates.sort((a, b) => {
+    const aStarts = a.toLowerCase().startsWith(input) ? 0 : 1
+    const bStarts = b.toLowerCase().startsWith(input) ? 0 : 1
+    if (aStarts !== bStarts) return aStarts - bStarts
+    return a.localeCompare(b)
+  })
+  return candidates
 }
 
 // 从建议列表选择风格
@@ -1027,14 +1034,21 @@ function isGenreSelected(genre: string): boolean {
   return selectedGenres.value.includes(genre)
 }
 
-// 过滤风格建议列表（排除已选、匹配输入）
+// 过滤风格建议列表（排除已选、匹配输入；以输入开头的优先）
 function filteredGenreSuggestions(): string[] {
   const input = genreInput.value.toLowerCase().trim()
   if (!input) return []
-  return genres.value
+  const candidates = genres.value
     .filter(g => !selectedGenres.value.includes(g))
     .filter(g => g.toLowerCase().includes(input))
-    .slice(0, 10)  // 最多显示 10 个
+  // 以输入开头的排在前面，其余保持字母序
+  candidates.sort((a, b) => {
+    const aStarts = a.toLowerCase().startsWith(input) ? 0 : 1
+    const bStarts = b.toLowerCase().startsWith(input) ? 0 : 1
+    if (aStarts !== bStarts) return aStarts - bStarts
+    return a.localeCompare(b)
+  })
+  return candidates
 }
 
 // 从建议列表选择风格
