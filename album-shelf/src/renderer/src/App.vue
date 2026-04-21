@@ -209,17 +209,67 @@
                     <div class="detail-info">
                       <!-- 风格标签完整展示 -->
                       <div class="detail-section">
-                        <div class="detail-label">风格</div>
-                        <div class="genre-tags" v-if="album.genres && album.genres.length > 0">
-                          <span
-                            v-for="genre in album.genres"
-                            :key="genre"
-                            class="genre-tag clickable"
-                            :class="{ selected: isGenreSelected(genre) }"
-                            @click.stop="toggleGenre(genre)"
-                          >{{ genre }}</span>
+                        <div class="detail-label">
+                          风格
+                          <button
+                            v-if="editingGenreAlbumId !== album.id"
+                            class="genre-edit-btn"
+                            title="编辑风格标签"
+                            @click.stop="startEditGenres(album)"
+                          >✏️</button>
                         </div>
-                        <span v-else class="rating-na">—</span>
+                        <!-- 查看态 -->
+                        <template v-if="editingGenreAlbumId !== album.id">
+                          <div class="genre-tags" v-if="album.genres && album.genres.length > 0">
+                            <span
+                              v-for="genre in album.genres"
+                              :key="genre"
+                              class="genre-tag clickable"
+                              :class="{ selected: isGenreSelected(genre) }"
+                              @click.stop="toggleGenre(genre)"
+                            >{{ genre }}</span>
+                          </div>
+                          <span v-else class="rating-na">—</span>
+                        </template>
+                        <!-- 编辑态 -->
+                        <div v-else class="genre-edit-area" @click.stop>
+                          <div class="genre-edit-tags">
+                            <span
+                              v-for="genre in editingGenres"
+                              :key="genre"
+                              class="genre-edit-tag"
+                            >
+                              {{ genre }}
+                              <button class="genre-edit-tag-remove" @click.stop="removeEditGenre(genre)">✕</button>
+                            </span>
+                          </div>
+                          <div class="genre-edit-input-container">
+                            <input
+                              v-model="genreEditInput"
+                              type="text"
+                              placeholder="输入风格筛选..."
+                              class="genre-edit-input"
+                              @focus="onGenreEditInputFocus"
+                              @blur="onGenreEditInputBlur"
+                            />
+                            <div v-if="showGenreEditSuggestions && filteredGenreEditSuggestions().length > 0" class="genre-edit-suggestions">
+                              <div
+                                v-for="genre in filteredGenreEditSuggestions()"
+                                :key="genre"
+                                class="genre-edit-suggestion-item"
+                                @mousedown.prevent="selectGenreEditSuggestion(genre)"
+                              >
+                                {{ genre }}
+                              </div>
+                            </div>
+                          </div>
+                          <div class="genre-edit-actions">
+                            <button class="genre-edit-save" :disabled="savingGenres" @click.stop="saveEditGenres">
+                              {{ savingGenres ? '保存中...' : '保存' }}
+                            </button>
+                            <button class="genre-edit-cancel" :disabled="savingGenres" @click.stop="cancelEditGenres">取消</button>
+                          </div>
+                        </div>
                       </div>
                       <!-- 我的评分 -->
                       <div class="detail-section">
@@ -823,6 +873,93 @@ function clearSearch() {
 
 function applyFilters() {
   resetAndFetch()
+}
+
+// ==================== 风格标签编辑 ====================
+
+const editingGenreAlbumId = ref<number | null>(null)
+const editingGenres = ref<string[]>([])
+const genreEditInput = ref('')
+const showGenreEditSuggestions = ref(false)
+const savingGenres = ref(false)
+
+// 进入编辑态
+function startEditGenres(album: Album) {
+  editingGenreAlbumId.value = album.id
+  editingGenres.value = [...(album.genres || [])]
+  genreEditInput.value = ''
+  showGenreEditSuggestions.value = false
+}
+
+// 取消编辑
+function cancelEditGenres() {
+  editingGenreAlbumId.value = null
+  editingGenres.value = []
+  genreEditInput.value = ''
+  showGenreEditSuggestions.value = false
+}
+
+// 自动补全筛选（仅从已有风格库）
+function filteredGenreEditSuggestions(): string[] {
+  const input = genreEditInput.value.toLowerCase().trim()
+  if (!input) return []
+  return genres.value
+    .filter(g => !editingGenres.value.includes(g))
+    .filter(g => g.toLowerCase().includes(input))
+    .slice(0, 10)
+}
+
+// 从建议列表选择风格
+function selectGenreEditSuggestion(genre: string) {
+  if (!editingGenres.value.includes(genre)) {
+    editingGenres.value = [...editingGenres.value, genre].sort()
+  }
+  genreEditInput.value = ''
+  showGenreEditSuggestions.value = false
+}
+
+// 删除风格标签
+function removeEditGenre(genre: string) {
+  editingGenres.value = editingGenres.value.filter(g => g !== genre)
+}
+
+// 编辑态输入框聚焦
+function onGenreEditInputFocus() {
+  showGenreEditSuggestions.value = true
+}
+
+// 编辑态输入框失焦
+function onGenreEditInputBlur() {
+  setTimeout(() => {
+    showGenreEditSuggestions.value = false
+  }, 200)
+}
+
+// 保存风格编辑
+async function saveEditGenres() {
+  if (editingGenreAlbumId.value === null) return
+  savingGenres.value = true
+
+  try {
+    const result = await window.api.setAlbumGenres(editingGenreAlbumId.value, [...editingGenres.value])
+    if (result.success) {
+      // 更新本地数据
+      const album = albums.value.find(a => a.id === editingGenreAlbumId.value)
+      if (album) {
+        album.genres = [...editingGenres.value]
+      }
+      // 刷新筛选选项（可能新增了风格关联）
+      await fetchFilters()
+      cancelEditGenres()
+    } else {
+      showMessage(`保存风格失败：${result.error}`, 'error')
+    }
+  } catch (error) {
+    console.error('保存风格失败:', error)
+    showMessage(`保存风格失败：${error instanceof Error ? error.message : '未知错误'}`, 'error')
+  } finally {
+    savingGenres.value = false
+  }
 }
 
 // ==================== 多风格筛选 ====================
@@ -2055,6 +2192,157 @@ body {
 
 .genre-tag.selected:hover {
   background: #4f46e5;
+}
+
+/* ==================== 风格标签编辑 ==================== */
+.genre-edit-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+  vertical-align: middle;
+}
+
+.genre-edit-btn:hover {
+  opacity: 1;
+}
+
+.genre-edit-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.genre-edit-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.genre-edit-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: #eef2ff;
+  color: var(--primary);
+  border-radius: 12px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.genre-edit-tag-remove {
+  background: none;
+  border: none;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0 2px;
+  opacity: 0.6;
+  line-height: 1;
+}
+
+.genre-edit-tag-remove:hover {
+  opacity: 1;
+  color: var(--error);
+}
+
+.genre-edit-input-container {
+  position: relative;
+}
+
+.genre-edit-input {
+  width: 200px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: white;
+  transition: border-color 0.2s;
+}
+
+.genre-edit-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+}
+
+.genre-edit-input::placeholder {
+  color: #aaa;
+}
+
+.genre-edit-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 200px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  max-height: 180px;
+  overflow-y: auto;
+  margin-top: 2px;
+}
+
+.genre-edit-suggestion-item {
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.genre-edit-suggestion-item:hover {
+  background: #eef2ff;
+}
+
+.genre-edit-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.genre-edit-save {
+  padding: 3px 12px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.genre-edit-save:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.genre-edit-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.genre-edit-cancel {
+  padding: 3px 12px;
+  background: none;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.genre-edit-cancel:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.genre-edit-cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* ==================== 艺术家筛选组件 ==================== */

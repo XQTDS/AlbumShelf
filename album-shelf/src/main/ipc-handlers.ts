@@ -310,6 +310,29 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // ==================== 风格标签管理 ====================
+
+  /**
+   * 手动设置专辑的风格标签
+   * 替换该专辑的所有风格关联
+   */
+  ipcMain.handle(
+    'album:setGenres',
+    async (_event, albumId: number, genres: string[]) => {
+      try {
+        const album = albumService.getAlbumById(albumId)
+        if (!album) {
+          return { success: false, error: `专辑不存在 (id: ${albumId})` }
+        }
+
+        albumService.setAlbumGenres(albumId, genres)
+        return { success: true }
+      } catch (error) {
+        return { success: false, error: (error as Error).message }
+      }
+    }
+  )
+
   // ==================== 播放控制 ====================
 
   /**

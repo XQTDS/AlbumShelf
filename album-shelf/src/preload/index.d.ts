@@ -187,6 +187,7 @@ interface AlbumShelfAPI {
   trackSyncByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   albumFetchCover: (albumId: number, force?: boolean) => Promise<IpcResult<{ cover_url: string | null }>>
   albumSetRating: (albumId: number, rating: number | null) => Promise<IpcResult>
+  setAlbumGenres: (albumId: number, genres: string[]) => Promise<IpcResult>
   albumResync: (albumId: number) => Promise<IpcResult<{
     cover_url: string | null
     tracks_synced: boolean

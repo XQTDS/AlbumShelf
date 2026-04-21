@@ -47,6 +47,10 @@ const albumShelfAPI = {
   albumSetRating: (albumId: number, rating: number | null) =>
     ipcRenderer.invoke('album:setRating', albumId, rating),
 
+  // 风格标签管理
+  setAlbumGenres: (albumId: number, genres: string[]) =>
+    ipcRenderer.invoke('album:setGenres', albumId, genres),
+
   // 播放控制
   playerPlayAlbum: (albumId: number) => ipcRenderer.invoke('player:playAlbum', albumId),
   playerPlaySong: (encryptedId: string, originalId: number) =>
