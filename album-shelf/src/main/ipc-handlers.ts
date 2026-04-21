@@ -5,6 +5,7 @@ import { NcmCliService } from './ncm-cli-service'
 import { TrackSyncService } from './track-sync-service'
 import { SyncManager } from './sync/sync-manager'
 import { MockSyncService } from './sync/mock-sync-service'
+import { updateNeteaseIdInCsv } from './sync/csv-writer'
 import {
   EnrichService,
   createMbClient,
@@ -208,7 +209,7 @@ export function registerIpcHandlers(): void {
   /**
    * 重新同步单张专辑的全部信息（封面 + 曲目 + 评分 + 风格）
    */
-  ipcMain.handle('album:resync', async (_event, albumId: number) => {
+  ipcMain.handle('album:resync', async (event, albumId: number) => {
     try {
       const album = albumService.getAlbumById(albumId)
       if (!album) {
@@ -260,7 +261,9 @@ export function registerIpcHandlers(): void {
           })
           albumService.setAlbumGenres(albumId, [])
           const freshAlbum = albumService.getAlbumById(albumId)!
-          const enrichStatus = await enrichService.enrichAlbum(freshAlbum)
+          const mainWindow = BrowserWindow.fromWebContents(event.sender)
+          const onFuzzyMatch = createFuzzyMatchCallback(mainWindow)
+          const enrichStatus = await enrichService.enrichAlbum(freshAlbum, onFuzzyMatch)
           result.enrich_matched = enrichStatus === 'matched'
         } catch (err) {
           console.error(`重新补全失败 (albumId: ${albumId}):`, err)
@@ -654,6 +657,154 @@ export function registerIpcHandlers(): void {
     try {
       const result = albumService.getCollectedNeteaseIds()
       return { success: true, data: result }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  // ==================== 专辑 ID 校验与修复 ====================
+
+  /**
+   * 通过 albumId 获取专辑详情（用于手动输入 ID 校验）
+   */
+  ipcMain.handle('album:getDetailById', async (_event, albumId: string) => {
+    try {
+      const detail = await ncmCliService.getAlbumDetail(albumId)
+      return { success: true, data: detail }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 批量校验所有专辑的 netease_album_id 正确性
+   * 逐个调用 getAlbumDetail 比较 title，通过 event 推送进度
+   * 返回不匹配的专辑列表
+   */
+  ipcMain.handle('album:verifyIds', async (event) => {
+    try {
+      const albums = albumService.getAllAlbumsForEnrich()
+      const albumsWithId = albums.filter((a) => a.netease_album_id)
+      const total = albumsWithId.length
+
+      if (total === 0) {
+        return { success: true, data: { mismatches: [], errors: [], total: 0 } }
+      }
+
+      const mismatches: Array<{
+        albumId: number
+        localTitle: string
+        localArtist: string
+        remoteTitle: string
+        remoteArtist: string
+        neteaseAlbumId: string
+      }> = []
+
+      const errors: Array<{
+        albumId: number
+        localTitle: string
+        localArtist: string
+        error: string
+      }> = []
+
+      const sender = event.sender
+
+      for (let i = 0; i < albumsWithId.length; i++) {
+        const album = albumsWithId[i]
+
+        // 推送进度
+        sender.send('album:verifyProgress', { current: i + 1, total })
+
+        try {
+          const detail = await ncmCliService.getAlbumDetail(album.netease_album_id)
+
+          // 忽略大小写 + trim 后精确匹配
+          const localTitle = album.title.trim().toLowerCase()
+          const remoteTitle = detail.name.trim().toLowerCase()
+
+          if (localTitle !== remoteTitle) {
+            // 获取远程艺术家名
+            const remoteArtist = detail.artists && detail.artists.length > 0
+              ? detail.artists.map((a) => a.name).join(' / ')
+              : ''
+
+            mismatches.push({
+              albumId: album.id,
+              localTitle: album.title,
+              localArtist: album.artist,
+              remoteTitle: detail.name,
+              remoteArtist,
+              neteaseAlbumId: album.netease_album_id
+            })
+          }
+        } catch (err) {
+          errors.push({
+            albumId: album.id,
+            localTitle: album.title,
+            localArtist: album.artist,
+            error: (err as Error).message
+          })
+        }
+
+        // 限流：每次调用间隔 300ms
+        if (i < albumsWithId.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 300))
+        }
+      }
+
+      return { success: true, data: { mismatches, errors, total } }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 修复单张专辑的 netease_album_id
+   * 更新 ID + title → 清除旧曲目并重新同步 → 重新获取封面 → 回写 CSV
+   */
+  ipcMain.handle('album:fixId', async (_event, params: {
+    albumId: number
+    newNeteaseAlbumId: string
+    newOriginalId: number
+    newTitle: string
+  }) => {
+    try {
+      const { albumId, newNeteaseAlbumId, newOriginalId, newTitle } = params
+      const album = albumService.getAlbumById(albumId)
+      if (!album) {
+        return { success: false, error: `专辑不存在 (id: ${albumId})` }
+      }
+
+      // 1. 更新 netease_album_id + title
+      albumService.updateNeteaseAlbumId(albumId, newNeteaseAlbumId, newOriginalId, newTitle)
+
+      // 2. 清除旧曲目并重新同步
+      try {
+        trackService.deleteTracksByAlbumId(albumId)
+        await trackSyncService.syncTracksByAlbum(albumId, newNeteaseAlbumId)
+      } catch (err) {
+        console.error(`[album:fixId] 重新同步曲目失败 (albumId: ${albumId}):`, err)
+      }
+
+      // 3. 重新获取封面
+      try {
+        const detail = await ncmCliService.getAlbumDetail(newNeteaseAlbumId)
+        if (detail.coverImgUrl) {
+          const coverUrl = detail.coverImgUrl.replace(/^http:\/\//, 'https://')
+          albumService.updateAlbum(albumId, { cover_url: coverUrl })
+        }
+      } catch (err) {
+        console.error(`[album:fixId] 重新获取封面失败 (albumId: ${albumId}):`, err)
+      }
+
+      // 4. 回写 CSV
+      try {
+        updateNeteaseIdInCsv(album.title, album.artist, newNeteaseAlbumId)
+      } catch (err) {
+        console.error(`[album:fixId] CSV 回写失败 (albumId: ${albumId}):`, err)
+      }
+
+      return { success: true }
     } catch (error) {
       return { success: false, error: (error as Error).message }
     }

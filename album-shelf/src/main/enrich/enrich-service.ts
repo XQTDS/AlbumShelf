@@ -528,7 +528,7 @@ export class EnrichService {
 
     try {
       // 获取详细信息
-      const details = await mbApi.lookup('release-group', mbid, ['ratings', 'genres'])
+      const details = await mbApi.lookup('release-group', mbid, ['ratings', 'genres', 'artist-credits'])
       const rating = (details as unknown as { rating?: IRating }).rating
       const genres = (details as unknown as { genres?: IMbGenre[] }).genres
 
@@ -551,14 +551,22 @@ export class EnrichService {
       }
 
       // 自动别名学习：比较本地完整艺术家名与 MB 返回的艺术家名
-      if (selectedCandidate) {
-        const localArtist = album.artist.trim()
-        const mbArtist = selectedCandidate.mbArtist.trim()
+      const localArtist = album.artist.trim()
+      let mbArtist: string | undefined
 
-        if (localArtist.toLowerCase() !== mbArtist.toLowerCase()) {
-          addAlias(localArtist, mbArtist)
-          console.log(`自动学习别名: "${localArtist}" → "${mbArtist}"`)
+      if (selectedCandidate) {
+        mbArtist = selectedCandidate.mbArtist.trim()
+      } else {
+        // 手动指定 MBID 时，从 lookup 结果中提取艺术家名
+        const artistCredits = (details as unknown as { 'artist-credit'?: { name: string }[] })['artist-credit']
+        if (artistCredits && artistCredits.length > 0) {
+          mbArtist = artistCredits.map((ac) => ac.name).join(', ').trim()
         }
+      }
+
+      if (mbArtist && localArtist.toLowerCase() !== mbArtist.toLowerCase()) {
+        addAlias(localArtist, mbArtist)
+        console.log(`自动学习别名: "${localArtist}" → "${mbArtist}"`)
       }
 
       return true

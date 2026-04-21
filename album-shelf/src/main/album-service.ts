@@ -381,6 +381,21 @@ export class AlbumService {
   }
 
   /**
+   * Update the netease_album_id, netease_original_id and title for an album (ID repair).
+   */
+  updateNeteaseAlbumId(id: number, newNeteaseAlbumId: string, newOriginalId: number | null, newTitle?: string): void {
+    if (newTitle) {
+      this.db
+        .prepare('UPDATE album SET netease_album_id = @newNeteaseAlbumId, netease_original_id = @newOriginalId, title = @newTitle WHERE id = @id')
+        .run({ id, newNeteaseAlbumId, newOriginalId, newTitle })
+    } else {
+      this.db
+        .prepare('UPDATE album SET netease_album_id = @newNeteaseAlbumId, netease_original_id = @newOriginalId WHERE id = @id')
+        .run({ id, newNeteaseAlbumId, newOriginalId })
+    }
+  }
+
+  /**
    * Get all collected netease IDs for duplicate detection.
    * Returns both original IDs and encrypted album IDs.
    */

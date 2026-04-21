@@ -190,3 +190,62 @@ export function appendAlbumToCsv(
   console.log(`CSV 已追加专辑: "${album.title}" - ${album.artist}`)
   console.log(`备份文件: ${backupPath}`)
 }
+
+/**
+ * 更新 CSV 中已有专辑的 netease_id（ID 修复场景）
+ * 通过 title + artist 定位行，更新其 netease_id 字段为新值
+ * @param title 专辑名（用于定位记录）
+ * @param artist 艺术家名（用于定位记录）
+ * @param newNeteaseId 新的网易云专辑 ID
+ * @param csvPath 可选的 CSV 文件路径
+ */
+export function updateNeteaseIdInCsv(
+  title: string,
+  artist: string,
+  newNeteaseId: string,
+  csvPath?: string
+): void {
+  const filePath = csvPath || getCsvPath()
+
+  if (!existsSync(filePath)) {
+    console.warn(`CSV 文件不存在，跳过回写: ${filePath}`)
+    return
+  }
+
+  // 备份原文件
+  const backupPath = filePath + '.bak'
+  copyFileSync(filePath, backupPath)
+
+  // 读取现有 CSV
+  const content = readFileSync(filePath, 'utf-8')
+  const records = parse(content, {
+    columns: true,
+    skip_empty_lines: true,
+    trim: true
+  }) as Array<{ title: string; artist: string; netease_id: string }>
+
+  // 查找并更新第一条匹配的记录
+  let found = false
+  const updatedRecords = records.map((record) => {
+    if (!found && record.title === title && record.artist === artist) {
+      found = true
+      return { ...record, netease_id: newNeteaseId }
+    }
+    return record
+  })
+
+  if (!found) {
+    console.warn(`CSV 中未找到专辑: "${title}" - ${artist}，跳过回写`)
+    return
+  }
+
+  // 写回 CSV
+  const output = stringify(updatedRecords, {
+    header: true,
+    columns: ['title', 'artist', 'netease_id']
+  })
+
+  writeFileSync(filePath, output, 'utf-8')
+
+  console.log(`CSV 已更新 netease_id: "${title}" - ${artist} -> ${newNeteaseId}`)
+}

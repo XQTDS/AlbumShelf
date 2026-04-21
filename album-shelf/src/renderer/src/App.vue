@@ -7,6 +7,9 @@
         <button class="search-online-btn" @click="showSearchModal = true" title="搜索网易云音乐专辑">
           🔍 搜索专辑
         </button>
+        <button class="search-online-btn" @click="idVerifyModalRef?.startVerify()" title="校验专辑 ID 正确性">
+          🔧 校验ID
+        </button>
       </div>
       <div class="toolbar-center">
         <div class="search-box">
@@ -396,6 +399,9 @@
       @close="showSearchModal = false"
       @added="handleSearchAlbumAdded"
     />
+
+    <!-- 专辑 ID 校验弹窗 -->
+    <IdVerifyModal ref="idVerifyModalRef" @done="loadAlbums()" />
   </div>
 </template>
 
@@ -407,6 +413,7 @@ import FuzzyMatchModal from './FuzzyMatchModal.vue'
 import ScrollProgressBar from './ScrollProgressBar.vue'
 import AlbumSearchModal from './AlbumSearchModal.vue'
 import SettingsModal from './SettingsModal.vue'
+import IdVerifyModal from './IdVerifyModal.vue'
 
 // ==================== 状态 ====================
 
@@ -434,6 +441,9 @@ const syncing = ref(false)
 
 // 在线搜索弹窗
 const showSearchModal = ref(false)
+
+// 专辑 ID 校验弹窗
+const idVerifyModalRef = ref<InstanceType<typeof IdVerifyModal> | null>(null)
 
 // 展开详情
 const expandedAlbumId = ref<number | null>(null)

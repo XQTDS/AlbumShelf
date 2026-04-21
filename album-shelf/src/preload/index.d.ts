@@ -139,6 +139,46 @@ interface AddAlbumRequest {
   cover_url?: string | null
 }
 
+/** 专辑 ID 校验结果 */
+interface VerifyIdsMismatch {
+  albumId: number
+  localTitle: string
+  localArtist: string
+  remoteTitle: string
+  remoteArtist: string
+  neteaseAlbumId: string
+}
+
+interface VerifyIdsError {
+  albumId: number
+  localTitle: string
+  localArtist: string
+  error: string
+}
+
+interface VerifyIdsResult {
+  mismatches: VerifyIdsMismatch[]
+  errors: VerifyIdsError[]
+  total: number
+}
+
+/** ncm-cli album get 返回的专辑详情 */
+interface NcmAlbumDetail {
+  originalId: number
+  id: string
+  name: string
+  language: string
+  coverImgUrl: string | null
+  company: string | null
+  transName: string | null
+  aliaName: string | null
+  genre: string | null
+  artists: { originalId: number; id: string; name: string; coverImgUrl: string | null }[]
+  briefDesc: string
+  description: string
+  publishTime: number
+}
+
 interface AlbumShelfAPI {
   syncStart: () => Promise<IpcResult<SyncResult>>
   albumList: (options: AlbumQueryOptions) => Promise<IpcResult<AlbumQueryResult>>
@@ -202,6 +242,12 @@ interface AlbumShelfAPI {
   albumSearchOnline: (keyword: string) => Promise<IpcResult<NcmSearchAlbum[]>>
   albumAddToCollection: (album: AddAlbumRequest) => Promise<IpcResult<{ albumId: number }>>
   albumGetCollectedNeteaseIds: () => Promise<IpcResult<{ originalIds: number[], albumIds: string[] }>>
+
+  // 专辑 ID 校验与修复
+  albumGetDetailById: (albumId: string) => Promise<IpcResult<NcmAlbumDetail>>
+  verifyAlbumIds: () => Promise<IpcResult<VerifyIdsResult>>
+  fixAlbumId: (params: { albumId: number; newNeteaseAlbumId: string; newOriginalId: number; newTitle: string }) => Promise<IpcResult>
+  onVerifyProgress: (callback: (progress: { current: number; total: number }) => void) => () => void
 }
 
 declare global {

@@ -198,7 +198,28 @@ const albumShelfAPI = {
 
   // 获取已收藏专辑的网易云 ID 列表（用于重复检测）
   albumGetCollectedNeteaseIds: () =>
-    ipcRenderer.invoke('album:getCollectedNeteaseIds')
+    ipcRenderer.invoke('album:getCollectedNeteaseIds'),
+
+  // ==================== 专辑 ID 校验与修复 ====================
+
+  // 通过 albumId 获取专辑详情
+  albumGetDetailById: (albumId: string) => ipcRenderer.invoke('album:getDetailById', albumId),
+
+  // 批量校验所有专辑的 netease_album_id 正确性
+  verifyAlbumIds: () => ipcRenderer.invoke('album:verifyIds'),
+
+  // 修复单张专辑的 netease_album_id
+  fixAlbumId: (params: { albumId: number; newNeteaseAlbumId: string; newOriginalId: number; newTitle: string }) =>
+    ipcRenderer.invoke('album:fixId', params),
+
+  // 监听校验进度
+  onVerifyProgress: (
+    callback: (progress: { current: number; total: number }) => void
+  ) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress)
+    ipcRenderer.on('album:verifyProgress', handler)
+    return () => ipcRenderer.removeListener('album:verifyProgress', handler)
+  }
 }
 
 // Expose APIs to renderer via contextBridge
