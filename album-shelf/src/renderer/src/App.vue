@@ -302,6 +302,10 @@
                           <span class="meta-label">曲目数</span>
                           <span class="meta-value">{{ album.track_count != null ? album.track_count : '—' }}</span>
                         </div>
+                        <div class="meta-item">
+                          <span class="meta-label">总时长</span>
+                          <span class="meta-value">{{ albumTotalDuration(album.id) }}</span>
+                        </div>
                       </div>
                       <!-- 外部链接 & 操作 -->
                       <div class="detail-section detail-links">
@@ -581,6 +585,25 @@ watch(expandedAlbumId, (newId) => {
     }
   }
 })
+
+// 计算专辑总时长
+function albumTotalDuration(albumId: number): string {
+  const tracks = trackCache.value.get(albumId)
+  if (!tracks || tracks.length === 0) return '—'
+  let totalMs = 0
+  for (const t of tracks) {
+    if (t.duration_ms != null) totalMs += t.duration_ms
+  }
+  if (totalMs === 0) return '—'
+  const totalSeconds = Math.floor(totalMs / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+  }
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
 
 // 格式化时长 (ms -> m:ss)
 function formatDuration(ms: number | null): string {
