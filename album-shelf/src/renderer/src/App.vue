@@ -699,23 +699,24 @@ async function handleResync(albumId: number) {
   try {
     const result = await window.api.albumResync(albumId)
     if (result.success && result.data) {
-      const album = albums.value.find((a) => a.id === albumId)
-      if (album) {
-        // 更新封面
+      const idx = albums.value.findIndex((a) => a.id === albumId)
+      if (idx !== -1) {
+        // 用后端返回的完整专辑数据原地更新，保持列表顺序不变
+        if (result.data.album) {
+          albums.value[idx] = result.data.album
+        }
+        // 清除封面错误状态和远程获取标记
         if (result.data.cover_url) {
-          // 清除封面错误状态和远程获取标记
           const newErrorSet = new Set(coverErrorSet.value)
           newErrorSet.delete(albumId)
           coverErrorSet.value = newErrorSet
           coverFetchedSet.delete(albumId)
-          album.cover_url = result.data.cover_url
         }
       }
       // 清除曲目缓存以便重新加载
       trackCache.value.delete(albumId)
-      // 重新加载曲目和专辑数据
+      // 重新加载曲目
       await loadTracks(albumId)
-      await fetchAlbums()
     }
   } catch (error) {
     console.error('重新同步失败:', error)

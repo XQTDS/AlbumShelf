@@ -11,7 +11,7 @@
 - `playSong()` — 播放单曲（`ncm-cli play --song`）
 - `queueAdd()` — 加入队列（`ncm-cli queue add`）
 - `getState()` — 查询播放状态（`ncm-cli state`）
-- `waitForPlaying()` — 轮询等待播放状态变为 playing（最多 10 秒，500ms 间隔）
+- `waitForPlaying()` — 轮询等待播放状态变为 playing（最多 5 秒，1000ms 间隔）
 
 ### 新增 — IPC Handlers
 - `player:playAlbum` — 播放整张专辑：清空队列 → 播放第一首 → 等待播放开始 → 依次加入剩余曲目

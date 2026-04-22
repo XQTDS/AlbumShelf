@@ -369,12 +369,13 @@ export class NcmCliService {
 
   /**
    * 等待播放器进入 playing 状态
-   * @param maxWaitMs 最大等待时间（毫秒），默认 10 秒
-   * @param intervalMs 轮询间隔（毫秒），默认 500ms
+   * @param maxWaitMs 最大等待时间（毫秒），默认 5 秒
+   * @param intervalMs 轮询间隔（毫秒），默认 1000ms
    */
-  async waitForPlaying(maxWaitMs = 10_000, intervalMs = 500): Promise<boolean> {
+  async waitForPlaying(maxWaitMs = 5_000, intervalMs = 1000): Promise<boolean> {
     const start = Date.now()
     while (Date.now() - start < maxWaitMs) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs))
       try {
         const state = await this.getState()
         if (state.status === 'playing') {
@@ -383,7 +384,6 @@ export class NcmCliService {
       } catch {
         // 查询失败继续重试
       }
-      await new Promise((resolve) => setTimeout(resolve, intervalMs))
     }
     console.warn('[ncm-cli] 等待播放超时')
     return false

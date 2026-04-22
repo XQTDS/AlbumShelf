@@ -270,7 +270,9 @@ export function registerIpcHandlers(): void {
         }
       }
 
-      return { success: true, data: result }
+      // 4. 返回更新后的完整专辑数据（包括 genres），避免前端重新请求整个列表
+      const updatedAlbum = albumService.getAlbumById(albumId)
+      return { success: true, data: { ...result, album: updatedAlbum } }
     } catch (error) {
       return { success: false, error: (error as Error).message }
     }
@@ -386,20 +388,23 @@ export function registerIpcHandlers(): void {
       )
 
       // 3. 等待播放器确认开始播放
-      await ncmCliService.waitForPlaying()
+      let success = await ncmCliService.waitForPlaying()
+      if (success) {
+        // 4. 将剩余曲目按顺序加入队列
+        for (let i = 1; i < playable.length; i++) {
+          await ncmCliService.queueAdd(
+            playable[i].netease_song_id!,
+            playable[i].netease_original_id!
+          )
+        }
 
-      // 4. 将剩余曲目按顺序加入队列
-      for (let i = 1; i < playable.length; i++) {
-        await ncmCliService.queueAdd(
-          playable[i].netease_song_id!,
-          playable[i].netease_original_id!
-        )
+        return {
+          success: true,
+          data: { playing: playable[0].title, totalTracks: playable.length }
+        }
       }
 
-      return {
-        success: true,
-        data: { playing: playable[0].title, totalTracks: playable.length }
-      }
+      return { success: false, error: '播放失败' }
     } catch (error) {
       // 检查是否需要登录，如果是则自动打开登录弹窗
       if (authService.handleLoginRequiredError(error)) {
