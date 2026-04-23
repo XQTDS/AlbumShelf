@@ -465,7 +465,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import LoginModal from './LoginModal.vue'
 import LoginGuideModal from './LoginGuideModal.vue'
 import FuzzyMatchModal from './FuzzyMatchModal.vue'
@@ -877,15 +877,63 @@ async function fetchFilters() {
 
 // ==================== 重置列表（筛选/搜索/排序变化时） ====================
 
-function resetAndFetch() {
+/**
+ * 重置列表并重新获取数据。
+ * @param scrollToAlbumId 若提供，则在加载完成后滚动到该专辑的行（用于取消筛选时保持位置）。
+ */
+function resetAndFetch(scrollToAlbumId?: number | null) {
   albums.value = []
   currentPage.value = 1
   hasMore.value = true
-  // 重置滚动位置
-  if (scrollContainerRef.value) {
-    scrollContainerRef.value.scrollTop = 0
+
+  if (!scrollToAlbumId) {
+    // 没有目标专辑：重置滚动位置到顶部
+    if (scrollContainerRef.value) {
+      scrollContainerRef.value.scrollTop = 0
+    }
+    fetchAlbums()
+  } else {
+    // 有目标专辑：加载数据后尝试滚动到该专辑
+    fetchAlbumsAndScrollTo(scrollToAlbumId)
   }
-  fetchAlbums()
+}
+
+/**
+ * 持续分页加载，直到找到目标专辑或加载完所有数据，然后滚动到目标专辑的行。
+ */
+async function fetchAlbumsAndScrollTo(targetAlbumId: number) {
+  await fetchAlbums(false)
+
+  // 加载后检查目标专辑是否已在列表中；若不在且还有更多数据则继续加载
+  while (hasMore.value && !albums.value.some(a => a.id === targetAlbumId)) {
+    currentPage.value++
+    await fetchAlbums(true)
+  }
+
+  // 滚动到目标专辑
+  await nextTick()
+  scrollToAlbumRow(targetAlbumId)
+}
+
+/**
+ * 滚动到指定专辑所在行。
+ */
+function scrollToAlbumRow(albumId: number) {
+  if (!scrollContainerRef.value) return
+  const idx = albums.value.findIndex(a => a.id === albumId)
+  if (idx === -1) return
+
+  // 表格行：<tr class="album-row">，按 DOM 中出现的顺序获取
+  const rows = scrollContainerRef.value.querySelectorAll('tr.album-row')
+  const targetRow = rows[idx] as HTMLElement | undefined
+  if (!targetRow) return
+
+  // 让目标行尽量居中显示
+  const container = scrollContainerRef.value
+  const rowTop = targetRow.offsetTop
+  const rowHeight = targetRow.offsetHeight
+  const containerHeight = container.clientHeight
+  container.scrollTop = Math.max(0, rowTop - containerHeight / 2 + rowHeight / 2)
 }
 
 // ==================== 搜索 ====================
@@ -1015,19 +1063,21 @@ async function saveEditGenres() {
 function toggleGenre(genre: string) {
   const index = selectedGenres.value.indexOf(genre)
   if (index === -1) {
-    // 添加
+    // 添加筛选
     selectedGenres.value = [...selectedGenres.value, genre]
+    resetAndFetch()
   } else {
-    // 移除
+    // 移除筛选：若有展开的专辑，取消后定位到该专辑
     selectedGenres.value = selectedGenres.value.filter(g => g !== genre)
+    resetAndFetch(expandedAlbumId.value)
   }
-  resetAndFetch()
 }
 
 // 清除所有已选风格
 function clearGenres() {
+  const scrollTarget = expandedAlbumId.value
   selectedGenres.value = []
-  resetAndFetch()
+  resetAndFetch(scrollTarget)
 }
 
 // 判断风格是否已选中
@@ -1065,9 +1115,17 @@ function selectGenreSuggestion(genre: string) {
 
 // 移除单个已选风格
 function removeGenre(genre: string) {
+  const scrollTarget = expandedAlbumId.value
   selectedGenres.value = selectedGenres.value.filter(g => g !== genre)
-  currentPage.value = 1
-  fetchAlbums()
+  if (scrollTarget) {
+    albums.value = []
+    currentPage.value = 1
+    hasMore.value = true
+    fetchAlbumsAndScrollTo(scrollTarget)
+  } else {
+    currentPage.value = 1
+    fetchAlbums()
+  }
 }
 
 // 处理风格输入内容变化（确保选中建议后继续输入仍能弹出下拉框）
@@ -1109,10 +1167,18 @@ function selectArtistSuggestion(artist: string) {
 
 // 清除已选艺术家
 function clearArtist() {
+  const scrollTarget = expandedAlbumId.value
   selectedArtist.value = ''
   artistInput.value = ''
-  currentPage.value = 1
-  fetchAlbums()
+  if (scrollTarget) {
+    albums.value = []
+    currentPage.value = 1
+    hasMore.value = true
+    fetchAlbumsAndScrollTo(scrollTarget)
+  } else {
+    currentPage.value = 1
+    fetchAlbums()
+  }
 }
 
 // 处理艺术家输入框聚焦
