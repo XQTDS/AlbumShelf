@@ -19,6 +19,9 @@ const albumShelfAPI = {
   syncConfirmFuzzyMatches: (confirmedMatches: ConfirmedFuzzyMatch[]) =>
     ipcRenderer.invoke('sync:confirmFuzzyMatches', confirmedMatches),
 
+  // 随机专辑
+  albumRandom: () => ipcRenderer.invoke('album:random'),
+
   // 专辑查询
   albumList: (options: {
     search?: string

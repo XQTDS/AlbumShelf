@@ -122,6 +122,22 @@ export function registerIpcHandlers(): void {
   })
 
   /**
+   * 随机获取一张专辑（返回完整专辑数据）
+   */
+  ipcMain.handle('album:random', async () => {
+    try {
+      const albumId = albumService.getRandomAlbumId()
+      if (albumId === null) {
+        return { success: false, error: '没有可选的专辑' }
+      }
+      const album = albumService.getAlbumById(albumId)
+      return { success: true, data: album }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
    * 获取筛选选项（所有艺术家 + 所有风格标签）
    */
   ipcMain.handle('album:filters', async () => {

@@ -428,6 +428,17 @@ export class AlbumService {
    * Get all collected netease IDs for duplicate detection.
    * Returns both original IDs and encrypted album IDs.
    */
+  /**
+   * Get a random album id from the database.
+   * Returns null if no albums exist.
+   */
+  getRandomAlbumId(): number | null {
+    const row = this.db
+      .prepare('SELECT id FROM album ORDER BY RANDOM() LIMIT 1')
+      .get() as { id: number } | undefined
+    return row ? row.id : null
+  }
+
   getCollectedNeteaseIds(): { originalIds: number[], albumIds: string[] } {
     const rows = this.db
       .prepare('SELECT netease_original_id, netease_album_id FROM album')

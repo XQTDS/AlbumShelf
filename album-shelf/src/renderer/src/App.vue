@@ -7,6 +7,11 @@
         <button class="search-online-btn" @click="showSearchModal = true" title="搜索网易云音乐专辑">
           🔍 搜索专辑
         </button>
+        <button class="random-pick-btn" @click="handleRandomPick" :disabled="randomPicking || albums.length === 0" title="随机选择一张专辑">
+          <span v-if="randomPicking" class="spinner small"></span>
+          <span v-else>🎲</span>
+          随机选择
+        </button>
       </div>
       <div class="toolbar-center">
         <div class="search-box">
@@ -1193,6 +1198,50 @@ function onArtistInputBlur() {
   }, 200)
 }
 
+// ==================== 随机选择 ====================
+
+const randomPicking = ref(false)
+
+async function handleRandomPick() {
+  if (randomPicking.value) return
+  randomPicking.value = true
+
+  try {
+    const result = await window.api.albumRandom()
+    if (!result.success || !result.data) {
+      showMessage(result.error || '没有可选的专辑', 'error')
+      return
+    }
+
+    const randomAlbum = result.data
+
+    // 清除所有筛选/搜索条件，回到默认列表
+    searchQuery.value = ''
+    selectedArtist.value = ''
+    artistInput.value = ''
+    selectedGenres.value = []
+    genreInput.value = ''
+    sortBy.value = undefined
+    sortOrder.value = 'desc'
+
+    // 重置列表并加载数据，然后定位到随机专辑
+    albums.value = []
+    currentPage.value = 1
+    hasMore.value = true
+    await fetchAlbumsAndScrollTo(randomAlbum.id)
+
+    // 展开该专辑
+    expandedAlbumId.value = randomAlbum.id
+
+    showMessage(`🎲 随机选中：${randomAlbum.artist} - ${randomAlbum.title}`, 'info')
+  } catch (error) {
+    console.error('随机选择失败:', error)
+    showMessage('随机选择失败', 'error')
+  } finally {
+    randomPicking.value = false
+  }
+}
+
 // ==================== 排序 ====================
 
 function toggleSort(field: 'mb_rating' | 'release_date' | 'user_rating') {
@@ -1605,6 +1654,32 @@ body {
   background: var(--primary);
   border-color: var(--primary);
   color: #fff;
+}
+
+.random-pick-btn {
+  padding: 6px 12px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.random-pick-btn:hover:not(:disabled) {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.random-pick-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .toolbar-center {

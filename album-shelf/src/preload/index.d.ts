@@ -181,6 +181,7 @@ interface NcmAlbumDetail {
 
 interface AlbumShelfAPI {
   syncStart: () => Promise<IpcResult<SyncResult>>
+  albumRandom: () => Promise<IpcResult<Album>>
   albumList: (options: AlbumQueryOptions) => Promise<IpcResult<AlbumQueryResult>>
   albumFilters: () => Promise<IpcResult<{ artists: string[]; genres: string[] }>>
   trackListByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
