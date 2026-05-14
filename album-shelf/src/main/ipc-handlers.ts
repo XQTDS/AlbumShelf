@@ -862,7 +862,9 @@ export function registerIpcHandlers(): void {
         console.error(`[album:fixId] CSV 回写失败 (albumId: ${albumId}):`, err)
       }
 
-      return { success: true }
+      // 5. 返回更新后的完整专辑（含 genres），便于前端原地刷新
+      const updatedAlbum = albumService.getAlbumById(albumId)
+      return { success: true, data: { album: updatedAlbum } }
     } catch (error) {
       return { success: false, error: (error as Error).message }
     }

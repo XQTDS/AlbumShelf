@@ -255,7 +255,7 @@ interface AlbumShelfAPI {
   // 专辑 ID 校验与修复
   albumGetDetailById: (albumId: string) => Promise<IpcResult<NcmAlbumDetail>>
   verifyAlbumIds: () => Promise<IpcResult<VerifyIdsResult>>
-  fixAlbumId: (params: { albumId: number; newNeteaseAlbumId: string; newOriginalId: number; newTitle: string }) => Promise<IpcResult>
+  fixAlbumId: (params: { albumId: number; newNeteaseAlbumId: string; newOriginalId: number; newTitle: string }) => Promise<IpcResult<{ album: Album }>>
   onVerifyProgress: (callback: (progress: { current: number; total: number }) => void) => () => void
 }
 

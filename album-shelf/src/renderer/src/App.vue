@@ -338,6 +338,13 @@
                           <span v-else>🔄</span>
                           {{ resyncingAlbumId === album.id ? '同步中...' : '重新同步' }}
                         </button>
+                        <button
+                          class="btn btn-resync"
+                          @click.stop="openManualFixId(album)"
+                          title="手动指定该专辑的网易云加密 ID 并重新同步"
+                        >
+                          🆔 修改网易云 ID
+                        </button>
                       </div>
                     </div>
                     <!-- 曲目列表 -->
@@ -461,6 +468,14 @@
     <!-- 专辑 ID 校验弹窗 -->
     <IdVerifyModal ref="idVerifyModalRef" @done="loadAlbums()" />
 
+    <!-- 手动修改单张专辑网易云 ID 弹窗 -->
+    <ManualFixIdModal
+      :visible="manualFixModalVisible"
+      :album="manualFixTargetAlbum"
+      @close="manualFixModalVisible = false"
+      @fixed="handleManualFixDone"
+    />
+
     <!-- 风格统计弹窗 -->
     <GenreStatsModal
       :visible="showGenreStatsModal"
@@ -479,6 +494,7 @@ import AlbumSearchModal from './AlbumSearchModal.vue'
 import SettingsModal from './SettingsModal.vue'
 import IdVerifyModal from './IdVerifyModal.vue'
 import GenreStatsModal from './GenreStatsModal.vue'
+import ManualFixIdModal from './ManualFixIdModal.vue'
 
 // ==================== 状态 ====================
 
@@ -509,6 +525,15 @@ const showSearchModal = ref(false)
 
 // 专辑 ID 校验弹窗
 const idVerifyModalRef = ref<InstanceType<typeof IdVerifyModal> | null>(null)
+
+// 手动修改 ID 弹窗
+const manualFixModalVisible = ref(false)
+const manualFixTargetAlbum = ref<{
+  id: number
+  title: string
+  artist: string
+  netease_album_id: string | null
+} | null>(null)
 
 // 风格统计弹窗
 const showGenreStatsModal = ref(false)
@@ -728,6 +753,34 @@ async function handleResync(albumId: number) {
   } finally {
     resyncingAlbumId.value = null
   }
+}
+
+// 打开手动修改 ID 弹窗
+function openManualFixId(album: Album) {
+  manualFixTargetAlbum.value = {
+    id: album.id,
+    title: album.title,
+    artist: album.artist,
+    netease_album_id: album.netease_album_id ?? null
+  }
+  manualFixModalVisible.value = true
+}
+
+// 手动修复成功后的处理：原地刷新该专辑行 + 清缓存重拉曲目
+async function handleManualFixDone(payload: { albumId: number; album: unknown }) {
+  const idx = albums.value.findIndex((a) => a.id === payload.albumId)
+  if (idx !== -1 && payload.album) {
+    albums.value[idx] = payload.album as Album
+    // 重置封面错误/远程获取标记，确保新封面能加载
+    const newErrorSet = new Set(coverErrorSet.value)
+    newErrorSet.delete(payload.albumId)
+    coverErrorSet.value = newErrorSet
+    coverFetchedSet.delete(payload.albumId)
+  }
+  // 清除曲目缓存并重新加载（与 resync 保持一致）
+  trackCache.value.delete(payload.albumId)
+  await loadTracks(payload.albumId)
+  showMessage('网易云 ID 已修复并完成重新同步', 'success')
 }
 
 // 播放状态
