@@ -480,6 +480,7 @@
     <GenreStatsModal
       :visible="showGenreStatsModal"
       @close="showGenreStatsModal = false"
+      @select-genre="handleSelectGenreFromStats"
     />
   </div>
 </template>
@@ -1141,6 +1142,14 @@ function clearGenres() {
 // 判断风格是否已选中
 function isGenreSelected(genre: string): boolean {
   return selectedGenres.value.includes(genre)
+}
+
+// 从风格统计弹窗中选择风格进行筛选
+function handleSelectGenreFromStats(genre: string) {
+  if (!selectedGenres.value.includes(genre)) {
+    selectedGenres.value = [...selectedGenres.value, genre]
+    resetAndFetch()
+  }
 }
 
 // 过滤风格建议列表（排除已选、匹配输入；以输入开头的优先）

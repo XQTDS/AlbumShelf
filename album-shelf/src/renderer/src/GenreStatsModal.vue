@@ -47,13 +47,13 @@
               v-for="item in displayItems"
               :key="item.name"
               class="bar-row"
-              :class="{ 'bar-row-other': item.isOther }"
+              :title="`点击筛选「${item.name}」`"
+              @click="selectGenre(item.name)"
             >
               <div class="bar-label" :title="item.name">{{ item.name }}</div>
               <div class="bar-track">
                 <div
                   class="bar-fill"
-                  :class="{ 'bar-fill-other': item.isOther }"
                   :style="{ width: barWidth(item.count) }"
                 ></div>
               </div>
@@ -75,9 +75,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
+  selectGenre: [name: string]
 }>()
-
-const TOP_N = 15
 
 interface GenreStat {
   name: string
@@ -89,27 +88,8 @@ const stats = ref<GenreStat[]>([])
 const totalAlbums = ref(0)
 const albumsWithGenre = ref(0)
 
-// 计算展示项（Top 15 + 其他）
-const displayItems = computed(() => {
-  const items: (GenreStat & { isOther?: boolean })[] = []
-
-  if (stats.value.length <= TOP_N) {
-    return stats.value.map((s) => ({ ...s, isOther: false }))
-  }
-
-  // Top N
-  for (let i = 0; i < TOP_N; i++) {
-    items.push({ ...stats.value[i], isOther: false })
-  }
-
-  // 其他
-  const otherCount = stats.value
-    .slice(TOP_N)
-    .reduce((sum, s) => sum + s.count, 0)
-  items.push({ name: `其他 (${stats.value.length - TOP_N} 种)`, count: otherCount, isOther: true })
-
-  return items
-})
+// 展示所有风格
+const displayItems = computed(() => stats.value)
 
 // 最大值（用于条形图比例）
 const maxCount = computed(() => {
@@ -148,6 +128,11 @@ async function loadStats() {
 }
 
 function close() {
+  emit('close')
+}
+
+function selectGenre(name: string) {
+  emit('selectGenre', name)
   emit('close')
 }
 </script>
@@ -298,6 +283,18 @@ function close() {
   align-items: center;
   gap: 8px;
   height: 28px;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0 4px;
+  transition: background-color 0.15s ease;
+}
+
+.bar-row:hover {
+  background: #2a2a2a;
+}
+
+.bar-row:hover .bar-label {
+  color: #4fc3f7;
 }
 
 .bar-label {
@@ -309,11 +306,6 @@ function close() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.bar-row-other .bar-label {
-  color: #888;
-  font-style: italic;
 }
 
 .bar-track {
@@ -330,10 +322,6 @@ function close() {
   border-radius: 4px;
   transition: width 0.4s ease;
   min-width: 2px;
-}
-
-.bar-fill-other {
-  background: linear-gradient(90deg, #666, #555);
 }
 
 .bar-count {
