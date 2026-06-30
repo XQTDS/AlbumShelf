@@ -1277,8 +1277,9 @@ async function handleRandomPick() {
 
     const randomAlbum = result.data
 
-    // 清除所有筛选/搜索条件，回到默认列表
-    searchQuery.value = ''
+    // 优化：设置搜索词为专辑标题，利用搜索快速定位
+    // 后端 LIKE 搜索会将结果集缩小到极少条目（通常第1页）
+    searchQuery.value = randomAlbum.title
     selectedArtist.value = ''
     artistInput.value = ''
     selectedGenres.value = []
@@ -1286,11 +1287,15 @@ async function handleRandomPick() {
     sortBy.value = undefined
     sortOrder.value = 'desc'
 
-    // 重置列表并加载数据，然后定位到随机专辑
+    // 重置列表并加载搜索结果（仅1页即可命中）
     albums.value = []
     currentPage.value = 1
     hasMore.value = true
-    await fetchAlbumsAndScrollTo(randomAlbum.id)
+    await fetchAlbums(false)
+
+    // 滚动到随机专辑
+    await nextTick()
+    scrollToAlbumRow(randomAlbum.id)
 
     // 展开该专辑
     expandedAlbumId.value = randomAlbum.id
