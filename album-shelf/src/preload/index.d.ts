@@ -53,6 +53,7 @@ interface Track {
 interface SyncResult {
   added: number
   skipped: number
+  deleted: number
   total: number
 }
 
@@ -242,7 +243,6 @@ interface AlbumShelfAPI {
   onAuthStatusChanged: (callback: (status: NcmLoginStatus) => void) => () => void
   onLoginRequired: (callback: () => void) => () => void
   onMenuOpenLogin: (callback: () => void) => () => void
-  onAutoSync: (callback: () => void) => () => void
   onMenuSyncAlbums: (callback: () => void) => () => void
   onMenuGenreStats: (callback: () => void) => () => void
   onMenuVerifyIds: (callback: () => void) => () => void

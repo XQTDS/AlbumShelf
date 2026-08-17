@@ -14,24 +14,82 @@
 - **WHEN** 用户点击"同步"按钮且本地数据库已有专辑数据
 - **THEN** 系统仅将网易云中新增的收藏专辑写入本地数据库，已存在的专辑不重复写入（通过 netease_id 去重）
 
+#### Scenario: 已存在专辑不改动
+
+- **WHEN** 同步过程中发现某张专辑已存在于数据库（按 netease_album_id 匹配）
+- **THEN** 系统 SHALL 仅计数跳过，不修改该专辑在数据库中的任何字段
+
+### Requirement: 清理已取消收藏的专辑
+
+同步 SHALL 将本地数据库与网易云收藏列表保持一致：本地有但收藏列表中已没有的专辑将被删除。
+
+#### Scenario: 删除已取消收藏的专辑
+
+- **WHEN** 收藏列表完整拉取成功后，发现数据库中的某张专辑（按 netease_album_id 匹配）不在收藏列表中
+- **THEN** 系统 SHALL 将其从数据库中删除（track / album_genre 通过外键级联清理），并在同步结果中计入 deleted 数量
+
+#### Scenario: 拉取失败不删除
+
+- **WHEN** 收藏列表拉取失败（重试耗尽抛出错误）
+- **THEN** 系统 SHALL 中止同步且不执行任何删除
+
+#### Scenario: 先增后删
+
+- **WHEN** 同步执行新增与删除
+- **THEN** 系统 SHALL 先执行新增再执行删除，避免新增失败时数据被误删
+
+#### Scenario: 结果提示
+
+- **WHEN** 同步完成且发生过删除
+- **THEN** UI 提示 SHALL 包含删除数量（如「新增 X 张，删除 Y 张，跳过 Z 张已存在」）
+
 #### Scenario: 同步中状态反馈
 
 - **WHEN** 同步操作正在进行中
 - **THEN** 同步按钮 SHALL 显示为加载状态（禁用点击），防止重复触发
 
-### Requirement: SyncService 接口预留
+#### Scenario: 同步仅手动触发
 
-系统 SHALL 定义 SyncService 抽象接口，当前使用 MockSyncService 实现，待 ncm-cli 支持收藏专辑列表后可无缝切换为 NcmCliSyncService。
+- **WHEN** 用户登录成功或应用启动时已登录
+- **THEN** 系统 SHALL NOT 自动触发同步；同步仅由菜单栏「数据 → 同步专辑列表」入口触发
 
-#### Scenario: Mock 数据可用
+### Requirement: 同步数据源为 ncm-cli album collected
 
-- **WHEN** 使用 MockSyncService 时
-- **THEN** 系统 SHALL 返回 10-20 条预设的真实专辑种子数据，覆盖不同年代、风格和艺术家
+系统 SHALL 通过 NcmCliSyncService 调用 `ncm-cli album collected` 命令分页拉取用户收藏的专辑列表，作为同步的唯一数据源。
 
-#### Scenario: 接口切换
+#### Scenario: 分页拉取
 
-- **WHEN** ncm-cli 未来支持收藏专辑列表功能后
-- **THEN** 仅需实现 NcmCliSyncService 并替换注入，无需修改上层调用逻辑
+- **WHEN** 拉取收藏专辑列表
+- **THEN** 系统 SHALL 每页固定请求 50 条，offset 步进 50，直到返回空页停止
+
+#### Scenario: 翻页终止条件
+
+- **WHEN** 判断是否还有下一页
+- **THEN** 系统 SHALL 以返回记录为空作为终止条件，不依赖 recordCount（实测恒为 0）或单页条数
+
+#### Scenario: 单页失败重试
+
+- **WHEN** 某一页拉取失败（网络错误等）
+- **THEN** 系统 SHALL 重试最多 2 次（间隔 1 秒），仍失败则中止同步并抛出错误
+
+#### Scenario: 字段映射
+
+- **WHEN** 将 ncm-cli 返回的收藏专辑记录写入数据库
+- **THEN** 系统 SHALL 映射加密 ID 为 netease_album_id、明文 ID 为 netease_original_id、艺术家数组以 `/` 连接为 artist、publishTime 时间戳换算为 release_date、coverImgUrl 为 cover_url
+
+### Requirement: SyncService 接口
+
+系统 SHALL 定义 SyncService 抽象接口，由 NcmCliSyncService 实现，返回收藏专辑列表。
+
+#### Scenario: 接口形状
+
+- **WHEN** 调用 SyncService.fetchCollectedAlbums()
+- **THEN** 系统 SHALL 返回 NeteaseAlbum[]，包含加密 ID、明文 ID、标题、艺术家、封面、发行日期
+
+#### Scenario: 登录检查
+
+- **WHEN** 调用 SyncService.checkLoginStatus()
+- **THEN** 系统 SHALL 通过 ncm-cli login --check 返回当前登录状态
 
 ### Requirement: 同步失败处理
 
@@ -42,37 +100,13 @@
 - **WHEN** 同步过程中网络不可用或 ncm-cli 调用失败
 - **THEN** 系统 SHALL 显示错误信息提示用户，本地已有数据保持不变
 
-### Requirement: 单张专辑追加到 CSV
-
-系统 SHALL 支持将单张专辑追加到 CSV 文件，用于搜索添加场景。同时支持更新已有专辑在 CSV 中的 netease_id。
-
-#### Scenario: 追加新专辑
-
-- **WHEN** 用户通过搜索添加一张新专辑
-- **THEN** 系统 SHALL 将专辑信息（title, artist, netease_id）追加到 album-collection.csv 文件末尾
-
-#### Scenario: CSV 文件不存在
-
-- **WHEN** CSV 文件不存在时追加专辑
-- **THEN** 系统 SHALL 创建新的 CSV 文件（包含表头），然后写入该专辑
-
-#### Scenario: 写入前备份
-
-- **WHEN** 追加专辑到 CSV 文件
-- **THEN** 系统 SHALL 先创建 .bak 备份文件，再执行写入操作
-
-#### Scenario: 更新已有专辑的 netease_id
-
-- **WHEN** 修复某张专辑的 netease_album_id 后需要回写 CSV
-- **THEN** 系统 SHALL 通过 title + artist 定位 CSV 中对应行，更新其 netease_id 字段为新值
-
 ### Requirement: 单张专辑同步
 
 系统 SHALL 支持同步单张新增专辑到本地数据库，避免全量同步开销。
 
 #### Scenario: 增量同步单张专辑
 
-- **WHEN** 新专辑写入 CSV 后触发同步
+- **WHEN** 搜索添加场景写入一张新专辑
 - **THEN** 系统 SHALL 仅将该专辑写入 SQLite 数据库，不重新处理已有专辑
 
 #### Scenario: 同步后自动补全

@@ -3,21 +3,9 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 // ==================== AlbumShelf API ====================
 
-/** 模糊匹配确认项 */
-interface ConfirmedFuzzyMatch {
-  originalTitle: string
-  matchedTitle: string
-  artist: string
-  neteaseId: string
-}
-
 const albumShelfAPI = {
   // 同步操作
   syncStart: () => ipcRenderer.invoke('sync:start'),
-
-  // 确认模糊匹配
-  syncConfirmFuzzyMatches: (confirmedMatches: ConfirmedFuzzyMatch[]) =>
-    ipcRenderer.invoke('sync:confirmFuzzyMatches', confirmedMatches),
 
   // 随机专辑
   albumRandom: () => ipcRenderer.invoke('album:random'),
@@ -175,13 +163,6 @@ const albumShelfAPI = {
     const handler = () => callback()
     ipcRenderer.on('menu:openLogin', handler)
     return () => ipcRenderer.removeListener('menu:openLogin', handler)
-  },
-
-  // 监听自动同步事件（启动时已登录）
-  onAutoSync: (callback: () => void) => {
-    const handler = () => callback()
-    ipcRenderer.on('auth:autoSync', handler)
-    return () => ipcRenderer.removeListener('auth:autoSync', handler)
   },
 
   // 监听菜单栏同步专辑事件

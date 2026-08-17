@@ -120,6 +120,24 @@ export class AlbumService {
   }
 
   /**
+   * Delete albums by netease_album_id.
+   * track / album_genre rows are cleaned up by ON DELETE CASCADE.
+   * @returns the number of deleted albums
+   */
+  deleteAlbumsByNeteaseAlbumIds(neteaseAlbumIds: string[]): number {
+    if (neteaseAlbumIds.length === 0) return 0
+
+    const placeholders = neteaseAlbumIds.map(() => '?').join(', ')
+    const deleteMany = this.db.transaction((ids: string[]) => {
+      const result = this.db
+        .prepare(`DELETE FROM album WHERE netease_album_id IN (${placeholders})`)
+        .run(...ids)
+      return result.changes
+    })
+    return deleteMany(neteaseAlbumIds)
+  }
+
+  /**
    * Update an existing album by id.
    */
   updateAlbum(id: number, updates: AlbumUpdate): void {

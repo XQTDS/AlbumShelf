@@ -107,19 +107,15 @@ function notifyRenderer(channel: string, data: unknown): void {
  * 应用启动时初始化认证状态
  * 检查登录状态：
  * - 未登录时通知渲染进程显示登录引导
- * - 已登录时通知渲染进程自动同步专辑
+ * - 已登录时仅更新菜单状态（不自动同步，同步由用户手动触发）
  */
 export async function initAuthOnStartup(): Promise<void> {
   const status = await checkAndUpdateLoginStatus()
   rebuildMenu()
-  
+
   // 延迟发送，等待渲染进程准备就绪
   setTimeout(() => {
-    if (status.isLoggedIn) {
-      // 已登录，触发自动同步
-      console.log('[auth-service] 已登录，触发自动同步专辑列表')
-      notifyRenderer('auth:autoSync', null)
-    } else {
+    if (!status.isLoggedIn) {
       // 未登录，显示登录引导
       notifyRenderer('auth:loginRequired', null)
     }

@@ -92,7 +92,7 @@
 
 ### Requirement: 修复后重新同步
 
-系统 SHALL 在修复 `netease_album_id` 后自动重新同步曲目、封面并回写 CSV。
+系统 SHALL 在修复 `netease_album_id` 后自动重新同步曲目和封面。
 
 #### Scenario: 重新同步曲目
 
@@ -103,11 +103,6 @@
 
 - **WHEN** 某张专辑的 `netease_album_id` 被修复
 - **THEN** 系统 SHALL 使用新 ID 调用 `getAlbumDetail()` 获取正确的 `coverImgUrl` 并更新数据库
-
-#### Scenario: 回写 CSV
-
-- **WHEN** 某张专辑的 `netease_album_id` 被修复
-- **THEN** 系统 SHALL 通过 title + artist 定位 CSV 中对应行，更新其 netease_id 字段
 
 ### Requirement: 单张专辑手动指定网易云 ID 入口
 
@@ -144,7 +139,7 @@
 
 ### Requirement: 复用现有修复链路
 
-系统 SHALL 复用现有 `album:fixId` IPC 完成手动修复的全部副作用：更新 `netease_album_id` / `netease_original_id` / `title`、清旧曲目并重拉、重新获取封面、回写 CSV。
+系统 SHALL 复用现有 `album:fixId` IPC 完成手动修复的全部副作用：更新 `netease_album_id` / `netease_original_id` / `title`、清旧曲目并重拉、重新获取封面。
 
 #### Scenario: 用户确认修复
 

@@ -4,8 +4,7 @@ import { TrackService } from './track-service'
 import { NcmCliService } from './ncm-cli-service'
 import { TrackSyncService } from './track-sync-service'
 import { SyncManager } from './sync/sync-manager'
-import { MockSyncService } from './sync/mock-sync-service'
-import { updateNeteaseIdInCsv } from './sync/csv-writer'
+import { NcmCliSyncService } from './sync/ncm-cli-sync-service'
 import {
   EnrichService,
   createMbClient,
@@ -38,8 +37,8 @@ function initServices(): void {
   ncmCliService = new NcmCliService()
   trackSyncService = new TrackSyncService(ncmCliService, trackService, albumService)
 
-  // 当前使用 MockSyncService，待 ncm-cli 支持后切换
-  const syncService = new MockSyncService()
+  // 通过 ncm-cli album collected 直接拉取收藏专辑列表
+  const syncService = new NcmCliSyncService(ncmCliService)
   syncManager = new SyncManager(syncService, albumService)
 
   enrichService = new EnrichService(albumService)
@@ -59,7 +58,7 @@ export function registerIpcHandlers(): void {
 
   /**
    * 触发同步操作
-   * 返回同步结果统计（包含待确认的模糊匹配列表）
+   * 返回同步结果统计（新增/跳过/总数）
    */
   ipcMain.handle('sync:start', async () => {
     try {
@@ -75,33 +74,6 @@ export function registerIpcHandlers(): void {
       }
 
       return { success: true, data: result }
-    } catch (error) {
-      return { success: false, error: (error as Error).message }
-    }
-  })
-
-  /**
-   * 确认模糊匹配的专辑
-   * 用户确认后将专辑写入数据库并更新 CSV
-   */
-  ipcMain.handle('sync:confirmFuzzyMatches', async (_event, confirmedMatches: Array<{
-    originalTitle: string
-    matchedTitle: string
-    artist: string
-    neteaseId: string
-  }>) => {
-    try {
-      const addedCount = await syncManager.confirmFuzzyMatches(confirmedMatches)
-
-      // 如果有新增专辑且 MB 客户端已初始化，自动触发补全
-      if (addedCount > 0 && isMbClientInitialized()) {
-        const mainWindow = BrowserWindow.getAllWindows()[0]
-        enrichAll(mainWindow).catch((err) =>
-          console.error('自动补全失败:', err)
-        )
-      }
-
-      return { success: true, data: { added: addedCount } }
     } catch (error) {
       return { success: false, error: (error as Error).message }
     }
@@ -674,7 +646,7 @@ export function registerIpcHandlers(): void {
   })
 
   /**
-   * 添加专辑到收藏（写入 CSV + 同步到数据库 + 自动补全）
+   * 添加专辑到收藏（写入数据库 + 自动补全）
    */
   ipcMain.handle('album:addToCollection', async (_event, album: {
     netease_album_id: string
@@ -684,8 +656,8 @@ export function registerIpcHandlers(): void {
     cover_url?: string | null
   }) => {
     try {
-      // 1. 追加到 CSV 并同步到数据库
-      const albumId = syncManager.addAlbumToCollection(album)
+      // 1. 写入数据库
+      const albumId = syncManager.syncSingleAlbum(album)
 
       // 2. 自动触发 MusicBrainz 补全（如果客户端可用）
       if (isMbClientInitialized()) {
@@ -818,7 +790,7 @@ export function registerIpcHandlers(): void {
 
   /**
    * 修复单张专辑的 netease_album_id
-   * 更新 ID + title → 清除旧曲目并重新同步 → 重新获取封面 → 回写 CSV
+   * 更新 ID + title → 清除旧曲目并重新同步 → 重新获取封面
    */
   ipcMain.handle('album:fixId', async (_event, params: {
     albumId: number
@@ -855,14 +827,7 @@ export function registerIpcHandlers(): void {
         console.error(`[album:fixId] 重新获取封面失败 (albumId: ${albumId}):`, err)
       }
 
-      // 4. 回写 CSV
-      try {
-        updateNeteaseIdInCsv(album.title, album.artist, newNeteaseAlbumId)
-      } catch (err) {
-        console.error(`[album:fixId] CSV 回写失败 (albumId: ${albumId}):`, err)
-      }
-
-      // 5. 返回更新后的完整专辑（含 genres），便于前端原地刷新
+      // 4. 返回更新后的完整专辑（含 genres），便于前端原地刷新
       const updatedAlbum = albumService.getAlbumById(albumId)
       return { success: true, data: { album: updatedAlbum } }
     } catch (error) {

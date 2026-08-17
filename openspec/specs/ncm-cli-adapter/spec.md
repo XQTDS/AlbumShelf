@@ -23,3 +23,22 @@
 
 - **WHEN** `ncm-cli` 命令不存在或不在 PATH 中
 - **THEN** 系统 SHALL 抛出错误，说明 ncm-cli 不可用
+
+### Requirement: 拉取用户收藏专辑列表
+
+系统 SHALL 通过 `ncm-cli album collected` 命令分页获取用户收藏的专辑列表。
+
+#### Scenario: 单页拉取
+
+- **WHEN** 调用 `getCollectedAlbumsPage(limit, offset)`
+- **THEN** 系统 SHALL 执行 `ncm-cli album collected --limit <limit> --offset <offset>` 并解析返回的 `records` 数组
+
+#### Scenario: 返回结构解析
+
+- **WHEN** 命令返回 code 200 的 JSON
+- **THEN** 系统 SHALL 解析每条记录中的 `id`（加密 ID）、`originalId`（明文 ID）、`name`、`artists`、`coverImgUrl`、`publishTime` 等字段
+
+#### Scenario: 需要登录
+
+- **WHEN** 未登录状态下调用 album collected
+- **THEN** 系统 SHALL 抛出 NcmLoginRequiredError，由上层引导用户登录

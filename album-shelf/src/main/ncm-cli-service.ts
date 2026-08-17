@@ -84,6 +84,30 @@ interface NcmCliAlbumSearchResponse {
   records: NcmCliAlbumSearchResult[]
 }
 
+/** ncm-cli album collected 返回的单张收藏专辑 */
+export interface NcmCliCollectedAlbum {
+  originalId: number
+  id: string // 32位 hex，用于 ncm-cli 命令参数
+  name: string
+  language: string
+  coverImgUrl: string | null
+  company: string | null
+  transName: string | null
+  aliaName: string | null
+  genre: string | null
+  artists: NcmCliArtist[]
+  briefDesc: string
+  description: string
+  publishTime: number
+}
+
+/** ncm-cli album collected 返回的数据结构 */
+export interface NcmCliCollectedAlbumResponse {
+  /** 注意：ncm-cli 0.1.6 实测该字段恒为 0，不可用于翻页终止判断 */
+  recordCount: number
+  records: NcmCliCollectedAlbum[]
+}
+
 /** 用户信息 */
 export interface NcmUser {
   userId: number
@@ -266,6 +290,27 @@ export class NcmCliService {
     return response.records || []
   }
 
+  /**
+   * 获取用户收藏的专辑列表（单页）
+   *
+   * @param limit 每页数量（建议固定 50；ncm-cli 0.1.6 实测 limit 过小时可能返回 HTTP 400）
+   * @param offset 偏移量
+   * @returns 单页结果，recordCount 恒为 0（ncm-cli 0.1.6 行为），翻页需依赖 records 是否为空
+   */
+  async getCollectedAlbumsPage(
+    limit: number,
+    offset: number
+  ): Promise<NcmCliCollectedAlbumResponse> {
+    return this.execute<NcmCliCollectedAlbumResponse>([
+      'album',
+      'collected',
+      '--limit',
+      String(limit),
+      '--offset',
+      String(offset)
+    ])
+  }
+
   // ==================== 播放控制 ====================
 
   /**
@@ -364,7 +409,8 @@ export class NcmCliService {
    */
   async getState(): Promise<{ status: string; [key: string]: unknown }> {
     const response = await this.executePlayerCmd(['state'])
-    return (response as { state: { status: string } }).state ?? { status: 'unknown' }
+    const state = (response as unknown as { state?: { status: string } }).state
+    return state ?? { status: 'unknown' }
   }
 
   /**

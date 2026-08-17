@@ -1,34 +1,23 @@
-import { SyncService, FuzzyMatchAlbum } from './sync-service'
+import { SyncService } from './sync-service'
 import { AlbumService, AlbumInsert } from '../album-service'
-import { writeNeteaseIdsToCsv, updateAlbumTitleInCsv, appendAlbumToCsv, AlbumWithNeteaseId } from './csv-writer'
 
 export interface SyncResult {
   /** 本次同步新增的专辑数量 */
   added: number
   /** 本次同步跳过（已存在）的专辑数量 */
   skipped: number
+  /** 本次同步删除（本地有但网易云收藏列表中已没有）的专辑数量 */
+  deleted: number
   /** 同步源返回的专辑总数 */
   total: number
-  /** 需要用户确认的模糊匹配专辑 */
-  fuzzyMatches: FuzzyMatchAlbum[]
-}
-
-/** 用户确认的模糊匹配结果 */
-export interface ConfirmedFuzzyMatch {
-  /** CSV 中的原始专辑名 */
-  originalTitle: string
-  /** 网易云返回的专辑名（用户确认后使用这个） */
-  matchedTitle: string
-  /** 艺术家名 */
-  artist: string
-  /** 网易云专辑 ID */
-  neteaseId: string
 }
 
 /**
  * SyncManager - 同步管理器
  *
- * 负责调用 SyncService 获取专辑列表，通过 netease_album_id 增量去重写入数据库。
+ * 负责调用 SyncService 获取收藏专辑列表，通过 netease_album_id 增量去重写入数据库。
+ * - 已存在于数据库的专辑仅计数跳过，不修改任何字段
+ * - 本地有但收藏列表中已没有的专辑会被删除（含曲目/风格级联清理）
  */
 export class SyncManager {
   private syncService: SyncService
@@ -43,9 +32,8 @@ export class SyncManager {
   /**
    * 执行同步操作
    * - 从同步源获取收藏专辑列表
-   * - 通过 netease_album_id 增量去重写入数据库
-   * - 回写 netease_id 到 CSV 文件
-   * - 返回同步结果统计（包含待确认的模糊匹配）
+   * - 通过 netease_album_id 增量去重写入数据库（已存在专辑不改动）
+   * - 返回同步结果统计
    */
   async sync(): Promise<SyncResult> {
     if (this.isSyncing) {
@@ -55,16 +43,15 @@ export class SyncManager {
     this.isSyncing = true
 
     try {
-      // 1. 从同步源获取专辑列表（包含精确匹配和模糊匹配）
-      const { albums: neteaseAlbums, fuzzyMatches } = await this.syncService.fetchCollectedAlbums()
+      // 1. 从同步源获取收藏专辑列表（完整拉取，失败则整体中止，不执行删除）
+      const neteaseAlbums = await this.syncService.fetchCollectedAlbums()
       const now = new Date().toISOString()
 
       let added = 0
       let skipped = 0
 
-      // 2. 逐个检查并写入数据库（通过 netease_album_id 去重）
+      // 2. 逐个检查并写入数据库（通过 netease_album_id 去重，已存在的不修改）
       const albumsToInsert: AlbumInsert[] = []
-      const albumsForCsvWriteback: AlbumWithNeteaseId[] = []
 
       for (const album of neteaseAlbums) {
         const existing = this.albumService.getAlbumByNeteaseAlbumId(album.netease_album_id)
@@ -83,13 +70,6 @@ export class SyncManager {
           })
           added++
         }
-
-        // 收集所有专辑用于 CSV 回写
-        albumsForCsvWriteback.push({
-          title: album.title,
-          artist: album.artist,
-          netease_id: album.netease_album_id
-        })
       }
 
       // 3. 批量插入新专辑
@@ -97,76 +77,26 @@ export class SyncManager {
         this.albumService.insertAlbums(albumsToInsert)
       }
 
-      // 4. 回写 netease_id 到 CSV 文件
-      try {
-        writeNeteaseIdsToCsv(albumsForCsvWriteback)
-      } catch (error) {
-        console.error('CSV 回写失败:', error)
-        // 回写失败不影响同步结果
+      // 4. 删除本地有但收藏列表中已没有的专辑（先增后删：新增失败则不会误删）
+      const onlineIds = new Set(neteaseAlbums.map((album) => album.netease_album_id))
+      const { albumIds: dbAlbumIds } = this.albumService.getCollectedNeteaseIds()
+      const missingIds = dbAlbumIds.filter((id) => !onlineIds.has(id))
+      const deleted = missingIds.length > 0
+        ? this.albumService.deleteAlbumsByNeteaseAlbumIds(missingIds)
+        : 0
+      if (deleted > 0) {
+        console.log(`[SyncManager] 同步清理：删除 ${deleted} 张已不在收藏列表中的专辑`)
       }
 
       return {
         added,
         skipped,
-        total: neteaseAlbums.length,
-        fuzzyMatches
+        deleted,
+        total: neteaseAlbums.length
       }
     } finally {
       this.isSyncing = false
     }
-  }
-
-  /**
-   * 确认模糊匹配的专辑
-   * - 将专辑写入数据库
-   * - 更新 CSV 中的专辑名和 netease_id
-   * @param confirmedMatches 用户确认的模糊匹配列表
-   * @returns 成功添加的专辑数量
-   */
-  async confirmFuzzyMatches(confirmedMatches: ConfirmedFuzzyMatch[]): Promise<number> {
-    if (confirmedMatches.length === 0) return 0
-
-    const now = new Date().toISOString()
-    const albumsToInsert: AlbumInsert[] = []
-
-    for (const match of confirmedMatches) {
-      // 检查是否已存在
-      const existing = this.albumService.getAlbumByNeteaseAlbumId(match.neteaseId)
-      if (existing) {
-        console.log(`[SyncManager] 跳过已存在的专辑: ${match.matchedTitle}`)
-        continue
-      }
-
-      // 使用网易云返回的专辑名（用户确认后的）
-      albumsToInsert.push({
-        netease_album_id: match.neteaseId,
-        netease_original_id: null,
-        title: match.matchedTitle, // 使用网易云的专辑名
-        artist: match.artist,
-        cover_url: null,
-        release_date: null,
-        track_count: null,
-        synced_at: now
-      })
-    }
-
-    // 批量插入数据库
-    if (albumsToInsert.length > 0) {
-      this.albumService.insertAlbums(albumsToInsert)
-    }
-
-    // 更新 CSV 文件：修正专辑名并写入 netease_id
-    for (const match of confirmedMatches) {
-      try {
-        updateAlbumTitleInCsv(match.originalTitle, match.artist, match.matchedTitle, match.neteaseId)
-        console.log(`[SyncManager] 已更新 CSV: "${match.originalTitle}" -> "${match.matchedTitle}"`)
-      } catch (error) {
-        console.error(`[SyncManager] 更新 CSV 失败: ${match.originalTitle}`, error)
-      }
-    }
-
-    console.log(`[SyncManager] 确认模糊匹配完成: 添加 ${albumsToInsert.length} 张专辑`)
-    return albumsToInsert.length
   }
 
   /**
@@ -211,29 +141,5 @@ export class SyncManager {
     })
 
     return albumId
-  }
-
-  /**
-   * 追加专辑到 CSV 并同步到数据库
-   * 用于搜索添加场景的完整流程
-   * @param album 专辑信息
-   * @returns 新增的专辑 ID
-   */
-  addAlbumToCollection(album: {
-    netease_album_id: string
-    netease_original_id: number
-    title: string
-    artist: string
-    cover_url?: string | null
-  }): number {
-    // 1. 追加到 CSV 文件
-    appendAlbumToCsv({
-      title: album.title,
-      artist: album.artist,
-      netease_id: album.netease_album_id
-    })
-
-    // 2. 同步到数据库
-    return this.syncSingleAlbum(album)
   }
 }

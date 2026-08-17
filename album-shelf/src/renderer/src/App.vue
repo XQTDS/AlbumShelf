@@ -1398,9 +1398,9 @@ async function handleSync() {
   try {
     const result = await window.api.syncStart()
     if (result.success && result.data) {
-      const { added, skipped, total, fuzzyMatches } = result.data
-      if (added > 0) {
-        showMessage(`同步完成！新增 ${added} 张专辑，跳过 ${skipped} 张已存在`, 'success')
+      const { added, skipped, deleted, total } = result.data
+      if (added > 0 || deleted > 0) {
+        showMessage(`同步完成！新增 ${added} 张，删除 ${deleted} 张，跳过 ${skipped} 张已存在`, 'success')
       } else {
         showMessage(`同步完成，没有新增专辑（${total} 张均已存在）`, 'info')
       }
@@ -1517,13 +1517,10 @@ const showLoginGuide = ref(false)
 let removeLoginRequiredListener: (() => void) | null = null
 let removeMenuOpenLoginListener: (() => void) | null = null
 let removeAuthStatusChangedListener: (() => void) | null = null
-let removeAutoSyncListener: (() => void) | null = null
 
 // 登录成功后的处理
-async function handleLoginSuccess() {
-  showMessage('登录成功！正在同步专辑数据...', 'success')
-  // 触发专辑同步
-  await handleSync()
+function handleLoginSuccess() {
+  showMessage('登录成功！可点击菜单栏「数据 → 同步专辑列表」同步收藏', 'success')
 }
 
 // 登录引导弹窗点击"登录"
@@ -1579,12 +1576,6 @@ onMounted(async () => {
     console.log('[App] 登录状态变化:', status.isLoggedIn ? status.user?.nickname : '未登录')
   })
 
-  // 监听自动同步事件（启动时已登录）
-  removeAutoSyncListener = window.api.onAutoSync(async () => {
-    console.log('[App] 收到自动同步事件，开始同步专辑列表')
-    await handleSync()
-  })
-
   // 监听菜单栏"风格统计"事件
   removeMenuGenreStatsListener = window.api.onMenuGenreStats(() => {
     showGenreStatsModal.value = true
@@ -1623,9 +1614,6 @@ onUnmounted(() => {
   }
   if (removeAuthStatusChangedListener) {
     removeAuthStatusChangedListener()
-  }
-  if (removeAutoSyncListener) {
-    removeAutoSyncListener()
   }
   if (removeMenuGenreStatsListener) {
     removeMenuGenreStatsListener()
