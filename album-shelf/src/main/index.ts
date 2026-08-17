@@ -4,19 +4,47 @@ import { initDatabase, closeDatabase } from './database'
 import { registerIpcHandlers } from './ipc-handlers'
 import { initAuthOnStartup, setMenuBuilder, getLoginStatus, logout } from './auth-service'
 import type { NcmLoginStatus } from './auth-service'
+import { loadWindowState, saveWindowState, isValidBounds } from './window-state'
+
+const DEFAULT_WIDTH = 1200
+const DEFAULT_HEIGHT = 800
+const MIN_WIDTH = 900
+const MIN_HEIGHT = 600
 
 function createWindow(): void {
-  const mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 900,
-    minHeight: 600,
+  const savedState = loadWindowState()
+
+  const windowOptions: Electron.BrowserWindowConstructorOptions = {
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
     show: false,
     title: 'AlbumShelf',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
     }
+  }
+
+  // 恢复上次关闭时的窗口位置与尺寸；保存的位置在当前显示器上不可见时回退默认值
+  if (savedState && isValidBounds(savedState)) {
+    windowOptions.x = savedState.x
+    windowOptions.y = savedState.y
+    windowOptions.width = Math.max(savedState.width, MIN_WIDTH)
+    windowOptions.height = Math.max(savedState.height, MIN_HEIGHT)
+  }
+
+  const mainWindow = new BrowserWindow(windowOptions)
+
+  // 恢复最大化状态（show: false 时先最大化再显示，避免闪烁）
+  if (savedState?.isMaximized) {
+    mainWindow.maximize()
+  }
+
+  // 关闭时保存窗口状态，供下次启动恢复
+  mainWindow.on('close', () => {
+    saveWindowState(mainWindow)
   })
 
   mainWindow.on('ready-to-show', () => {
