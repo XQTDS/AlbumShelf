@@ -13,3 +13,7 @@
    - `tasks.md` — 拆解后的任务清单
 3. **实现**：按 tasks.md 完成代码实现。
 4. **收尾**：更新 `openspec/specs/` 中受影响的 spec，并将本次 change 归档到 `openspec/changes/archive/`。
+
+## 验证约定
+
+改完代码后**不要**自动运行 typecheck 或其他验证命令（项目存在既有基线类型错误，typecheck 无信息量）。直接总结改动内容和建议用户留意的验证点，由用户手动运行 `npm run dev` 验证。
