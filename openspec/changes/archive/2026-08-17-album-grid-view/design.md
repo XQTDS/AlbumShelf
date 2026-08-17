@@ -40,11 +40,14 @@
 
 **理由**：表格列头点击会改 `sortBy`/`sortOrder`，computed getter 保证切到网格时下拉框自动反映当前排序；反之亦然。复用现有 `resetAndFetch` 语义（条件变化重置列表）。
 
-### 4. 网格布局与卡片：auto-fit + minmax(120px, 1fr) 始终铺满
+### 4. 网格布局与卡片：auto-fill + minmax(120px, 1fr) 铺满且有隐含上限
 
-**决策**：`.album-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; padding: 12px; }`。卡片 `.album-card { aspect-ratio: 1/1; position: relative; overflow: hidden; cursor: pointer; }`（无圆角，唱片墙保持方正），封面图 `object-fit: cover` 填满。**卡片内封面/占位符需显式清零圆角与阴影**（`.album-card .cover-img/.cover-placeholder { border-radius: 0; }`）：`overflow: hidden` 只能裁掉卡片之外的内容，`.cover-img` 自身的圆角会裁掉图片内侧四角、露出页面底色，观感仍像圆角。hover 遮罩 `.card-overlay`（`rgba(0,0,0,.55)`，opacity 过渡）内显示标题（两行截断）+ 艺术家（单行截断）。选中态 `outline: 2px solid var(--primary)`（使用主题变量）。最小尺寸 120px 定义为样式常量，后续微调只需改 `minmax` 一处数值。
+**决策**：`.album-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; padding: 12px; }`（gap/padding 属观感微调项）。卡片 `.album-card { aspect-ratio: 1/1; position: relative; overflow: hidden; cursor: pointer; }`（无圆角，唱片墙保持方正），封面图 `object-fit: cover` 填满。**卡片内封面/占位符需显式清零圆角与阴影**（`.album-card .cover-img/.cover-placeholder { border-radius: 0; }`）：`overflow: hidden` 只能裁掉卡片之外的内容，`.cover-img` 自身的圆角会裁掉图片内侧四角、露出页面底色，观感仍像圆角。hover 遮罩 `.card-overlay`（`rgba(0,0,0,.55)`，opacity 过渡）内显示标题（两行截断）+ 艺术家（单行截断）。选中态 `outline: 2px solid var(--primary)`（使用主题变量）。最小尺寸 120px 定义为样式常量，后续微调只需改 `minmax` 一处数值。
 
-**理由**：初版采用 `auto-fill, minmax(120px, 200px)` + `justify-content: center`，实测窗口宽度变化时卡片尺寸几乎不变（轨道按最小尺寸建列，增长空间被"能否再放一列"吸走），只有列数变化，且卡片到 200px 上限后两侧留白。改用 `auto-fit + minmax(120px, 1fr)`：窗口变宽时卡片尺寸随宽度连续增长，放不下新一列时才折行，空间始终被卡片铺满、无两侧空白，满足"尺寸与列数同时变化"的目标。卡片尺寸天然有界：即将新增一列时达到最大（两列时约 186px，列数越多越接近 120px），不会被 1fr 无限放大，实际效果接近"120px 下限 + 隐含上限"；折行瞬间卡片从 ~186px 回落到 120px 的锯齿是网格布局固有行为，幅度可接受。
+**理由**（三轮演进）：
+- 初版 `auto-fill, minmax(120px, 200px)` + `justify-content: center`：窗口宽度变化时卡片尺寸几乎不变（轨道按最小尺寸建列，增长空间被"能否再放一列"吸走），且卡片到 200px 上限后两侧留白。
+- 改为 `auto-fit, minmax(120px, 1fr)`：卡片随宽度连续增长、空间始终铺满，但 `auto-fit` 会坍缩空轨道——搜索结果只有 1-2 张时，卡片轨道各占一半宽度被 1fr 拉得特别大。
+- 最终 `auto-fill, minmax(120px, 1fr)`：空轨道保留并同样参与 1fr 自由空间分配，少量结果时卡片保持接近 120px 不被拉大；结果全量时与 auto-fit 行为一致（铺满、尺寸与列数同时变化）。卡片隐含上限 = 即将新增一列时的尺寸（不超过约 2×120px，列数越多越接近 120px），无需 JS 即可满足"最大尺寸限制"诉求；折行瞬间卡片回落的锯齿是网格布局固有行为，幅度可接受。
 
 ### 5. 封面缺失/失败 → 💿 占位
 
@@ -63,6 +66,12 @@
 **决策**：选择器从 `tr.album-row` 改为 `.album-row, .album-card`（两种视图 DOM 顺序均与 `albums` 数组一致，按索引取即可）；定位计算从 `offsetTop` 改为 `getBoundingClientRect`：`container.scrollTop = cardTop - containerTop + container.scrollTop - containerHeight/2 + cardHeight/2`。
 
 **理由**：网格卡片的 `offsetTop` 相对 offsetParent（可能是 body），不可靠；rect 差值计算对表格行与网格卡片通用，行为与现状（目标居中显示）一致。
+
+### 8. 网格卡片排序角标
+
+**决策**：选择非默认排序时，每张卡片左下角显示对应字段的信息角标：user_rating → `★ 4.0`、mb_rating → `⭐ 4.0`、release_date → 日期原文；字段值为空的专辑不显示角标。实现为 `cardBadgeText(album)` 函数（读 `sortBy` 当前值，渲染时自动建立响应式依赖）+ `.card-badge` 样式（绝对定位左下角、`z-index: 2` 置于 hover 遮罩之上、半透明黑底白字、超长省略）。
+
+**理由**：排序后用户关心的是排序字段的值，角标让网格视图也能直接看到排序依据；复用表格已有的字段语义（★ 我的评分 / ⭐ MB评分），卡片空间有限故只显示数值而非星星串。默认排序不显示角标，保持纯封面观感。
 
 ## Risks / Trade-offs
 

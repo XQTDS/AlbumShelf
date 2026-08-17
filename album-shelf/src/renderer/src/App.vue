@@ -258,6 +258,8 @@
               <div class="card-title">{{ album.title }}</div>
               <div class="card-artist">{{ album.artist }}</div>
             </div>
+            <!-- 排序角标：按当前排序字段显示对应信息 -->
+            <div v-if="cardBadgeText(album)" class="card-badge">{{ cardBadgeText(album) }}</div>
           </div>
           <!-- 哨兵元素和加载更多 -->
           <div v-if="hasMore || loadingMore" ref="sentinelRef" class="load-more-sentinel grid-sentinel">
@@ -1394,6 +1396,20 @@ const gridSortKey = computed<string>({
   }
 })
 
+// 网格卡片角标：按当前排序字段显示对应信息（字段值为空则不显示角标）
+function cardBadgeText(album: Album): string {
+  if (sortBy.value === 'user_rating' && album.user_rating != null) {
+    return `★ ${album.user_rating.toFixed(1)}`
+  }
+  if (sortBy.value === 'mb_rating' && album.mb_rating != null) {
+    return `⭐ ${album.mb_rating.toFixed(1)}`
+  }
+  if (sortBy.value === 'release_date' && album.release_date) {
+    return album.release_date
+  }
+  return ''
+}
+
 // ==================== 滚动进度条处理 ====================
 
 function handleScrollSeek(scrollTop: number) {
@@ -2259,8 +2275,9 @@ body {
 
 .album-grid {
   display: grid;
-  /* 最小卡片 120px，窗口变宽时卡片与列数同时变化，网格始终铺满可用宽度 */
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  /* minmax(120px,1fr)+auto-fill：窗口变宽时卡片与列数同时增长、始终铺满；
+     auto-fill 保留空轨道参与 1fr 分配，1-2 张结果时卡片不被拉大（隐含上限不超过约 2×120px，列数越多越接近 120px） */
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 0px;
   padding: 1px 1px;
 }
@@ -2332,6 +2349,24 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+}
+
+/* 排序角标：显示当前排序字段的值，置于遮罩之上保持可见 */
+.card-badge {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  z-index: 2;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.4;
+  border-radius: 4px;
+  max-width: calc(100% - 12px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .grid-sentinel {
