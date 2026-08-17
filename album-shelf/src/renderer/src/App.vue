@@ -247,7 +247,7 @@
           >
             <img
               v-if="album.cover_url && !coverErrorSet.has(album.id)"
-              :src="album.cover_url"
+              :src="coverSrc(album)!"
               :alt="album.title"
               class="cover-img"
               @error="onCoverError(album.id)"
@@ -296,7 +296,7 @@
               <div class="detail-cover">
                 <img
                   v-if="selectedAlbum.cover_url && !coverErrorSet.has(selectedAlbum.id)"
-                  :src="selectedAlbum.cover_url"
+                  :src="coverSrc(selectedAlbum)!"
                   :alt="selectedAlbum.title"
                   class="cover-img"
                   @error="onCoverError(selectedAlbum.id)"
@@ -704,6 +704,10 @@ async function fetchCoverFromRemote(albumId: number) {
       coverErrorSet.value = newSet
       // 用新 URL 替换（后端已持久化到数据库）
       album.cover_url = result.data.cover_url
+      // 新 URL 可能可以正常缓存，重置协议失败标记让 cover:// 重新尝试
+      const failedSet = new Set(coverProtocolFailed.value)
+      failedSet.delete(albumId)
+      coverProtocolFailed.value = failedSet
     }
   } catch (error) {
     console.error('获取封面失败:', error)
@@ -870,9 +874,24 @@ async function handlePlayTrack(_albumId: number, track: TrackInfo) {
 
 const coverErrorSet = ref<Set<number>>(new Set())
 
+// cover:// 协议加载失败（本地缓存下载失败/离线且未缓存）的专辑，回退为直接加载远程 URL
+const coverProtocolFailed = ref<Set<number>>(new Set())
+
+// 封面地址：优先走 cover:// 本地缓存协议，协议失败后回退远程 URL
+function coverSrc(album: { id: number; cover_url?: string | null }): string | null {
+  if (!album.cover_url) return null
+  if (coverProtocolFailed.value.has(album.id)) return album.cover_url
+  return `cover://album/${album.id}`
+}
+
 function onCoverError(albumId: number) {
+  // 第一级：cover:// 失败 → 标记后回退远程 URL（src 变化自动重渲染，不进入错误态）
+  if (!coverProtocolFailed.value.has(albumId)) {
+    coverProtocolFailed.value = new Set(coverProtocolFailed.value).add(albumId)
+    return
+  }
+  // 第二级：远程 URL 也失败 → 占位图 + 走现有补全流程
   coverErrorSet.value = new Set(coverErrorSet.value).add(albumId)
-  // 图片加载失败，尝试从 ncm-cli 获取新的封面 URL
   fetchCoverFromRemote(albumId)
 }
 

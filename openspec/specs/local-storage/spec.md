@@ -64,3 +64,40 @@
 
 - **WHEN** 系统初始化数据库
 - **THEN** 数据库文件 SHALL 位于 `app.getPath('userData')` 下，文件名为 `album-shelf.db`
+
+### Requirement: 封面图片本地缓存
+
+系统 SHALL 将专辑封面图片下载并缓存到本地磁盘，渲染层通过 `cover://` 自定义协议加载，实现离线可用的封面显示。
+
+#### Scenario: 缓存存储位置与命名
+
+- **WHEN** 系统缓存一张封面图片
+- **THEN** 图片文件 SHALL 位于 `app.getPath('userData')/covers/` 目录下，文件名为 `<albumId>_<cover_url 的 SHA-1 前 12 位>.<jpg|jpeg|png|webp|gif>`
+
+#### Scenario: 缓存未命中时懒下载
+
+- **WHEN** 渲染层请求 `cover://album/<albumId>` 且对应缓存文件不存在
+- **THEN** 系统 SHALL 从数据库中该专辑的 `cover_url` 下载图片（15 秒超时），写入缓存目录后返回该图片
+- **AND** 下载失败或专辑/URL 不存在时 SHALL 返回 404
+
+#### Scenario: 缓存命中
+
+- **WHEN** 渲染层请求 `cover://album/<albumId>` 且对应缓存文件存在
+- **THEN** 系统 SHALL 直接返回本地缓存文件，不发起网络请求
+
+#### Scenario: 封面 URL 变更后缓存失效
+
+- **WHEN** 专辑的 `cover_url` 更新为新值
+- **THEN** 新 URL 生成的缓存路径与旧文件不同，下次请求将下载新封面
+- **AND** 写入新缓存文件后 SHALL 删除该专辑的旧缓存文件
+
+#### Scenario: 渲染层回退链
+
+- **WHEN** `cover://` 协议加载失败
+- **THEN** 渲染层 SHALL 回退为直接加载远程 `cover_url`
+- **AND** 远程 URL 也失败时 SHALL 显示占位符并触发现有封面补全流程
+
+#### Scenario: 并发去重
+
+- **WHEN** 同一专辑的多个图片请求同时到达且缓存未命中
+- **THEN** 系统 SHALL 仅发起一次下载，其余请求共享同一结果

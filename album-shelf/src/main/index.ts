@@ -5,6 +5,8 @@ import { registerIpcHandlers } from './ipc-handlers'
 import { initAuthOnStartup, setMenuBuilder, getLoginStatus, logout } from './auth-service'
 import type { NcmLoginStatus } from './auth-service'
 import { loadWindowState, saveWindowState, isValidBounds } from './window-state'
+// cover-cache 模块顶层注册 cover:// scheme（需在 app ready 前），保持顶层 import 即可
+import { registerCoverProtocol } from './cover-cache'
 
 const DEFAULT_WIDTH = 1200
 const DEFAULT_HEIGHT = 800
@@ -63,7 +65,7 @@ function createWindow(): void {
         }
       }
       headers['Content-Security-Policy'] = [
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; connect-src 'self' ws: http: https:"
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http: cover:; connect-src 'self' ws: http: https:"
       ]
       callback({ responseHeaders: headers })
     } else {
@@ -241,6 +243,9 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
 app.whenReady().then(async () => {
   // Initialize database
   initDatabase()
+
+  // Register cover:// protocol (封面本地缓存，需在数据库初始化后注册)
+  registerCoverProtocol()
 
   // Register IPC handlers
   registerIpcHandlers()

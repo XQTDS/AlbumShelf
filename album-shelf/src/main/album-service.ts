@@ -173,6 +173,17 @@ export class AlbumService {
   }
 
   /**
+   * 仅查询专辑封面 URL（供 cover:// 协议处理器使用，避免附带 genres 查询）。
+   */
+  getCoverUrlById(id: number): string | null {
+    const row = this.db
+      .prepare('SELECT cover_url FROM album WHERE id = ?')
+      .get(id) as { cover_url: string | null } | undefined
+
+    return row?.cover_url ?? null
+  }
+
+  /**
    * Get a single album by netease_album_id (加密专辑 ID).
    */
   getAlbumByNeteaseAlbumId(neteaseAlbumId: string): Album | null {
