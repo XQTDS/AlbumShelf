@@ -490,6 +490,58 @@
                 </template>
               </div>
             </div>
+            <!-- 网易云热评（仅有关联网易云 ID 的专辑展示） -->
+            <div class="detail-comments" v-if="hasNeteaseId(selectedAlbum)">
+              <div class="comments-header">
+                <span class="comments-title">
+                  网易云热评<span v-if="cachedComments(selectedAlbum.id)" class="comments-count">（{{ cachedComments(selectedAlbum.id)!.recordCount }}）</span>
+                </span>
+                <button
+                  class="comments-refresh-btn"
+                  title="刷新评论"
+                  :disabled="commentLoadingAlbums.has(selectedAlbum.id)"
+                  @click.stop="refreshComments(selectedAlbum.id)"
+                >🔄</button>
+              </div>
+              <!-- 失败态 -->
+              <div v-if="commentErrors.has(selectedAlbum.id)" class="comments-empty">
+                <span>{{ commentErrors.get(selectedAlbum.id) }}</span>
+                <button
+                  class="btn-retry"
+                  :disabled="commentLoadingAlbums.has(selectedAlbum.id)"
+                  @click.stop="refreshComments(selectedAlbum.id)"
+                >重试</button>
+              </div>
+              <!-- 加载态 -->
+              <div v-else-if="!cachedComments(selectedAlbum.id)" class="comments-empty">
+                加载中...
+              </div>
+              <!-- 空态 -->
+              <div v-else-if="cachedComments(selectedAlbum.id)!.comments.length === 0" class="comments-empty">
+                暂无评论
+              </div>
+              <!-- 评论列表 -->
+              <div v-else class="comments-body">
+                <div v-for="comment in cachedComments(selectedAlbum.id)!.comments" :key="comment.id" class="comment-row">
+                  <div v-if="comment.creator.avatarUrl" class="comment-avatar">
+                    <img
+                      :src="comment.creator.avatarUrl"
+                      :alt="comment.creator.nickname"
+                      draggable="false"
+                      @error="onCommentAvatarError"
+                    />
+                  </div>
+                  <div class="comment-main">
+                    <div class="comment-head">
+                      <span class="comment-nickname">{{ comment.creator.nickname }}</span>
+                      <span class="comment-time">{{ formatCommentTime(comment.time) }}</span>
+                    </div>
+                    <div class="comment-content">{{ comment.content }}</div>
+                    <div class="comment-like">👍 {{ comment.likedCount }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           <!-- 占位态：未选中专辑时显示 -->
           <div v-else class="panel-empty">
@@ -711,6 +763,110 @@ async function fetchCoverFromRemote(albumId: number) {
   }
 }
 
+// ==================== 网易云热评 ====================
+// 热评只做内存缓存 + TTL（热评会变化，不做持久化缓存）
+const COMMENT_CACHE_TTL = 5 * 60 * 1000 // 5 分钟
+
+interface NcmComment {
+  id: string
+  content: string
+  likedCount: number
+  creator: {
+    originalId: number
+    nickname: string
+    avatarUrl: string | null
+  }
+  time: number
+}
+
+interface CommentCacheEntry {
+  recordCount: number
+  comments: NcmComment[]
+  fetchedAt: number
+}
+
+const commentCache = ref<Map<number, CommentCacheEntry>>(new Map())
+// 进行中请求去重：避免快速切换专辑时并发重复请求
+const commentLoadingAlbums = ref<Set<number>>(new Set())
+const commentErrors = ref<Map<number, string>>(new Map())
+
+// TTL 内的有效缓存；无缓存或已过期返回 null
+function cachedComments(albumId: number): CommentCacheEntry | null {
+  const cached = commentCache.value.get(albumId)
+  if (!cached) return null
+  if (Date.now() - cached.fetchedAt >= COMMENT_CACHE_TTL) return null
+  return cached
+}
+
+async function loadComments(albumId: number, force = false) {
+  // TTL 内命中缓存且非强制刷新，直接返回
+  if (!force && cachedComments(albumId)) return
+  // 进行中请求去重
+  if (commentLoadingAlbums.value.has(albumId)) return
+
+  const loadingSet = new Set(commentLoadingAlbums.value)
+  loadingSet.add(albumId)
+  commentLoadingAlbums.value = loadingSet
+
+  // 清除旧错误标记
+  const errors = new Map(commentErrors.value)
+  errors.delete(albumId)
+  commentErrors.value = errors
+
+  try {
+    const result = await window.api.albumComments(albumId)
+    if (result.success && result.data) {
+      const cache = new Map(commentCache.value)
+      cache.set(albumId, {
+        recordCount: result.data.recordCount,
+        comments: result.data.comments,
+        fetchedAt: Date.now()
+      })
+      commentCache.value = cache
+    } else {
+      const newErrors = new Map(commentErrors.value)
+      newErrors.set(
+        albumId,
+        result.loginRequired ? '请先登录网易云音乐账号' : result.error || '加载失败'
+      )
+      commentErrors.value = newErrors
+    }
+  } catch (error) {
+    console.error('加载热评失败:', error)
+    const newErrors = new Map(commentErrors.value)
+    newErrors.set(albumId, '加载失败')
+    commentErrors.value = newErrors
+  } finally {
+    const doneSet = new Set(commentLoadingAlbums.value)
+    doneSet.delete(albumId)
+    commentLoadingAlbums.value = doneSet
+  }
+}
+
+// 刷新按钮：忽略 TTL 强制重新拉取
+function refreshComments(albumId: number) {
+  loadComments(albumId, true)
+}
+
+// 专辑是否有关联网易云 ID（无 ID 时隐藏评论区块）
+function hasNeteaseId(album: Album): boolean {
+  return Boolean(album.netease_album_id)
+}
+
+// 评论头像加载失败时隐藏图片
+function onCommentAvatarError(e: Event) {
+  ;(e.target as HTMLImageElement).style.display = 'none'
+}
+
+// 格式化评论时间（毫秒时间戳 → YYYY-MM-DD）
+function formatCommentTime(timestamp: number): string {
+  const d = new Date(timestamp)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 // 选中时自动加载曲目；若无封面则尝试获取；取消选中时重置风格编辑态
 watch(selectedAlbumId, (newId) => {
   if (newId != null) {
@@ -719,6 +875,10 @@ watch(selectedAlbumId, (newId) => {
     const album = albums.value.find((a) => a.id === newId)
     if (album && !album.cover_url) {
       fetchCoverFromRemote(newId)
+    }
+    // 有关联网易云 ID 时自动加载热评（TTL 内命中缓存则不请求）
+    if (album?.netease_album_id) {
+      loadComments(newId)
     }
   } else {
     // 所有关闭路径（✕/Esc/再点同行/筛选过滤掉）统一收敛：退出风格编辑态
@@ -2731,6 +2891,140 @@ body {
   color: var(--text-secondary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+/* ==================== Comments ==================== */
+.detail-comments {
+  width: 100%;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.comments-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.comments-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.comments-count {
+  text-transform: none;
+  font-weight: 400;
+}
+
+.comments-refresh-btn {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.1s;
+}
+
+.comments-refresh-btn:hover:not(:disabled) {
+  color: var(--primary);
+}
+
+.comments-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.comments-empty {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 12px 0;
+}
+
+.comment-row {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f5f6f8;
+}
+
+.comment-row:last-child {
+  border-bottom: none;
+}
+
+.comment-avatar {
+  flex-shrink: 0;
+}
+
+.comment-avatar img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.comment-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.comment-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.comment-nickname {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.comment-time {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.comment-content {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 2px;
+}
+
+.comment-like {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.btn-retry {
+  margin-left: 8px;
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  color: var(--primary);
+}
+
+.btn-retry:hover:not(:disabled) {
+  background: #eef2ff;
+}
+
+.btn-retry:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* Column widths */

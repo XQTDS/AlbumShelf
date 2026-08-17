@@ -50,6 +50,25 @@ interface Track {
   created_at: string
 }
 
+/** 网易云专辑热门评论 */
+interface NcmComment {
+  id: string
+  content: string
+  likedCount: number
+  creator: {
+    originalId: number
+    nickname: string
+    avatarUrl: string | null
+  }
+  time: number
+}
+
+/** 专辑热评返回结构 */
+interface AlbumCommentsResult {
+  recordCount: number
+  comments: NcmComment[]
+}
+
 interface SyncResult {
   added: number
   skipped: number
@@ -162,6 +181,7 @@ interface AlbumShelfAPI {
   albumFilters: () => Promise<IpcResult<{ artists: string[]; genres: string[] }>>
   trackListByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   trackSyncByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
+  albumComments: (albumId: number) => Promise<IpcResult<AlbumCommentsResult>>
   albumFetchCover: (albumId: number, force?: boolean) => Promise<IpcResult<{ cover_url: string | null }>>
   albumCoverFillStatus: () => Promise<
     IpcResult<{ pending: number; running: boolean }>

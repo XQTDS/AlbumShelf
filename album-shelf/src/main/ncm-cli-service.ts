@@ -108,6 +108,30 @@ export interface NcmCliCollectedAlbumResponse {
   records: NcmCliCollectedAlbum[]
 }
 
+/** ncm-cli comment list-hot 返回的单条评论 */
+export interface NcmCliComment {
+  id: string
+  content: string
+  likedCount: number
+  creator: {
+    originalId: number
+    id: string
+    nickname: string
+    avatarUrl: string | null
+    signature: string | null
+  }
+  /** 毫秒时间戳 */
+  time: number
+  liked: boolean
+}
+
+/** ncm-cli comment list-hot 返回的数据结构 */
+export interface NcmCliCommentListResponse {
+  /** 评论总数（实测为真实值，可用于展示） */
+  recordCount: number
+  records: NcmCliComment[]
+}
+
 /** 用户信息 */
 export interface NcmUser {
   userId: number
@@ -304,6 +328,33 @@ export class NcmCliService {
     return this.execute<NcmCliCollectedAlbumResponse>([
       'album',
       'collected',
+      '--limit',
+      String(limit),
+      '--offset',
+      String(offset)
+    ])
+  }
+
+  /**
+   * 获取指定专辑的热门评论
+   *
+   * @param albumId 网易云音乐加密专辑 ID（32 位 hex）
+   * @param limit 返回数量，默认 20
+   * @param offset 偏移量，默认 0
+   * @returns 评论列表与总数（recordCount 为真实值）
+   */
+  async getAlbumHotComments(
+    albumId: string,
+    limit: number = 20,
+    offset: number = 0
+  ): Promise<NcmCliCommentListResponse> {
+    return this.execute<NcmCliCommentListResponse>([
+      'comment',
+      'list-hot',
+      '--type',
+      'album',
+      '--resourceId',
+      albumId,
       '--limit',
       String(limit),
       '--offset',

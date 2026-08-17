@@ -154,6 +154,51 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  // ==================== 网易云热评 ====================
+
+  /**
+   * 获取专辑的网易云热门评论（首屏 20 条，不持久化）
+   * 头像 URL http→https 转换后返回；失败返回错误信息由前端区块内展示
+   */
+  ipcMain.handle('album:comments', async (_event, albumId: number) => {
+    try {
+      const album = albumService.getAlbumById(albumId)
+      if (!album) {
+        return { success: false, error: `专辑不存在 (id: ${albumId})` }
+      }
+
+      // 无网易云 ID 返回空，前端隐藏区块
+      if (!album.netease_album_id) {
+        return { success: true, data: { recordCount: 0, comments: [] } }
+      }
+
+      const response = await ncmCliService.getAlbumHotComments(album.netease_album_id)
+
+      // 头像 URL http→https（网易云图片服务支持 https）
+      const comments = response.records.map((comment) => ({
+        id: comment.id,
+        content: comment.content,
+        likedCount: comment.likedCount,
+        creator: {
+          originalId: comment.creator.originalId,
+          nickname: comment.creator.nickname,
+          avatarUrl: comment.creator.avatarUrl
+            ? comment.creator.avatarUrl.replace(/^http:\/\//, 'https://')
+            : null
+        },
+        time: comment.time
+      }))
+
+      return { success: true, data: { recordCount: response.recordCount, comments } }
+    } catch (error) {
+      // 需要登录时附带 loginRequired 标记，前端提示登录
+      if (error instanceof NcmLoginRequiredError) {
+        return { success: false, error: '请先登录网易云音乐账号', loginRequired: true }
+      }
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
   // ==================== 封面获取 ====================
 
   /**

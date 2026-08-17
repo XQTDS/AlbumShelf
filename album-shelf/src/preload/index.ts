@@ -27,6 +27,9 @@ const albumShelfAPI = {
   trackListByAlbum: (albumId: number) => ipcRenderer.invoke('track:listByAlbum', albumId),
   trackSyncByAlbum: (albumId: number) => ipcRenderer.invoke('track:syncByAlbum', albumId),
 
+  // 网易云热评
+  albumComments: (albumId: number) => ipcRenderer.invoke('album:comments', albumId),
+
   // 封面获取
   albumFetchCover: (albumId: number, force?: boolean) =>
     ipcRenderer.invoke('album:fetchCover', albumId, force),
