@@ -163,6 +163,21 @@ interface VerifyIdsResult {
   total: number
 }
 
+/** 封面补全进度 */
+interface CoverFillProgress {
+  current: number
+  total: number
+  albumTitle: string
+  filled: number
+}
+
+/** 封面补全结果 */
+interface CoverFillResult {
+  total: number
+  filled: number
+  failed: number
+}
+
 /** ncm-cli album get 返回的专辑详情 */
 interface NcmAlbumDetail {
   originalId: number
@@ -188,6 +203,11 @@ interface AlbumShelfAPI {
   trackListByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   trackSyncByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   albumFetchCover: (albumId: number, force?: boolean) => Promise<IpcResult<{ cover_url: string | null }>>
+  albumCoverFillStatus: () => Promise<
+    IpcResult<{ pending: number; running: boolean }>
+  >
+  albumCoverFillStart: () => Promise<IpcResult<CoverFillResult>>
+  onCoverFillProgress: (callback: (progress: CoverFillProgress) => void) => () => void
   albumSetRating: (albumId: number, rating: number | null) => Promise<IpcResult>
   genreStats: () => Promise<IpcResult<{
     stats: { name: string; count: number }[]
@@ -244,6 +264,7 @@ interface AlbumShelfAPI {
   onLoginRequired: (callback: () => void) => () => void
   onMenuOpenLogin: (callback: () => void) => () => void
   onMenuSyncAlbums: (callback: () => void) => () => void
+  onMenuCoverFill: (callback: () => void) => () => void
   onMenuGenreStats: (callback: () => void) => () => void
   onMenuVerifyIds: (callback: () => void) => () => void
 

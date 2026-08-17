@@ -126,6 +126,15 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
             }
           }
         },
+        {
+          label: '补全缺失封面',
+          click: (): void => {
+            const mainWindow = BrowserWindow.getAllWindows()[0]
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('menu:coverFill')
+            }
+          }
+        },
         { type: 'separator' },
         {
           label: '补全缺失MB数据的专辑',

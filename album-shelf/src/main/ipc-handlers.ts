@@ -28,6 +28,9 @@ let trackSyncService: TrackSyncService
 let syncManager: SyncManager
 let enrichService: EnrichService
 
+// 封面批量补全进行中标志（防重入）
+let coverFillRunning = false
+
 /**
  * 初始化所有服务实例
  */
@@ -191,6 +194,106 @@ export function registerIpcHandlers(): void {
       return { success: true, data: { cover_url: null } }
     } catch (error) {
       return { success: false, error: (error as Error).message }
+    }
+  })
+
+  // ==================== 批量补全缺失封面 ====================
+
+  /**
+   * 获取封面补全状态（缺失封面数量 + 是否正在补全）
+   */
+  ipcMain.handle('album:coverFillStatus', async () => {
+    try {
+      const pending = albumService.getAlbumsWithoutCover()
+      return {
+        success: true,
+        data: {
+          pending: pending.length,
+          running: coverFillRunning
+        }
+      }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 批量补全所有缺失封面的专辑
+   * 逐个调用 getAlbumDetail 获取 coverImgUrl 并持久化，通过 event 推送进度
+   * 失败不重试：重跑时仅处理仍缺失封面的专辑，天然增量收敛
+   */
+  ipcMain.handle('album:coverFillStart', async (event) => {
+    if (coverFillRunning) {
+      return { success: false, error: '封面补全正在进行中，请稍后再试' }
+    }
+    coverFillRunning = true
+
+    try {
+      const albums = albumService.getAlbumsWithoutCover()
+      const total = albums.length
+
+      if (total === 0) {
+        return { success: true, data: { total: 0, filled: 0, failed: 0 } }
+      }
+
+      // 登录前置检查：未登录直接弹登录窗，避免批量无效调用
+      const loginStatus = await ncmCliService.getLoginStatus()
+      if (!loginStatus.isLoggedIn) {
+        authService.triggerLoginPopup()
+        return { success: true, data: { total, filled: 0, failed: 0 }, loginRequired: true }
+      }
+
+      const sender = event.sender
+      let filled = 0
+      let failed = 0
+
+      for (let i = 0; i < albums.length; i++) {
+        const album = albums[i]
+
+        // 推送进度
+        sender.send('album:coverFillProgress', {
+          current: i + 1,
+          total,
+          albumTitle: album.title,
+          filled
+        })
+
+        try {
+          const detail = await ncmCliService.getAlbumDetail(album.netease_album_id)
+
+          if (detail.coverImgUrl) {
+            // 将 http 转为 https（网易云图片服务支持 https）
+            const coverUrl = detail.coverImgUrl.replace(/^http:\/\//, 'https://')
+            albumService.updateAlbum(album.id, { cover_url: coverUrl })
+            filled++
+          } else {
+            // 网易云也没有封面，无法补全
+            failed++
+          }
+        } catch (err) {
+          // 登录失效：弹登录窗并中止
+          if (authService.handleLoginRequiredError(err)) {
+            return {
+              success: true,
+              data: { total, filled, failed },
+              loginRequired: true
+            }
+          }
+          console.error(`批量补全封面失败 (albumId: ${album.id}, title: ${album.title}):`, err)
+          failed++
+        }
+
+        // 限流：每次调用间隔 300ms
+        if (i < albums.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 300))
+        }
+      }
+
+      return { success: true, data: { total, filled, failed } }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    } finally {
+      coverFillRunning = false
     }
   })
 

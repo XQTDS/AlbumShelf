@@ -105,6 +105,16 @@
       </div>
     </div>
 
+    <!-- 封面补全进度条 -->
+    <div v-if="coverFillProgress" class="enrich-bar">
+      <div class="enrich-bar-inner">
+        <span class="enrich-text">正在补全封面 {{ coverFillProgress.current }}/{{ coverFillProgress.total }}：{{ coverFillProgress.albumTitle }}</span>
+        <div class="enrich-progress-track">
+          <div class="enrich-progress-fill" :style="{ width: (coverFillProgress.current / coverFillProgress.total * 100) + '%' }"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- 提示信息 -->
     <div v-if="message" class="message-bar" :class="messageType">
       <span>{{ message }}</span>
@@ -822,6 +832,9 @@ const messageType = ref<'success' | 'error' | 'info'>('info')
 // 补全进度
 const enrichProgress = ref<{ current: number; total: number; albumTitle: string } | null>(null)
 
+// 封面补全进度
+const coverFillProgress = ref<{ current: number; total: number; albumTitle: string; filled: number } | null>(null)
+
 // ==================== 数据获取 ====================
 
 async function fetchAlbums(append = false) {
@@ -1453,6 +1466,67 @@ async function handleReEnrichAll() {
   }
 }
 
+// ==================== 批量补全缺失封面 ====================
+
+let removeCoverFillProgressListener: (() => void) | null = null
+let removeMenuCoverFillListener: (() => void) | null = null
+
+async function handleCoverFill() {
+  if (coverFillProgress.value) {
+    showMessage('封面补全正在进行中，请等待完成', 'info')
+    return
+  }
+
+  showMessage('正在补全缺失封面...', 'info')
+
+  try {
+    const result = await window.api.albumCoverFillStart()
+    if (!result.success) {
+      showMessage(`封面补全失败：${result.error}`, 'error')
+      return
+    }
+
+    if (result.data) {
+      const { total, filled, failed } = result.data
+      if (result.loginRequired) {
+        // 登录弹窗由后端触发，这里清理进度条并提示
+        coverFillProgress.value = null
+        showMessage('封面补全已中止：需要先登录网易云', 'error')
+        return
+      }
+      if (total === 0) {
+        showMessage('所有专辑均已有封面，无需补全', 'info')
+      } else if (failed > 0) {
+        showMessage(`封面补全完成！成功 ${filled} 张，失败 ${failed} 张（可重新运行补全）`, 'info')
+      } else {
+        showMessage(`封面补全完成！成功 ${filled} 张`, 'success')
+      }
+    }
+    // 进度条清除与列表刷新由 onCoverFillProgress 回调处理
+  } catch (error) {
+    showMessage('封面补全失败：未知错误', 'error')
+  }
+}
+
+function setupCoverFillProgressListener() {
+  removeCoverFillProgressListener = window.api.onCoverFillProgress((progress) => {
+    coverFillProgress.value = {
+      current: progress.current,
+      total: progress.total,
+      albumTitle: progress.albumTitle,
+      filled: progress.filled
+    }
+
+    // 补全完成
+    if (progress.current >= progress.total) {
+      setTimeout(async () => {
+        coverFillProgress.value = null
+        await fetchAlbums()
+      }, 1000)
+    }
+  })
+}
+
 // ==================== 登录相关 ====================
 
 const showLoginModal = ref(false)
@@ -1476,6 +1550,7 @@ function handleLoginGuideLogin() {
 
 onMounted(async () => {
   setupProgressListener()
+  setupCoverFillProgressListener()
 
   // Esc 关闭详情抽屉
   document.addEventListener('keydown', handleDetailKeydown)
@@ -1497,6 +1572,11 @@ onMounted(async () => {
   const removeMenuSyncListener = window.api.onMenuSyncAlbums(async () => {
     console.log('[App] 收到菜单同步事件')
     await handleSync()
+  })
+
+  // 监听菜单栏"补全缺失封面"事件
+  removeMenuCoverFillListener = window.api.onMenuCoverFill(() => {
+    handleCoverFill()
   })
 
   // 监听登录要求事件
@@ -1548,6 +1628,12 @@ onUnmounted(() => {
   
   if (removeProgressListener) {
     removeProgressListener()
+  }
+  if (removeCoverFillProgressListener) {
+    removeCoverFillProgressListener()
+  }
+  if (removeMenuCoverFillListener) {
+    removeMenuCoverFillListener()
   }
   if (removeMenuEnrichAlbumsWithoutMbDataListener) {
     removeMenuEnrichAlbumsWithoutMbDataListener()

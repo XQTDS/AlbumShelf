@@ -31,6 +31,25 @@ const albumShelfAPI = {
   albumFetchCover: (albumId: number, force?: boolean) =>
     ipcRenderer.invoke('album:fetchCover', albumId, force),
 
+  // 批量补全缺失封面
+  albumCoverFillStatus: () => ipcRenderer.invoke('album:coverFillStatus'),
+  albumCoverFillStart: () => ipcRenderer.invoke('album:coverFillStart'),
+
+  // 封面补全进度监听
+  onCoverFillProgress: (
+    callback: (progress: {
+      current: number
+      total: number
+      albumTitle: string
+      filled: number
+    }) => void
+  ) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress)
+    ipcRenderer.on('album:coverFillProgress', handler)
+    // 返回取消监听函数
+    return () => ipcRenderer.removeListener('album:coverFillProgress', handler)
+  },
+
   // 单张专辑重新同步（封面 + 曲目 + 评分 + 风格）
   albumResync: (albumId: number) => ipcRenderer.invoke('album:resync', albumId),
 
@@ -170,6 +189,13 @@ const albumShelfAPI = {
     const handler = () => callback()
     ipcRenderer.on('menu:syncAlbums', handler)
     return () => ipcRenderer.removeListener('menu:syncAlbums', handler)
+  },
+
+  // 监听菜单栏补全缺失封面事件
+  onMenuCoverFill: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:coverFill', handler)
+    return () => ipcRenderer.removeListener('menu:coverFill', handler)
   },
 
   // 监听菜单栏风格统计事件
