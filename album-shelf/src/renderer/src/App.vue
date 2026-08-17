@@ -403,6 +403,10 @@
                     <span class="meta-value">{{ selectedAlbum.mb_rating_count != null ? selectedAlbum.mb_rating_count : '—' }}</span>
                   </div>
                   <div class="meta-item">
+                    <span class="meta-label">发行日期</span>
+                    <span class="meta-value">{{ selectedAlbum.release_date || '—' }}</span>
+                  </div>
+                  <div class="meta-item">
                     <span class="meta-label">曲目数</span>
                     <span class="meta-value">{{ selectedAlbum.track_count != null ? selectedAlbum.track_count : '—' }}</span>
                   </div>
