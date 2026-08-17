@@ -139,8 +139,8 @@
           <template v-for="(album, index) in albums" :key="album.id">
             <tr
               class="album-row"
-              :class="{ 'row-expanded': expandedAlbumId === album.id }"
-              @click="toggleExpand(album.id)"
+              :class="{ 'row-selected': selectedAlbumId === album.id }"
+              @click="toggleSelect(album.id)"
             >
               <td class="col-index">{{ index + 1 }}</td>
               <td class="col-title">
@@ -186,222 +186,6 @@
               </td>
               <td class="col-date">{{ album.release_date || '—' }}</td>
             </tr>
-            <!-- 详情展开行 -->
-            <tr class="detail-row">
-              <td :colspan="7" style="padding: 0; border: none;">
-                <div class="detail-collapse" :class="{ 'detail-open': expandedAlbumId === album.id }">
-                  <div class="detail-content">
-                    <!-- 左侧：封面图（仅展开时渲染，避免未展开时触发无效图片请求） -->
-                    <div class="detail-cover" v-if="expandedAlbumId === album.id">
-                      <img
-                        v-if="album.cover_url && !coverErrorSet.has(album.id)"
-                        :src="album.cover_url"
-                        :alt="album.title"
-                        class="cover-img"
-                        @error="onCoverError(album.id)"
-                      />
-                      <div
-                        v-else
-                        class="cover-placeholder"
-                      >
-                        💿
-                      </div>
-                    </div>
-                    <div class="detail-cover" v-else></div>
-                    <!-- 右侧：详情信息 -->
-                    <div class="detail-info">
-                      <!-- 风格标签完整展示 -->
-                      <div class="detail-section">
-                        <div class="detail-label">
-                          风格
-                          <button
-                            v-if="editingGenreAlbumId !== album.id"
-                            class="genre-edit-btn"
-                            title="编辑风格标签"
-                            @click.stop="startEditGenres(album)"
-                          >✏️</button>
-                        </div>
-                        <!-- 查看态 -->
-                        <template v-if="editingGenreAlbumId !== album.id">
-                          <div class="genre-tags" v-if="album.genres && album.genres.length > 0">
-                            <span
-                              v-for="genre in album.genres"
-                              :key="genre"
-                              class="genre-tag clickable"
-                              :class="{ selected: isGenreSelected(genre) }"
-                              @click.stop="toggleGenre(genre)"
-                            >{{ genre }}</span>
-                          </div>
-                          <span v-else class="rating-na">—</span>
-                        </template>
-                        <!-- 编辑态 -->
-                        <div v-else class="genre-edit-area" @click.stop>
-                          <div class="genre-edit-tags">
-                            <span
-                              v-for="genre in editingGenres"
-                              :key="genre"
-                              class="genre-edit-tag"
-                            >
-                              {{ genre }}
-                              <button class="genre-edit-tag-remove" @click.stop="removeEditGenre(genre)">✕</button>
-                            </span>
-                          </div>
-                          <div class="genre-edit-input-container">
-                            <input
-                              v-model="genreEditInput"
-                              type="text"
-                              placeholder="输入风格筛选..."
-                              class="genre-edit-input"
-                              @focus="onGenreEditInputFocus"
-                              @blur="onGenreEditInputBlur"
-                              @input="onGenreEditInputChange"
-                            />
-                            <div v-if="showGenreEditSuggestions && filteredGenreEditSuggestions().length > 0" class="genre-edit-suggestions">
-                              <div
-                                v-for="genre in filteredGenreEditSuggestions()"
-                                :key="genre"
-                                class="genre-edit-suggestion-item"
-                                @mousedown.prevent="selectGenreEditSuggestion(genre)"
-                              >
-                                {{ genre }}
-                              </div>
-                            </div>
-                          </div>
-                          <div class="genre-edit-actions">
-                            <button class="genre-edit-save" :disabled="savingGenres" @click.stop="saveEditGenres">
-                              {{ savingGenres ? '保存中...' : '保存' }}
-                            </button>
-                            <button class="genre-edit-cancel" :disabled="savingGenres" @click.stop="cancelEditGenres">取消</button>
-                          </div>
-                        </div>
-                      </div>
-                      <!-- 我的评分 -->
-                      <div class="detail-section">
-                        <div class="detail-label">我的评分</div>
-                        <div class="star-rating" @mouseleave="hoverRating = 0">
-                          <template v-for="star in 5" :key="star">
-                            <span
-                              class="star-half star-left"
-                              :class="{ filled: (hoverRating || album.user_rating || 0) >= star - 0.5 }"
-                              @mouseenter="hoverRating = star - 0.5"
-                              @click.stop="handleSetRating(album.id, star - 0.5)"
-                            >★</span>
-                            <span
-                              class="star-half star-right"
-                              :class="{ filled: (hoverRating || album.user_rating || 0) >= star }"
-                              @mouseenter="hoverRating = star"
-                              @click.stop="handleSetRating(album.id, star)"
-                            >★</span>
-                          </template>
-                          <span v-if="album.user_rating != null" class="star-rating-value">{{ album.user_rating.toFixed(1) }}</span>
-                        </div>
-                      </div>
-                      <!-- 元数据信息 -->
-                      <div class="detail-section detail-meta">
-                        <div class="meta-item">
-                          <span class="meta-label">评分人数</span>
-                          <span class="meta-value">{{ album.mb_rating_count != null ? album.mb_rating_count : '—' }}</span>
-                        </div>
-                        <div class="meta-item">
-                          <span class="meta-label">曲目数</span>
-                          <span class="meta-value">{{ album.track_count != null ? album.track_count : '—' }}</span>
-                        </div>
-                        <div class="meta-item">
-                          <span class="meta-label">总时长</span>
-                          <span class="meta-value">{{ albumTotalDuration(album.id) }}</span>
-                        </div>
-                      </div>
-                      <!-- 外部链接 & 操作 -->
-                      <div class="detail-section detail-links">
-                        <a
-                          v-if="album.musicbrainz_id"
-                          class="detail-link"
-                          href="#"
-                          @click.prevent="openExternal('https://musicbrainz.org/release-group/' + album.musicbrainz_id, $event)"
-                        >
-                          🔗 MusicBrainz
-                        </a>
-                        <a
-                          v-if="album.netease_original_id"
-                          class="detail-link"
-                          href="#"
-                          @click.prevent="openExternal('https://music.163.com/#/album?id=' + album.netease_original_id, $event)"
-                        >
-                          🎵 网易云音乐
-                        </a>
-                        <button
-                          class="btn btn-resync"
-                          :disabled="resyncingAlbumId === album.id"
-                          @click.stop="handleResync(album.id)"
-                        >
-                          <span v-if="resyncingAlbumId === album.id" class="spinner small"></span>
-                          <span v-else>🔄</span>
-                          {{ resyncingAlbumId === album.id ? '同步中...' : '重新同步' }}
-                        </button>
-                        <button
-                          class="btn btn-resync"
-                          @click.stop="openManualFixId(album)"
-                          title="手动指定该专辑的网易云加密 ID 并重新同步"
-                        >
-                          🆔 修改网易云 ID
-                        </button>
-                      </div>
-                    </div>
-                    <!-- 曲目列表 -->
-                    <div class="detail-tracklist">
-                      <div class="tracklist-header">
-                        <span class="tracklist-title">曲目列表</span>
-                      </div>
-                      <div v-if="trackLoading && !trackCache.has(album.id)" class="tracklist-empty">
-                        加载中...
-                      </div>
-                      <div v-else-if="!trackCache.has(album.id) || trackCache.get(album.id)!.length === 0" class="tracklist-empty">
-                        暂无曲目信息
-                      </div>
-                      <div v-else class="tracklist-body">
-                        <template v-if="isMultiDisc(trackCache.get(album.id)!)">
-                          <template v-for="[discNum, discTracks] in groupByDisc(trackCache.get(album.id)!)" :key="discNum">
-                            <div class="disc-label">Disc {{ discNum }}</div>
-                            <div v-for="(track, tIdx) in discTracks" :key="track.id" class="track-row">
-                              <button
-                                class="btn-play btn-play-track"
-                                title="播放此曲"
-                                @click.stop="handlePlayTrack(album.id, track)"
-                                :disabled="playingTrackId === track.id"
-                              >
-                                <span v-if="playingTrackId === track.id" class="spinner small"></span>
-                                <span v-else>▶</span>
-                              </button>
-                              <span class="track-num">{{ track.track_number }}</span>
-                              <span class="track-title">{{ track.title }}</span>
-                              <span class="track-artist">{{ track.artist || '—' }}</span>
-                              <span class="track-duration">{{ formatDuration(track.duration_ms) }}</span>
-                            </div>
-                          </template>
-                        </template>
-                        <template v-else>
-                          <div v-for="(track, tIdx) in trackCache.get(album.id)!" :key="track.id" class="track-row">
-                            <button
-                              class="btn-play btn-play-track"
-                              title="播放此曲"
-                              @click.stop="handlePlayTrack(album.id, track)"
-                              :disabled="playingTrackId === track.id"
-                            >
-                              <span v-if="playingTrackId === track.id" class="spinner small"></span>
-                              <span v-else>▶</span>
-                            </button>
-                            <span class="track-num">{{ track.track_number }}</span>
-                            <span class="track-title">{{ track.title }}</span>
-                            <span class="track-artist">{{ track.artist || '—' }}</span>
-                            <span class="track-duration">{{ formatDuration(track.duration_ms) }}</span>
-                          </div>
-                        </template>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </td>
-            </tr>
           </template>
           <!-- 哨兵元素和加载更多 -->
           <tr v-if="hasMore || loadingMore" class="sentinel-row">
@@ -422,6 +206,231 @@
         :scrollContainer="scrollContainerRef"
         @seek="handleScrollSeek"
       />
+      <!-- 详情面板（常驻，宽度恒定不引起列表重排） -->
+      <aside class="detail-panel">
+        <!-- 面板头部 -->
+        <div class="panel-header">
+          <div class="panel-header-info">
+            <template v-if="selectedAlbum">
+              <div class="panel-title">{{ selectedAlbum.title }}</div>
+              <div class="panel-artist">{{ selectedAlbum.artist }}</div>
+            </template>
+            <div v-else class="panel-title panel-title-placeholder">专辑详情</div>
+          </div>
+          <button v-if="selectedAlbum" class="panel-close" title="取消选中 (Esc)" @click="closeDetail">✕</button>
+        </div>
+        <!-- 滚动主体 -->
+        <div class="panel-body">
+          <div class="detail-content" v-if="selectedAlbum">
+            <!-- 封面图（面板仅在选中时渲染内容，天然避免无效图片请求） -->
+            <div class="detail-cover">
+              <img
+                v-if="selectedAlbum.cover_url && !coverErrorSet.has(selectedAlbum.id)"
+                :src="selectedAlbum.cover_url"
+                :alt="selectedAlbum.title"
+                class="cover-img"
+                @error="onCoverError(selectedAlbum.id)"
+              />
+              <div v-else class="cover-placeholder">💿</div>
+            </div>
+            <!-- 详情信息 -->
+            <div class="detail-info">
+              <!-- 风格标签完整展示 -->
+              <div class="detail-section">
+                <div class="detail-label">
+                  风格
+                  <button
+                    v-if="editingGenreAlbumId !== selectedAlbum.id"
+                    class="genre-edit-btn"
+                    title="编辑风格标签"
+                    @click.stop="startEditGenres(selectedAlbum)"
+                  >✏️</button>
+                </div>
+                <!-- 查看态 -->
+                <template v-if="editingGenreAlbumId !== selectedAlbum.id">
+                  <div class="genre-tags" v-if="selectedAlbum.genres && selectedAlbum.genres.length > 0">
+                    <span
+                      v-for="genre in selectedAlbum.genres"
+                      :key="genre"
+                      class="genre-tag clickable"
+                      :class="{ selected: isGenreSelected(genre) }"
+                      @click.stop="toggleGenre(genre)"
+                    >{{ genre }}</span>
+                  </div>
+                  <span v-else class="rating-na">—</span>
+                </template>
+                <!-- 编辑态 -->
+                <div v-else class="genre-edit-area" @click.stop>
+                  <div class="genre-edit-tags">
+                    <span
+                      v-for="genre in editingGenres"
+                      :key="genre"
+                      class="genre-edit-tag"
+                    >
+                      {{ genre }}
+                      <button class="genre-edit-tag-remove" @click.stop="removeEditGenre(genre)">✕</button>
+                    </span>
+                  </div>
+                  <div class="genre-edit-input-container">
+                    <input
+                      v-model="genreEditInput"
+                      type="text"
+                      placeholder="输入风格筛选..."
+                      class="genre-edit-input"
+                      @focus="onGenreEditInputFocus"
+                      @blur="onGenreEditInputBlur"
+                      @input="onGenreEditInputChange"
+                    />
+                    <div v-if="showGenreEditSuggestions && filteredGenreEditSuggestions().length > 0" class="genre-edit-suggestions">
+                      <div
+                        v-for="genre in filteredGenreEditSuggestions()"
+                        :key="genre"
+                        class="genre-edit-suggestion-item"
+                        @mousedown.prevent="selectGenreEditSuggestion(genre)"
+                      >
+                        {{ genre }}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="genre-edit-actions">
+                    <button class="genre-edit-save" :disabled="savingGenres" @click.stop="saveEditGenres">
+                      {{ savingGenres ? '保存中...' : '保存' }}
+                    </button>
+                    <button class="genre-edit-cancel" :disabled="savingGenres" @click.stop="cancelEditGenres">取消</button>
+                  </div>
+                </div>
+              </div>
+              <!-- 我的评分 -->
+              <div class="detail-section">
+                <div class="detail-label">我的评分</div>
+                <div class="star-rating" @mouseleave="hoverRating = 0">
+                  <template v-for="star in 5" :key="star">
+                    <span
+                      class="star-half star-left"
+                      :class="{ filled: (hoverRating || selectedAlbum.user_rating || 0) >= star - 0.5 }"
+                      @mouseenter="hoverRating = star - 0.5"
+                      @click.stop="handleSetRating(selectedAlbum.id, star - 0.5)"
+                    >★</span>
+                    <span
+                      class="star-half star-right"
+                      :class="{ filled: (hoverRating || selectedAlbum.user_rating || 0) >= star }"
+                      @mouseenter="hoverRating = star"
+                      @click.stop="handleSetRating(selectedAlbum.id, star)"
+                    >★</span>
+                  </template>
+                  <span v-if="selectedAlbum.user_rating != null" class="star-rating-value">{{ selectedAlbum.user_rating.toFixed(1) }}</span>
+                </div>
+              </div>
+              <!-- 元数据信息 -->
+              <div class="detail-section detail-meta">
+                <div class="meta-item">
+                  <span class="meta-label">评分人数</span>
+                  <span class="meta-value">{{ selectedAlbum.mb_rating_count != null ? selectedAlbum.mb_rating_count : '—' }}</span>
+                </div>
+                <div class="meta-item">
+                  <span class="meta-label">曲目数</span>
+                  <span class="meta-value">{{ selectedAlbum.track_count != null ? selectedAlbum.track_count : '—' }}</span>
+                </div>
+                <div class="meta-item">
+                  <span class="meta-label">总时长</span>
+                  <span class="meta-value">{{ albumTotalDuration(selectedAlbum.id) }}</span>
+                </div>
+              </div>
+              <!-- 外部链接 & 操作 -->
+              <div class="detail-section detail-links">
+                <a
+                  v-if="selectedAlbum.musicbrainz_id"
+                  class="detail-link"
+                  href="#"
+                  @click.prevent="openExternal('https://musicbrainz.org/release-group/' + selectedAlbum.musicbrainz_id, $event)"
+                >
+                  🔗 MusicBrainz
+                </a>
+                <a
+                  v-if="selectedAlbum.netease_original_id"
+                  class="detail-link"
+                  href="#"
+                  @click.prevent="openExternal('https://music.163.com/#/album?id=' + selectedAlbum.netease_original_id, $event)"
+                >
+                  🎵 网易云音乐
+                </a>
+                <button
+                  class="btn btn-resync"
+                  :disabled="resyncingAlbumId === selectedAlbum.id"
+                  @click.stop="handleResync(selectedAlbum.id)"
+                >
+                  <span v-if="resyncingAlbumId === selectedAlbum.id" class="spinner small"></span>
+                  <span v-else>🔄</span>
+                  {{ resyncingAlbumId === selectedAlbum.id ? '同步中...' : '重新同步' }}
+                </button>
+                <button
+                  class="btn btn-resync"
+                  @click.stop="openManualFixId(selectedAlbum)"
+                  title="手动指定该专辑的网易云加密 ID 并重新同步"
+                >
+                  🆔 修改网易云 ID
+                </button>
+              </div>
+            </div>
+            <!-- 曲目列表 -->
+            <div class="detail-tracklist">
+              <div class="tracklist-header">
+                <span class="tracklist-title">曲目列表</span>
+              </div>
+              <div v-if="trackLoading && !trackCache.has(selectedAlbum.id)" class="tracklist-empty">
+                加载中...
+              </div>
+              <div v-else-if="!trackCache.has(selectedAlbum.id) || trackCache.get(selectedAlbum.id)!.length === 0" class="tracklist-empty">
+                暂无曲目信息
+              </div>
+              <div v-else class="tracklist-body">
+                <template v-if="isMultiDisc(trackCache.get(selectedAlbum.id)!)">
+                  <template v-for="[discNum, discTracks] in groupByDisc(trackCache.get(selectedAlbum.id)!)" :key="discNum">
+                    <div class="disc-label">Disc {{ discNum }}</div>
+                    <div v-for="(track, tIdx) in discTracks" :key="track.id" class="track-row">
+                      <button
+                        class="btn-play btn-play-track"
+                        title="播放此曲"
+                        @click.stop="handlePlayTrack(selectedAlbum.id, track)"
+                        :disabled="playingTrackId === track.id"
+                      >
+                        <span v-if="playingTrackId === track.id" class="spinner small"></span>
+                        <span v-else>▶</span>
+                      </button>
+                      <span class="track-num">{{ track.track_number }}</span>
+                      <span class="track-title">{{ track.title }}</span>
+                      <span class="track-artist">{{ track.artist || '—' }}</span>
+                      <span class="track-duration">{{ formatDuration(track.duration_ms) }}</span>
+                    </div>
+                  </template>
+                </template>
+                <template v-else>
+                  <div v-for="(track, tIdx) in trackCache.get(selectedAlbum.id)!" :key="track.id" class="track-row">
+                    <button
+                      class="btn-play btn-play-track"
+                      title="播放此曲"
+                      @click.stop="handlePlayTrack(selectedAlbum.id, track)"
+                      :disabled="playingTrackId === track.id"
+                    >
+                      <span v-if="playingTrackId === track.id" class="spinner small"></span>
+                      <span v-else>▶</span>
+                    </button>
+                    <span class="track-num">{{ track.track_number }}</span>
+                    <span class="track-title">{{ track.title }}</span>
+                    <span class="track-artist">{{ track.artist || '—' }}</span>
+                    <span class="track-duration">{{ formatDuration(track.duration_ms) }}</span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+          <!-- 占位态：未选中专辑时显示 -->
+          <div v-else class="panel-empty">
+            <div class="panel-empty-icon">💿</div>
+            <div class="panel-empty-text">点击左侧专辑查看详情</div>
+          </div>
+        </div>
+      </aside>
     </main>
 
     <!-- 空状态 -->
@@ -486,7 +495,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import LoginModal from './LoginModal.vue'
 import LoginGuideModal from './LoginGuideModal.vue'
 import FuzzyMatchModal from './FuzzyMatchModal.vue'
@@ -541,8 +550,35 @@ const showGenreStatsModal = ref(false)
 let removeMenuGenreStatsListener: (() => void) | null = null
 let removeMenuVerifyIdsListener: (() => void) | null = null
 
-// 展开详情
-const expandedAlbumId = ref<number | null>(null)
+// 选中的专辑（详情抽屉）
+const selectedAlbumId = ref<number | null>(null)
+const selectedAlbum = computed<Album | null>(
+  () => albums.value.find((a) => a.id === selectedAlbumId.value) ?? null
+)
+
+function toggleSelect(albumId: number) {
+  selectedAlbumId.value = selectedAlbumId.value === albumId ? null : albumId
+}
+
+// 关闭详情抽屉（✕ 按钮 / Esc）
+function closeDetail() {
+  selectedAlbumId.value = null
+}
+
+// Esc 关闭详情抽屉（App 级弹窗打开时不响应，避免弹窗上按 Esc 误关抽屉）
+function handleDetailKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Escape') return
+  if (
+    showLoginModal.value ||
+    showLoginGuide.value ||
+    showSearchModal.value ||
+    manualFixModalVisible.value ||
+    showGenreStatsModal.value
+  ) {
+    return
+  }
+  closeDetail()
+}
 
 interface Track {
   id: number
@@ -559,10 +595,6 @@ interface Track {
 
 const trackCache = ref<Map<number, Track[]>>(new Map())
 const trackLoading = ref(false)
-
-function toggleExpand(albumId: number) {
-  expandedAlbumId.value = expandedAlbumId.value === albumId ? null : albumId
-}
 
 // 加载曲目数据
 async function loadTracks(albumId: number) {
@@ -616,8 +648,8 @@ async function fetchCoverFromRemote(albumId: number) {
   }
 }
 
-// 展开时自动加载曲目；若无封面则尝试获取
-watch(expandedAlbumId, (newId) => {
+// 选中时自动加载曲目；若无封面则尝试获取；取消选中时重置风格编辑态
+watch(selectedAlbumId, (newId) => {
   if (newId != null) {
     loadTracks(newId)
     // 仅当 cover_url 为空时主动获取
@@ -625,6 +657,9 @@ watch(expandedAlbumId, (newId) => {
     if (album && !album.cover_url) {
       fetchCoverFromRemote(newId)
     }
+  } else {
+    // 所有关闭路径（✕/Esc/再点同行/筛选过滤掉）统一收敛：退出风格编辑态
+    cancelEditGenres()
   }
 })
 
@@ -1128,13 +1163,13 @@ function toggleGenre(genre: string) {
   } else {
     // 移除筛选：若有展开的专辑，取消后定位到该专辑
     selectedGenres.value = selectedGenres.value.filter(g => g !== genre)
-    resetAndFetch(expandedAlbumId.value)
+    resetAndFetch(selectedAlbumId.value)
   }
 }
 
 // 清除所有已选风格
 function clearGenres() {
-  const scrollTarget = expandedAlbumId.value
+  const scrollTarget = selectedAlbumId.value
   selectedGenres.value = []
   resetAndFetch(scrollTarget)
 }
@@ -1182,7 +1217,7 @@ function selectGenreSuggestion(genre: string) {
 
 // 移除单个已选风格
 function removeGenre(genre: string) {
-  const scrollTarget = expandedAlbumId.value
+  const scrollTarget = selectedAlbumId.value
   selectedGenres.value = selectedGenres.value.filter(g => g !== genre)
   if (scrollTarget) {
     albums.value = []
@@ -1234,7 +1269,7 @@ function selectArtistSuggestion(artist: string) {
 
 // 清除已选艺术家
 function clearArtist() {
-  const scrollTarget = expandedAlbumId.value
+  const scrollTarget = selectedAlbumId.value
   selectedArtist.value = ''
   artistInput.value = ''
   if (scrollTarget) {
@@ -1298,7 +1333,7 @@ async function handleRandomPick() {
     scrollToAlbumRow(randomAlbum.id)
 
     // 展开该专辑
-    expandedAlbumId.value = randomAlbum.id
+    selectedAlbumId.value = randomAlbum.id
 
     showMessage(`🎲 随机选中：${randomAlbum.artist} - ${randomAlbum.title}`, 'info')
   } catch (error) {
@@ -1533,7 +1568,10 @@ function handleLoginGuideLogin() {
 
 onMounted(async () => {
   setupProgressListener()
-  
+
+  // Esc 关闭详情抽屉
+  document.addEventListener('keydown', handleDetailKeydown)
+
   // 设置无限滚动的 IntersectionObserver
   setupIntersectionObserver()
 
@@ -1591,6 +1629,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // 清理 Esc 监听
+  document.removeEventListener('keydown', handleDetailKeydown)
+
   // 清理 IntersectionObserver
   if (intersectionObserver) {
     intersectionObserver.disconnect()
@@ -1648,6 +1689,7 @@ onUnmounted(() => {
   --info: #17a2b8;
   --radius: 8px;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --panel-width: clamp(360px, 40vw, 620px);
 }
 
 body {
@@ -2058,36 +2100,115 @@ body {
   background: #f8f9ff;
 }
 
-.album-table tbody tr.album-row.row-expanded {
+.album-table tbody tr.album-row.row-selected {
   background: #eef2ff;
 }
 
-/* ==================== Detail Row ==================== */
-.detail-row {
-  background: none !important;
+/* ==================== Detail Panel (常驻详情面板) ==================== */
+.detail-panel {
+  flex-shrink: 0;
+  width: var(--panel-width);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
 }
 
-.detail-row:hover {
-  background: none !important;
+.panel-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
-.detail-collapse {
-  max-height: 0;
+.panel-header-info {
+  min-width: 0;
+}
+
+.panel-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
   overflow: hidden;
-  transition: max-height 0.35s ease;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.detail-collapse.detail-open {
-  max-height: 800px;
+.panel-title-placeholder {
+  color: var(--text-secondary);
+}
+
+.panel-artist {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-close {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.panel-close:hover {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* 隐藏面板滚动条 */
+.panel-body::-webkit-scrollbar {
+  display: none;
+}
+
+.panel-body {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+.panel-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.panel-empty-icon {
+  font-size: 2.5rem;
+  opacity: 0.5;
 }
 
 .detail-content {
   display: flex;
-  flex-wrap: wrap;
-  gap: 24px;
+  flex-direction: column;
+  gap: 16px;
   padding: 16px 20px;
-  background: #fafbfe;
-  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .detail-cover {
@@ -2166,6 +2287,7 @@ body {
 
 .detail-links {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -2310,24 +2432,6 @@ body {
   font-size: 13px;
   color: var(--text-secondary);
   padding: 12px 0;
-}
-
-.tracklist-body {
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.tracklist-body::-webkit-scrollbar {
-  width: 4px;
-}
-
-.tracklist-body::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.tracklist-body::-webkit-scrollbar-thumb {
-  background: #d0d5dd;
-  border-radius: 2px;
 }
 
 .disc-label {
