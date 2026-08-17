@@ -244,12 +244,14 @@
             :class="{ 'card-selected': selectedAlbumId === album.id }"
             :data-id="album.id"
             @click="toggleSelect(album.id)"
+            @dragstart.prevent
           >
             <img
               v-if="album.cover_url && !coverErrorSet.has(album.id)"
               :src="coverSrc(album)!"
               :alt="album.title"
               class="cover-img"
+              draggable="false"
               @error="onCoverError(album.id)"
             />
             <div v-else class="cover-placeholder">💿</div>
@@ -293,12 +295,13 @@
             <!-- Hero 两栏：封面居左放大，信息居右 -->
             <div class="detail-hero">
               <!-- 封面图（面板仅在选中时渲染内容，天然避免无效图片请求） -->
-              <div class="detail-cover">
+              <div class="detail-cover" @dragstart.prevent>
                 <img
                   v-if="selectedAlbum.cover_url && !coverErrorSet.has(selectedAlbum.id)"
                   :src="coverSrc(selectedAlbum)!"
                   :alt="selectedAlbum.title"
                   class="cover-img"
+                  draggable="false"
                   @error="onCoverError(selectedAlbum.id)"
                 />
                 <div v-else class="cover-placeholder">💿</div>
