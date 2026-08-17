@@ -12,6 +12,14 @@
           <span v-else>🎲</span>
           随机选择
         </button>
+        <button
+          class="view-toggle-btn"
+          :title="viewMode === 'table' ? '切换到网格视图' : '切换到表格视图'"
+          @click="toggleViewMode"
+        >
+          <span v-if="viewMode === 'table'">▦</span>
+          <span v-else>☰</span>
+        </button>
       </div>
       <div class="toolbar-center">
         <div class="search-box">
@@ -123,7 +131,8 @@
 
     <!-- 表格区域 -->
     <main class="table-wrapper" v-if="albums.length > 0 || loadingMore">
-      <div class="table-scroll-container" ref="scrollContainerRef">
+      <!-- 表格视图 -->
+      <div v-if="viewMode === 'table'" class="table-scroll-container" ref="scrollContainerRef">
         <table class="album-table">
         <thead>
           <tr>
@@ -210,6 +219,54 @@
           </tr>
         </tbody>
       </table>
+      </div>
+      <!-- 网格视图（唱片墙） -->
+      <div v-else class="grid-scroll-container" ref="scrollContainerRef">
+        <!-- 排序工具栏 -->
+        <div class="grid-toolbar">
+          <span class="grid-toolbar-label">排序：</span>
+          <select v-model="gridSortKey" class="grid-sort-select">
+            <option value="">默认排序</option>
+            <option value="user_rating-desc">我的评分 ↓</option>
+            <option value="user_rating-asc">我的评分 ↑</option>
+            <option value="mb_rating-desc">MB评分 ↓</option>
+            <option value="mb_rating-asc">MB评分 ↑</option>
+            <option value="release_date-desc">发行日期 ↓</option>
+            <option value="release_date-asc">发行日期 ↑</option>
+          </select>
+        </div>
+        <!-- 封面网格 -->
+        <div class="album-grid">
+          <div
+            v-for="album in albums"
+            :key="album.id"
+            class="album-card"
+            :class="{ 'card-selected': selectedAlbumId === album.id }"
+            :data-id="album.id"
+            @click="toggleSelect(album.id)"
+          >
+            <img
+              v-if="album.cover_url && !coverErrorSet.has(album.id)"
+              :src="album.cover_url"
+              :alt="album.title"
+              class="cover-img"
+              @error="onCoverError(album.id)"
+            />
+            <div v-else class="cover-placeholder">💿</div>
+            <!-- hover 遮罩：专辑名 + 艺术家 -->
+            <div class="card-overlay">
+              <div class="card-title">{{ album.title }}</div>
+              <div class="card-artist">{{ album.artist }}</div>
+            </div>
+          </div>
+          <!-- 哨兵元素和加载更多 -->
+          <div v-if="hasMore || loadingMore" ref="sentinelRef" class="load-more-sentinel grid-sentinel">
+            <div v-if="loadingMore" class="load-more-spinner">
+              <span class="spinner small"></span>
+              <span>加载中...</span>
+            </div>
+          </div>
+        </div>
       </div>
       <!-- 滚动进度条 -->
       <ScrollProgressBar
@@ -522,6 +579,25 @@ const albums = ref<Album[]>([])
 const loading = ref(true)
 const syncing = ref(false)
 
+// 视图模式：表格/网格（持久化到 localStorage，默认表格）
+const viewMode = ref<'table' | 'grid'>(
+  (() => {
+    try {
+      return localStorage.getItem('albumShelfViewMode') === 'grid' ? 'grid' : 'table'
+    } catch {
+      return 'table'
+    }
+  })()
+)
+
+watch(viewMode, (mode) => {
+  try {
+    localStorage.setItem('albumShelfViewMode', mode)
+  } catch {
+    // 忽略存储失败
+  }
+})
+
 // 在线搜索弹窗
 const showSearchModal = ref(false)
 
@@ -816,7 +892,8 @@ const sortOrder = ref<'asc' | 'desc'>('desc')
 // 无限滚动
 const currentPage = ref(1)
 const totalAlbums = ref(0)
-const pageSize = 20
+// 分页尺寸：网格视图卡片小，每页加载更多（40 张约 2-4 行）
+const pageSize = computed(() => (viewMode.value === 'grid' ? 40 : 20))
 const loadingMore = ref(false)
 const hasMore = ref(true)
 
@@ -846,7 +923,7 @@ async function fetchAlbums(append = false) {
       sortBy: sortBy.value,
       sortOrder: sortOrder.value,
       page: currentPage.value,
-      pageSize
+      pageSize: pageSize.value
     })
 
     if (result.success && result.data) {
@@ -938,17 +1015,22 @@ function scrollToAlbumRow(albumId: number) {
   const idx = albums.value.findIndex(a => a.id === albumId)
   if (idx === -1) return
 
-  // 表格行：<tr class="album-row">，按 DOM 中出现的顺序获取
-  const rows = scrollContainerRef.value.querySelectorAll('tr.album-row')
-  const targetRow = rows[idx] as HTMLElement | undefined
-  if (!targetRow) return
+  // 两种视图的元素（表格行 / 网格卡片）DOM 顺序均与 albums 一致，按索引获取
+  const items = scrollContainerRef.value.querySelectorAll<HTMLElement>('tr.album-row, .album-card')
+  const target = items[idx]
+  if (!target) return
 
-  // 让目标行尽量居中显示
+  // 用 getBoundingClientRect 计算相对滚动容器的位置（网格卡片的 offsetTop 相对 offsetParent 不可靠）
   const container = scrollContainerRef.value
-  const rowTop = targetRow.offsetTop
-  const rowHeight = targetRow.offsetHeight
-  const containerHeight = container.clientHeight
-  container.scrollTop = Math.max(0, rowTop - containerHeight / 2 + rowHeight / 2)
+  const containerRect = container.getBoundingClientRect()
+  const targetRect = target.getBoundingClientRect()
+  const targetTopInContent = targetRect.top - containerRect.top + container.scrollTop
+
+  // 让目标行/卡片尽量居中显示
+  container.scrollTop = Math.max(
+    0,
+    targetTopInContent - container.clientHeight / 2 + targetRect.height / 2
+  )
 }
 
 // ==================== 搜索 ====================
@@ -1287,6 +1369,30 @@ function cancelSort(field: 'mb_rating' | 'release_date' | 'user_rating') {
     resetAndFetch()
   }
 }
+
+// ==================== 视图切换 ====================
+
+function toggleViewMode() {
+  viewMode.value = viewMode.value === 'table' ? 'grid' : 'table'
+  // 分页尺寸随视图变化，切换后重置列表重新加载
+  resetAndFetch()
+}
+
+// 网格视图排序下拉框的值，与表格列头排序共享 sortBy/sortOrder
+const gridSortKey = computed<string>({
+  get: () => (sortBy.value ? `${sortBy.value}-${sortOrder.value}` : ''),
+  set: (key: string) => {
+    if (!key) {
+      sortBy.value = undefined
+      sortOrder.value = 'desc'
+    } else {
+      const [field, order] = key.split('-') as ['mb_rating' | 'release_date' | 'user_rating', 'asc' | 'desc']
+      sortBy.value = field
+      sortOrder.value = order
+    }
+    resetAndFetch()
+  }
+})
 
 // ==================== 滚动进度条处理 ====================
 
@@ -1773,6 +1879,28 @@ body {
   cursor: not-allowed;
 }
 
+.view-toggle-btn {
+  padding: 6px 10px;
+  min-width: 32px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.view-toggle-btn:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
 .toolbar-center {
   flex: 1;
   display: flex;
@@ -2014,7 +2142,8 @@ body {
   min-height: 0; /* 允许 flex 子元素收缩 */
 }
 
-.table-scroll-container {
+.table-scroll-container,
+.grid-scroll-container {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
@@ -2022,11 +2151,13 @@ body {
 }
 
 /* 隐藏原生滚动条 */
-.table-scroll-container::-webkit-scrollbar {
+.table-scroll-container::-webkit-scrollbar,
+.grid-scroll-container::-webkit-scrollbar {
   display: none;
 }
 
-.table-scroll-container {
+.table-scroll-container,
+.grid-scroll-container {
   -ms-overflow-style: none;  /* IE and Edge */
   scrollbar-width: none;  /* Firefox */
 }
@@ -2096,6 +2227,115 @@ body {
 
 .album-table tbody tr.album-row.row-selected {
   background: #eef2ff;
+}
+
+/* ==================== Grid View (唱片墙) ==================== */
+.grid-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.grid-toolbar-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.grid-sort-select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.album-grid {
+  display: grid;
+  /* 最小卡片 120px，窗口变宽时卡片与列数同时变化，网格始终铺满可用宽度 */
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0px;
+  padding: 1px 1px;
+}
+
+.album-card {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  /* 无圆角：唱片墙保持方正，封面由 overflow:hidden 裁切 */
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: transform 0.1s;
+}
+
+/* 卡片内封面/占位符自身清零圆角与阴影，否则内侧圆角会露出页面底色 */
+.album-card .cover-img {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.album-card .cover-placeholder {
+  border-radius: 0;
+}
+
+.album-card:hover {
+  transform: scale(1.02);
+}
+
+.album-card.card-selected {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.card-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+  text-align: center;
+}
+
+.album-card:hover .card-overlay {
+  opacity: 1;
+}
+
+.card-title {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.card-artist {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.grid-sentinel {
+  grid-column: 1 / -1;
 }
 
 /* ==================== Detail Panel (常驻详情面板) ==================== */
