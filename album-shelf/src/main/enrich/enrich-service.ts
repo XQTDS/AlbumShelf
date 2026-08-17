@@ -485,7 +485,7 @@ export class EnrichService {
       })
 
       if (result.genres.length > 0) {
-        this.albumService.setAlbumGenres(album.id, result.genres)
+        this.albumService.fillAlbumGenresIfEmpty(album.id, result.genres)
       }
 
       return 'matched'
@@ -544,10 +544,10 @@ export class EnrichService {
         enriched_at: new Date().toISOString()
       })
 
-      // 更新 Genre 关联
+      // 更新 Genre 关联（仅当专辑当前无风格时写入，保护手动编辑）
       const genreNames = genres?.map((g) => g.name).filter(Boolean) ?? []
       if (genreNames.length > 0) {
-        this.albumService.setAlbumGenres(album.id, genreNames)
+        this.albumService.fillAlbumGenresIfEmpty(album.id, genreNames)
       }
 
       // 自动别名学习：比较本地完整艺术家名与 MB 返回的艺术家名

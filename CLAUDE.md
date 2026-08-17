@@ -13,6 +13,7 @@
    - `tasks.md` — 拆解后的任务清单
 3. **实现**：按 tasks.md 完成代码实现。
 4. **收尾**：更新 `openspec/specs/` 中受影响的 spec，并将本次 change 归档到 `openspec/changes/archive/`。
+5. **同步 README**：新功能归档后，同步调整 `README.md`（功能说明、使用方式、项目结构等），保持 README 与当前系统能力一致。
 
 ## 验证约定
 

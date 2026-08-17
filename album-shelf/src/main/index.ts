@@ -198,15 +198,6 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
               mainWindow.webContents.send('menu:genreStats')
             }
           }
-        },
-        {
-          label: '校验专辑 ID',
-          click: (): void => {
-            const mainWindow = BrowserWindow.getAllWindows()[0]
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('menu:verifyIds')
-            }
-          }
         }
       ]
     },

@@ -375,13 +375,13 @@ export class AlbumService {
   }
 
   /**
-   * Reset enrichment status for all albums (clear enriched_at, mb_rating, musicbrainz_id, genres).
+   * Reset enrichment status for all albums (clear enriched_at, mb_rating, musicbrainz_id).
+   * 注意：不清空风格标签——非空风格列表受保护，只能手动修改。
    */
   resetAllEnrichment(): void {
-    this.db.transaction(() => {
-      this.db.prepare('UPDATE album SET enriched_at = NULL, musicbrainz_id = NULL, mb_rating = NULL, mb_rating_count = NULL').run()
-      this.db.prepare('DELETE FROM album_genre').run()
-    })()
+    this.db
+      .prepare('UPDATE album SET enriched_at = NULL, musicbrainz_id = NULL, mb_rating = NULL, mb_rating_count = NULL')
+      .run()
   }
 
   /**
@@ -410,6 +410,17 @@ export class AlbumService {
     })
 
     setGenres(genreNames)
+  }
+
+  /**
+   * 仅在专辑当前没有风格标签时写入（保护手动编辑的风格不被自动流程覆盖）。
+   * 供数据补全等自动流程使用；手动编辑请直接使用 setAlbumGenres。
+   * @returns 是否实际写入
+   */
+  fillAlbumGenresIfEmpty(albumId: number, genreNames: string[]): boolean {
+    if (this.getGenresForAlbum(albumId).length > 0) return false
+    this.setAlbumGenres(albumId, genreNames)
+    return true
   }
 
   /**
@@ -454,21 +465,6 @@ export class AlbumService {
       )
       .all(albumId) as { name: string }[]
     return rows.map((r) => r.name)
-  }
-
-  /**
-   * Update the netease_album_id, netease_original_id and title for an album (ID repair).
-   */
-  updateNeteaseAlbumId(id: number, newNeteaseAlbumId: string, newOriginalId: number | null, newTitle?: string): void {
-    if (newTitle) {
-      this.db
-        .prepare('UPDATE album SET netease_album_id = @newNeteaseAlbumId, netease_original_id = @newOriginalId, title = @newTitle WHERE id = @id')
-        .run({ id, newNeteaseAlbumId, newOriginalId, newTitle })
-    } else {
-      this.db
-        .prepare('UPDATE album SET netease_album_id = @newNeteaseAlbumId, netease_original_id = @newOriginalId WHERE id = @id')
-        .run({ id, newNeteaseAlbumId, newOriginalId })
-    }
   }
 
   /**

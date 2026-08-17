@@ -12,7 +12,7 @@
 #### Scenario: 匹配成功
 
 - **WHEN** MusicBrainz 搜索 Release Group（按专辑名 + 艺术家名及其别名）返回结果
-- **THEN** 系统 SHALL 取 score 最高的结果，获取其 ratings 和 tags，写入本地数据库的对应字段
+- **THEN** 系统 SHALL 取 score 最高的结果，获取其 ratings 和 tags，写入本地数据库的对应字段（风格标签仅在专辑当前风格为空时写入，见「风格标签保护」）
 
 #### Scenario: 精确匹配失败后模糊匹配产生候选
 
@@ -33,6 +33,31 @@
 
 - **WHEN** MusicBrainz 精确匹配和模糊匹配均无结果，或 API 调用失败
 - **THEN** 该专辑的 mb_rating 和 genres 字段保持为空，不影响其他专辑的补全流程，不阻塞 UI
+
+### Requirement: 风格标签保护
+
+自动流程（数据补全、重新补全、重新同步）SHALL NOT 覆盖或清空专辑的**非空**风格标签列表；风格标签只能通过手动编辑（`album:setGenres`）修改。
+
+#### Scenario: 补全写入仅限空风格专辑
+
+- **WHEN** 数据补全（精确匹配成功或模糊匹配确认）准备写入 MusicBrainz 风格标签
+- **THEN** 若专辑当前风格列表为空，系统 SHALL 写入 MB 风格标签
+- **AND** 若专辑当前风格列表非空，系统 SHALL NOT 修改其风格标签（跳过写入）
+
+#### Scenario: 重新补全不清空风格
+
+- **WHEN** 用户触发「重新补全所有专辑」，系统重置补全状态（enriched_at / musicbrainz_id / mb_rating）
+- **THEN** 系统 SHALL NOT 删除任何专辑的风格关联；非空风格列表保持不变
+
+#### Scenario: 重新同步不清空风格
+
+- **WHEN** 用户触发单张专辑重新同步（album:resync）并重置补全状态
+- **THEN** 系统 SHALL NOT 清空该专辑的风格标签；后续补全仅在风格为空时写入
+
+#### Scenario: 手动编辑不受限
+
+- **WHEN** 用户通过风格编辑入口（`album:setGenres`）保存或清空风格
+- **THEN** 系统 SHALL 无条件写入用户指定的风格列表（允许覆盖与清空）
 
 ### Requirement: MusicBrainz 认证
 

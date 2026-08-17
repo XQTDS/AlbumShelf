@@ -541,9 +541,6 @@
       @added="handleSearchAlbumAdded"
     />
 
-    <!-- 专辑 ID 校验弹窗 -->
-    <IdVerifyModal ref="idVerifyModalRef" @done="loadAlbums()" />
-
     <!-- 风格统计弹窗 -->
     <GenreStatsModal
       :visible="showGenreStatsModal"
@@ -561,7 +558,6 @@ import FuzzyMatchModal from './FuzzyMatchModal.vue'
 import ScrollProgressBar from './ScrollProgressBar.vue'
 import AlbumSearchModal from './AlbumSearchModal.vue'
 import SettingsModal from './SettingsModal.vue'
-import IdVerifyModal from './IdVerifyModal.vue'
 import GenreStatsModal from './GenreStatsModal.vue'
 
 // ==================== 状态 ====================
@@ -610,13 +606,9 @@ watch(viewMode, (mode) => {
 // 在线搜索弹窗
 const showSearchModal = ref(false)
 
-// 专辑 ID 校验弹窗
-const idVerifyModalRef = ref<InstanceType<typeof IdVerifyModal> | null>(null)
-
 // 风格统计弹窗
 const showGenreStatsModal = ref(false)
 let removeMenuGenreStatsListener: (() => void) | null = null
-let removeMenuVerifyIdsListener: (() => void) | null = null
 
 // 选中的专辑（详情抽屉）
 const selectedAlbumId = ref<number | null>(null)
@@ -1755,11 +1747,6 @@ onMounted(async () => {
     showGenreStatsModal.value = true
   })
 
-  // 监听菜单栏"校验专辑 ID"事件
-  removeMenuVerifyIdsListener = window.api.onMenuVerifyIds(() => {
-    idVerifyModalRef.value?.startVerify()
-  })
-
   await fetchFilters()
   await fetchAlbums()
 })
@@ -1800,9 +1787,6 @@ onUnmounted(() => {
   }
   if (removeMenuGenreStatsListener) {
     removeMenuGenreStatsListener()
-  }
-  if (removeMenuVerifyIdsListener) {
-    removeMenuVerifyIdsListener()
   }
   if (searchTimer) {
     clearTimeout(searchTimer)
