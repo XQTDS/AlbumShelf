@@ -16,17 +16,19 @@ jobs:
         working-directory: album-shelf
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 安装 Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: album-shelf/package-lock.json
 
+      # 本地开发使用的 npm 镜像（npm.nie.netease.com）在 GitHub 云环境不可达，
+      # 这里强制使用官方源并重写 lockfile 中的 resolved 地址
       - name: 安装依赖
-        run: npm ci
+        run: npm ci --registry=https://registry.npmjs.org --replace-registry-host=always --no-audit --no-fund
 
       - name: 构建安装包
         run: npm run dist
