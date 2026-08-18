@@ -1,7 +1,12 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { app } from 'electron'
+import { sep } from 'path'
 
 const execFileAsync = promisify(execFile)
+
+/** 内置 ncm-cli 的 npm 包名 */
+const NCM_CLI_PACKAGE = '@music163/ncm-cli'
 
 // ==================== Types ====================
 
@@ -182,6 +187,49 @@ interface NcmLoginResult {
 
 const NCM_CLI_TIMEOUT = 15_000 // 15 seconds
 
+/**
+ * 解析内置 ncm-cli 的入口文件路径（package.json main 字段指向的 dist/index.js）
+ *
+ * 打包后 node_modules 位于 app.asar 内，而 ELECTRON_RUN_AS_NODE 子进程
+ * 无法读取 asar 中的文件（实测 MODULE_NOT_FOUND），因此将路径重写到
+ * electron-builder asarUnpack 解包后的真实文件位置 app.asar.unpacked。
+ */
+function resolveNcmCliEntry(): string {
+  const resolved = require.resolve(NCM_CLI_PACKAGE)
+  if (!app.isPackaged) {
+    return resolved
+  }
+  // app.asar.unpacked 不含 `\app.asar\` 片段（后接 `.` 而非分隔符），无需担心误判
+  const marker = `${sep}app.asar${sep}`
+  const idx = resolved.lastIndexOf(marker)
+  if (idx === -1) {
+    return resolved
+  }
+  return (
+    resolved.slice(0, idx + 1) +
+    'app.asar.unpacked' +
+    resolved.slice(idx + 'app.asar'.length)
+  )
+}
+
+/** 内置 ncm-cli 入口路径缓存（进程生命周期内不变） */
+let ncmCliEntry: string | null = null
+
+/** 获取内置 ncm-cli 入口路径；依赖缺失时给出明确错误 */
+function getNcmCliEntry(): string {
+  if (ncmCliEntry === null) {
+    try {
+      ncmCliEntry = resolveNcmCliEntry()
+    } catch (error) {
+      console.error('[ncm-cli] 解析内置 ncm-cli 入口失败:', error)
+      throw new Error(
+        '内置 ncm-cli 不可用：@music163/ncm-cli 依赖缺失，请重新执行 npm install 或重新安装应用'
+      )
+    }
+  }
+  return ncmCliEntry
+}
+
 /** 需要登录的错误 */
 export class NcmLoginRequiredError extends Error {
   constructor(message: string = '请先登录') {
@@ -204,12 +252,30 @@ function isLoginRequiredMessage(message: string): boolean {
 }
 
 /**
- * NcmCliService - 封装 ncm-cli 命令行工具调用
+ * NcmCliService - 封装内置 ncm-cli 命令行工具调用
  *
- * 通过 child_process.execFile 调用全局安装的 ncm-cli，
+ * 通过 child_process.execFile 以 ELECTRON_RUN_AS_NODE=1 启动应用自身
+ * 运行时（Electron 内置 Node）执行随应用打包的 ncm-cli 入口文件，
+ * 不依赖系统 Node 与全局安装的 ncm-cli。
  * 固定 --output json 参数，解析返回的 JSON。
  */
 export class NcmCliService {
+  /**
+   * 执行内置 ncm-cli 命令
+   *
+   * 所有 execFile 调用收敛到此处：开发模式以 electron.exe、打包模式以
+   * AlbumShelf.exe 运行内置 CLI 入口；无 shell，参数直接进入子进程 argv
+   * （含空格等特殊字符由 Node 按 Windows 规则转义）。
+   */
+  private execNcmCli(args: string[]): Promise<{ stdout: string; stderr: string }> {
+    return execFileAsync(process.execPath, [getNcmCliEntry(), ...args], {
+      timeout: NCM_CLI_TIMEOUT,
+      maxBuffer: 10 * 1024 * 1024,
+      windowsHide: true,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+    })
+  }
+
   /**
    * 执行 ncm-cli 命令并返回解析后的数据
    *
@@ -223,12 +289,7 @@ export class NcmCliService {
     console.log(`[ncm-cli] 执行: ${cmdStr}`)
 
     try {
-      const { stdout, stderr } = await execFileAsync('ncm-cli', fullArgs, {
-        timeout: NCM_CLI_TIMEOUT,
-        maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large track lists
-        windowsHide: true,
-        shell: true // Windows 上需要通过 shell 执行 .cmd 文件
-      })
+      const { stdout, stderr } = await this.execNcmCli(fullArgs)
 
       if (stderr) {
         console.warn(`[ncm-cli] stderr: ${stderr.substring(0, 500)}`)
@@ -263,9 +324,9 @@ export class NcmCliService {
         if (error.message.includes('TIMEOUT') || (error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
           throw new Error('ncm-cli 执行超时（15 秒），请检查网络连接')
         }
-        // 命令不存在
+        // 可执行文件或 CLI 入口缺失（ENOENT）
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-          throw new Error('ncm-cli 未安装或不在 PATH 中，请确认已全局安装 ncm-cli')
+          throw new Error('内置 ncm-cli 启动失败（可执行文件或 CLI 入口缺失），请重新安装应用或执行 npm install')
         }
         throw error
       }
@@ -301,13 +362,12 @@ export class NcmCliService {
    * @returns 搜索结果数组
    */
   async searchAlbum(keyword: string, limit: number = 10): Promise<NcmCliAlbumSearchResult[]> {
-    // 用引号包裹关键字，防止空格和特殊字符被 shell 解析
-    const quotedKeyword = `"${keyword.replace(/"/g, '\\"')}"`
+    // 无 shell 直传参数，含空格的参数由 Node 按 Windows 规则转义，无需手动包裹引号
     const response = await this.execute<NcmCliAlbumSearchResponse>([
       'search',
       'album',
       '--keyword',
-      quotedKeyword,
+      keyword,
       '--limit',
       String(limit)
     ])
@@ -374,12 +434,7 @@ export class NcmCliService {
     console.log(`[ncm-cli] 执行: ${cmdStr}`)
 
     try {
-      const { stdout, stderr } = await execFileAsync('ncm-cli', fullArgs, {
-        timeout: NCM_CLI_TIMEOUT,
-        maxBuffer: 10 * 1024 * 1024,
-        windowsHide: true,
-        shell: true
-      })
+      const { stdout, stderr } = await this.execNcmCli(fullArgs)
 
       if (stderr) {
         console.warn(`[ncm-cli] stderr: ${stderr.substring(0, 500)}`)
@@ -411,7 +466,7 @@ export class NcmCliService {
           throw new Error('ncm-cli 执行超时（15 秒），请检查网络连接')
         }
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-          throw new Error('ncm-cli 未安装或不在 PATH 中，请确认已全局安装 ncm-cli')
+          throw new Error('内置 ncm-cli 启动失败（可执行文件或 CLI 入口缺失），请重新安装应用或执行 npm install')
         }
         throw error
       }
@@ -529,12 +584,7 @@ export class NcmCliService {
       const cmdStr = `ncm-cli ${fullArgs.join(' ')}`
       console.log(`[ncm-cli] 执行: ${cmdStr}`)
 
-      const { stdout, stderr } = await execFileAsync('ncm-cli', fullArgs, {
-        timeout: NCM_CLI_TIMEOUT,
-        maxBuffer: 10 * 1024 * 1024,
-        windowsHide: true,
-        shell: true
-      })
+      const { stdout, stderr } = await this.execNcmCli(fullArgs)
 
       if (stderr) {
         console.warn(`[ncm-cli] stderr: ${stderr.substring(0, 500)}`)
@@ -585,12 +635,7 @@ export class NcmCliService {
     const cmdStr = `ncm-cli ${fullArgs.join(' ')}`
     console.log(`[ncm-cli] 执行: ${cmdStr}`)
 
-    const { stdout, stderr } = await execFileAsync('ncm-cli', fullArgs, {
-      timeout: NCM_CLI_TIMEOUT,
-      maxBuffer: 10 * 1024 * 1024,
-      windowsHide: true,
-      shell: true
-    })
+    const { stdout, stderr } = await this.execNcmCli(fullArgs)
 
     if (stderr) {
       console.warn(`[ncm-cli] stderr: ${stderr.substring(0, 500)}`)
@@ -666,12 +711,7 @@ export class NcmCliService {
     const cmdStr = `ncm-cli ${fullArgs.join(' ')}`
     console.log(`[ncm-cli] 执行: ${cmdStr}`)
 
-    const { stdout, stderr } = await execFileAsync('ncm-cli', fullArgs, {
-      timeout: NCM_CLI_TIMEOUT,
-      maxBuffer: 10 * 1024 * 1024,
-      windowsHide: true,
-      shell: true
-    })
+    const { stdout, stderr } = await this.execNcmCli(fullArgs)
 
     if (stderr) {
       console.warn(`[ncm-cli] stderr: ${stderr.substring(0, 500)}`)

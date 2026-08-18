@@ -6,7 +6,7 @@
 
 ## ✨ 功能特性
 
-- **网易云同步**：通过 [ncm-cli](https://www.npmjs.com/package/@music163/ncm-cli) 拉取收藏的专辑（含曲目列表），支持增量同步与「取消收藏即删除」
+- **网易云同步**：通过内置的 [ncm-cli](https://www.npmjs.com/package/@music163/ncm-cli) 拉取收藏的专辑（含曲目列表），支持增量同步与「取消收藏即删除」
 - **专辑墙浏览**：网格视图 + 表格视图自由切换；封面本地缓存（`cover://` 协议）秒开，支持批量补全封面
 - **专辑详情**：点击任意专辑展开详情面板，展示封面、艺术家、发行时间、MB 评分、曲目列表、网易云热评等完整信息
 - **MusicBrainz 数据补全**：新专辑入库自动匹配 MB 评分与风格标签，支持模糊匹配人工确认、艺术家别名、匹配策略开关
@@ -47,11 +47,13 @@ npm run dev
 
 ### 配置网易云同步（启用同步功能时需要）
 
-1. 安装 CLI：`npm install -g @music163/ncm-cli`
-2. 前往[网易云音乐开放平台](https://developer.music.163.com/st/developer/apply/account?type=INDIVIDUAL)申请 API Key（appId 和 privateKey）
-3. 执行 `ncm-cli configure` 完成配置，`ncm-cli login` 完成登录授权
+ncm-cli 已作为依赖内置，**无需全局安装 Node 与 ncm-cli**。首次使用只需一次性配置 API 凭证，之后在应用内扫码登录即可：
 
-详细步骤与常见问题见 [album-shelf/INSTALL.md](album-shelf/INSTALL.md)。
+1. 前往[网易云音乐开放平台](https://developer.music.163.com/st/developer/apply/account?type=INDIVIDUAL)申请 API Key（appId 和 privateKey）
+2. 执行 `npm run ncm-cli -- configure` 完成配置（凭证保存在用户主目录，与安装包版共用）
+3. 启动应用后扫码登录（菜单「账户 → 登录」）
+
+安装包用户的配置方式（无需 Node 环境）与详细步骤见 [album-shelf/INSTALL.md](album-shelf/INSTALL.md)。
 
 ## 🛠 常用命令
 
@@ -104,6 +106,7 @@ npm run dev
 | Vue 3 + TypeScript | 渲染层 UI |
 | electron-vite | 构建工具 |
 | better-sqlite3 | 本地数据库 |
+| @music163/ncm-cli（内置） | 网易云音乐 CLI，随安装包分发，无需用户另行安装 |
 | musicbrainz-api | MusicBrainz 数据补全 |
 | electron-builder | 打包分发 |
 

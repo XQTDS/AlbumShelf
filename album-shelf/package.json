@@ -8,6 +8,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "postinstall": "electron-rebuild",
+    "ncm-cli": "ncm-cli",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
@@ -32,7 +33,23 @@
     "files": [
       "out/**/*",
       "node_modules/**/*",
+      "!**/ffprobe-static/bin/darwin{,/**/*}",
+      "!**/ffprobe-static/bin/linux{,/**/*}",
+      "!**/ffprobe-static/bin/win32/ia32{,/**/*}",
       "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/**"
+    ],
+    "extraResources": [
+      {
+        "from": "build/ncm-configure.bat",
+        "to": "ncm-configure.bat"
+      },
+      {
+        "from": "build/ncm-configure.exe",
+        "to": "ncm-configure.exe"
+      }
     ],
     "win": {
       "target": [
@@ -68,6 +85,7 @@
     "vue-tsc": "^2.2.12"
   },
   "dependencies": {
+    "@music163/ncm-cli": "0.1.6",
     "better-sqlite3": "^12.8.0",
     "musicbrainz-api": "^1.2.0",
     "vue": "^3.5.32"
