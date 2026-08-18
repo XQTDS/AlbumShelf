@@ -1,4 +1,6 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, dialog } from 'electron'
+import { readFileSync, writeFileSync } from 'fs'
+import { exportDatabase, importDatabase, type ExportData } from './database'
 import { AlbumService, AlbumQueryOptions } from './album-service'
 import { TrackService } from './track-service'
 import { NcmCliService } from './ncm-cli-service'
@@ -834,6 +836,63 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('album:getCollectedNeteaseIds', async () => {
     try {
       const result = albumService.getCollectedNeteaseIds()
+      return { success: true, data: result }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  // ==================== 数据导出/导入 ====================
+
+  ipcMain.handle('db:export', async () => {
+    try {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) return { success: false, error: '无可用窗口' }
+
+      const now = new Date()
+      const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
+      const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+        title: '导出数据',
+        defaultPath: `album-shelf-export-${dateStr}.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }]
+      })
+      if (canceled || !filePath) return { success: false, error: '已取消' }
+
+      const data = exportDatabase()
+      writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
+      return {
+        success: true,
+        data: {
+          path: filePath,
+          albums: data.data.albums.length,
+          tracks: data.data.tracks.length
+        }
+      }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  ipcMain.handle('db:import', async () => {
+    try {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) return { success: false, error: '无可用窗口' }
+
+      const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+        title: '导入数据',
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+        properties: ['openFile']
+      })
+      if (canceled || filePaths.length === 0) return { success: false, error: '已取消' }
+
+      const content = readFileSync(filePaths[0], 'utf-8')
+      const data = JSON.parse(content) as ExportData
+
+      if (!data.version || !data.data || !data.data.albums) {
+        return { success: false, error: '无效的导出文件格式' }
+      }
+
+      const result = importDatabase(data)
       return { success: true, data: result }
     } catch (error) {
       return { success: false, error: (error as Error).message }

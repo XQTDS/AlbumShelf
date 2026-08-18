@@ -183,6 +183,25 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
               mainWindow.webContents.send('menu:reEnrichAll')
             }
           }
+        },
+        { type: 'separator' },
+        {
+          label: '导出数据...',
+          click: (): void => {
+            const mainWindow = BrowserWindow.getAllWindows()[0]
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('menu:dbExport')
+            }
+          }
+        },
+        {
+          label: '导入数据...',
+          click: (): void => {
+            const mainWindow = BrowserWindow.getAllWindows()[0]
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('menu:dbImport')
+            }
+          }
         }
       ]
     },

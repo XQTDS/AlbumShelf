@@ -1907,6 +1907,28 @@ onMounted(async () => {
     showGenreStatsModal.value = true
   })
 
+  // 监听菜单栏"导出数据"事件
+  window.api.onMenuDbExport(async () => {
+    const result = await window.api.dbExport()
+    if (result.success && result.data) {
+      alert(`导出成功！\n专辑: ${result.data.albums} 张\n曲目: ${result.data.tracks} 首\n保存至: ${result.data.path}`)
+    } else if (result.error && result.error !== '已取消') {
+      alert(`导出失败: ${result.error}`)
+    }
+  })
+
+  // 监听菜单栏"导入数据"事件
+  window.api.onMenuDbImport(async () => {
+    const result = await window.api.dbImport()
+    if (result.success && result.data) {
+      alert(`导入成功！\n新增专辑: ${result.data.albumsAdded} 张\n更新专辑: ${result.data.albumsUpdated} 张\n曲目: ${result.data.tracksImported} 首\n风格: ${result.data.genresImported} 个`)
+      await fetchAlbums()
+      await fetchFilters()
+    } else if (result.error && result.error !== '已取消') {
+      alert(`导入失败: ${result.error}`)
+    }
+  })
+
   await fetchFilters()
   await fetchAlbums()
 })

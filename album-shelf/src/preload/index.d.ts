@@ -174,6 +174,19 @@ interface CoverFillResult {
   failed: number
 }
 
+interface ImportResult {
+  albumsAdded: number
+  albumsUpdated: number
+  tracksImported: number
+  genresImported: number
+}
+
+interface ExportResult {
+  path: string
+  albums: number
+  tracks: number
+}
+
 interface AlbumShelfAPI {
   syncStart: () => Promise<IpcResult<SyncResult>>
   albumRandom: () => Promise<IpcResult<Album>>
@@ -251,6 +264,12 @@ interface AlbumShelfAPI {
   albumSearchOnline: (keyword: string) => Promise<IpcResult<NcmSearchAlbum[]>>
   albumAddToCollection: (album: AddAlbumRequest) => Promise<IpcResult<{ albumId: number }>>
   albumGetCollectedNeteaseIds: () => Promise<IpcResult<{ originalIds: number[], albumIds: string[] }>>
+
+  // 数据导出/导入
+  dbExport: () => Promise<IpcResult<ExportResult>>
+  dbImport: () => Promise<IpcResult<ImportResult>>
+  onMenuDbExport: (callback: () => void) => () => void
+  onMenuDbImport: (callback: () => void) => () => void
 }
 
 declare global {

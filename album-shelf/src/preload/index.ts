@@ -225,7 +225,23 @@ const albumShelfAPI = {
 
   // 获取已收藏专辑的网易云 ID 列表（用于重复检测）
   albumGetCollectedNeteaseIds: () =>
-    ipcRenderer.invoke('album:getCollectedNeteaseIds')
+    ipcRenderer.invoke('album:getCollectedNeteaseIds'),
+
+  // ==================== 数据导出/导入 ====================
+
+  dbExport: () => ipcRenderer.invoke('db:export'),
+  dbImport: () => ipcRenderer.invoke('db:import'),
+
+  onMenuDbExport: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:dbExport', handler)
+    return () => ipcRenderer.removeListener('menu:dbExport', handler)
+  },
+  onMenuDbImport: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:dbImport', handler)
+    return () => ipcRenderer.removeListener('menu:dbImport', handler)
+  }
 }
 
 // Expose APIs to renderer via contextBridge
