@@ -1,0 +1,39 @@
+name: Release
+
+# 推送 v* 标签时自动构建 Windows 安装包并创建 GitHub Release
+on:
+  push:
+    tags:
+      - 'v*'
+  # 允许手动触发（用于测试构建，不会创建 Release）
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: album-shelf
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: album-shelf/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建安装包
+        run: npm run dist
+
+      - name: 创建 Release 并上传安装包
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: album-shelf/dist/*.exe
+          generate_release_notes: true

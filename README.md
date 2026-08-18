@@ -65,6 +65,17 @@ npm run dev
 | `npm run pack` | 构建并打包为免安装目录 |
 | `npm run dist` | 构建并打包为安装包（NSIS） |
 
+## 📦 发版流程
+
+采用 `main` + `release` 双分支策略，由 GitHub Actions 自动构建发布：
+
+1. 日常开发提交到 `main` 分支
+2. 需要发版时，将 `main` 合并到 `release`，并按需在 `album-shelf/package.json` 中更新版本号
+3. 在 `release` 分支上打版本标签：`git tag v1.0.0 && git push origin v1.0.0`
+4. 推送标签后 GitHub Actions 自动构建 NSIS 安装包并创建 GitHub Release（附自动生成的更新说明）
+
+手动触发构建（不创建 Release）可在仓库 Actions 页面点击 Release workflow 的「Run workflow」。安装包未配置代码签名，安装时可能出现 Windows SmartScreen 提示。
+
 ## 💾 数据存储
 
 应用数据保存在 Electron `userData` 目录（SQLite 数据库），包括：
