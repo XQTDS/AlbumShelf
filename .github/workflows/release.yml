@@ -8,6 +8,10 @@ on:
   # 允许手动触发（用于测试构建，不会创建 Release）
   workflow_dispatch:
 
+# 创建 Release 需要 contents 写权限（默认 GITHUB_TOKEN 为只读）
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
