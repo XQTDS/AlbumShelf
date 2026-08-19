@@ -609,6 +609,12 @@
       @close="showGenreStatsModal = false"
       @select-genre="handleSelectGenreFromStats"
     />
+
+    <!-- 关于弹窗 -->
+    <AboutModal
+      :visible="showAboutModal"
+      @close="showAboutModal = false"
+    />
   </div>
 </template>
 
@@ -621,6 +627,7 @@ import ScrollProgressBar from './ScrollProgressBar.vue'
 import AlbumSearchModal from './AlbumSearchModal.vue'
 import SettingsModal from './SettingsModal.vue'
 import GenreStatsModal from './GenreStatsModal.vue'
+import AboutModal from './AboutModal.vue'
 
 // ==================== 状态 ====================
 
@@ -672,6 +679,10 @@ const showSearchModal = ref(false)
 const showGenreStatsModal = ref(false)
 let removeMenuGenreStatsListener: (() => void) | null = null
 
+// 关于弹窗
+const showAboutModal = ref(false)
+let removeMenuAboutListener: (() => void) | null = null
+
 // 选中的专辑（详情抽屉）
 const selectedAlbumId = ref<number | null>(null)
 const selectedAlbum = computed<Album | null>(
@@ -694,7 +705,8 @@ function handleDetailKeydown(e: KeyboardEvent) {
     showLoginModal.value ||
     showLoginGuide.value ||
     showSearchModal.value ||
-    showGenreStatsModal.value
+    showGenreStatsModal.value ||
+    showAboutModal.value
   ) {
     return
   }
@@ -1987,6 +1999,11 @@ onMounted(async () => {
     showGenreStatsModal.value = true
   })
 
+  // 监听菜单栏"关于"事件
+  removeMenuAboutListener = window.api.onMenuOpenAbout(() => {
+    showAboutModal.value = true
+  })
+
   // 监听菜单栏"导出数据"事件
   window.api.onMenuDbExport(async () => {
     const result = await window.api.dbExport()
@@ -2049,6 +2066,9 @@ onUnmounted(() => {
   }
   if (removeMenuGenreStatsListener) {
     removeMenuGenreStatsListener()
+  }
+  if (removeMenuAboutListener) {
+    removeMenuAboutListener()
   }
   if (searchTimer) {
     clearTimeout(searchTimer)

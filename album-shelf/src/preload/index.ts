@@ -171,6 +171,9 @@ const albumShelfAPI = {
   // Shell
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
 
+  // 应用版本号（关于弹窗展示用）
+  appGetVersion: () => ipcRenderer.invoke('app:getVersion'),
+
   // ==================== 网易云音乐认证 ====================
 
   // 获取当前登录状态
@@ -234,6 +237,13 @@ const albumShelfAPI = {
     const handler = () => callback()
     ipcRenderer.on('menu:genreStats', handler)
     return () => ipcRenderer.removeListener('menu:genreStats', handler)
+  },
+
+  // 监听菜单栏"关于"事件
+  onMenuOpenAbout: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:openAbout', handler)
+    return () => ipcRenderer.removeListener('menu:openAbout', handler)
   },
 
   // ==================== 在线搜索 ====================

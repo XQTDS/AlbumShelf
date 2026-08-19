@@ -273,6 +273,7 @@ interface AlbumShelfAPI {
   >
   mbClearCredentials: () => Promise<IpcResult>
   openExternal: (url: string) => Promise<void>
+  appGetVersion: () => Promise<string>
 
   // 网易云音乐认证
   authGetStatus: () => Promise<IpcResult<NcmLoginStatus>>
@@ -286,6 +287,7 @@ interface AlbumShelfAPI {
   onMenuCoverFill: (callback: () => void) => () => void
   onMenuReleaseDateFill: (callback: () => void) => () => void
   onMenuGenreStats: (callback: () => void) => () => void
+  onMenuOpenAbout: (callback: () => void) => () => void
 
   // 在线搜索
   albumSearchOnline: (keyword: string) => Promise<IpcResult<NcmSearchAlbum[]>>

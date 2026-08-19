@@ -95,6 +95,14 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
   const status = loginStatus || getLoginStatus()
   const accountLabel = status.isLoggedIn ? `账户: ${status.user?.nickname}` : '账户: 未登录'
 
+  // 向渲染进程发送「关于」弹窗事件（菜单项共用）
+  const openAbout = (): void => {
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('menu:openAbout')
+    }
+  }
+
   const template: Electron.MenuItemConstructorOptions[] = [
     // macOS 应用菜单
     ...(isMac
@@ -102,7 +110,7 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
           {
             label: app.name,
             submenu: [
-              { role: 'about' as const, label: '关于 AlbumShelf' },
+              { label: '关于 AlbumShelf', click: openAbout },
               { type: 'separator' as const },
               { role: 'services' as const },
               { type: 'separator' as const },
@@ -243,6 +251,16 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
           }
         }
       ]
+    },
+    // 帮助菜单
+    {
+      label: '帮助',
+      submenu: [
+        {
+          label: '关于 AlbumShelf',
+          click: openAbout
+        }
+      ]
     }
   ]
 
@@ -269,6 +287,11 @@ app.whenReady().then(async () => {
   // Shell: open external URL in system browser
   ipcMain.handle('shell:openExternal', (_event, url: string) => {
     return shell.openExternal(url)
+  })
+
+  // App version (关于弹窗展示用)
+  ipcMain.handle('app:getVersion', () => {
+    return app.getVersion()
   })
 
   createWindow()
