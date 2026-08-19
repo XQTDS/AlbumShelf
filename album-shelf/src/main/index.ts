@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain, Menu } from 'electron'
 import { join } from 'path'
 import { initDatabase, closeDatabase } from './database'
-import { registerIpcHandlers } from './ipc-handlers'
+import { registerIpcHandlers, stopPlaybackOnQuit } from './ipc-handlers'
 import { initAuthOnStartup, setMenuBuilder, getLoginStatus, logout } from './auth-service'
 import type { NcmLoginStatus } from './auth-service'
 import { loadWindowState, saveWindowState, isValidBounds } from './window-state'
@@ -313,6 +313,26 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', () => {
-  closeDatabase()
+// 退出清理是否已执行（before-quit 重入保护：preventDefault 后二次 quit 直接放行）
+let quitCleanupDone = false
+
+// 退出前停止播放的兜底超时：ncm-cli 单命令自身有 15s 超时，
+// state + queue clear 理论最坏 30s，5s 兜底保证退出不长时间卡顿
+const STOP_PLAYBACK_TIMEOUT_MS = 5_000
+
+app.on('before-quit', (event) => {
+  if (quitCleanupDone) {
+    return
+  }
+  quitCleanupDone = true
+  event.preventDefault()
+
+  // 播放器进程独立于应用运行，不随退出停止——先限时停止播放再退出
+  Promise.race([
+    stopPlaybackOnQuit(),
+    new Promise<void>((resolve) => setTimeout(resolve, STOP_PLAYBACK_TIMEOUT_MS))
+  ]).finally(() => {
+    closeDatabase()
+    app.quit()
+  })
 })

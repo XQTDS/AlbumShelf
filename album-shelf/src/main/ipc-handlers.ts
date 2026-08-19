@@ -1024,6 +1024,28 @@ export function registerIpcHandlers(): void {
 }
 
 /**
+ * 退出前停止播放（若播放器仍在播放或暂停）
+ *
+ * 播放由 ncm-cli 启动的独立播放器进程驱动，不随应用退出而停止。
+ * 退出流程（index.ts before-quit）调用本函数：查询播放器状态，
+ * playing / paused 时清空队列停止播放；状态查询失败或未知时不做干预。
+ * 任何失败仅记录日志，不阻塞退出。
+ */
+export async function stopPlaybackOnQuit(): Promise<void> {
+  if (!ncmCliService) {
+    return
+  }
+  try {
+    const state = await ncmCliService.getState()
+    if (state.status === 'playing' || state.status === 'paused') {
+      await ncmCliService.queueClear()
+    }
+  } catch (error) {
+    console.error('[player] 退出前停止播放失败:', error)
+  }
+}
+
+/**
  * 确保 MusicBrainz 客户端已初始化
  */
 function ensureMbClient(): void {
