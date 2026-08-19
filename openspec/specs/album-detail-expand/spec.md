@@ -102,6 +102,7 @@
 
 - 封面图（来自 cover_url，无封面时显示占位符）
 - 所有风格标签（完整展示，不截断），旁边带有 ✏️ 编辑按钮可进入就地编辑态
+- 实体收藏标记控件（黑胶/CD/磁带分段按钮组，可多选，见 physical-media spec）
 - MusicBrainz 外部链接（基于 musicbrainz_id，字段为空时不显示）
 - 网易云音乐外部链接（基于 netease_id）
 - MB 评分（mb_rating，为空时显示"—"）

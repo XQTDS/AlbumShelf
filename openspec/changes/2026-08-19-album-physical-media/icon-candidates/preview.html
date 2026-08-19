@@ -1,0 +1,352 @@
+<title>实体介质图标选型</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --border: #e3e6ec;
+    --border-strong: #d3d8e0;
+    --ink: #22303f;
+    --ink-dim: #6b7686;
+    --ink-faint: #98a2b0;
+    --accent: #5b6abf;
+    --accent-soft: #eef0fa;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    padding: 40px 36px 56px;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  /* ---------- header ---------- */
+  header { margin-bottom: 36px; }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+  h1 {
+    font-size: 27px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    text-wrap: balance;
+  }
+  .lede {
+    margin-top: 10px;
+    color: var(--ink-dim);
+    max-width: 62ch;
+  }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- emoji baseline ---------- */
+  .baseline {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin-bottom: 40px;
+    flex-wrap: wrap;
+  }
+  .baseline-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.1em;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+  }
+  .baseline-item { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .baseline-item .e { font-size: 26px; line-height: 1; }
+  .baseline-item .n { font-size: 13px; color: var(--ink-dim); font-weight: 500; }
+
+  /* ---------- sections ---------- */
+  section.media { margin-bottom: 44px; }
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--border-strong);
+    margin-bottom: 18px;
+  }
+  .sec-code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 4px;
+    padding: 2px 8px;
+  }
+  .sec-title { font-size: 19px; font-weight: 700; }
+  .sec-sub { font-size: 13px; color: var(--ink-dim); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(206px, 1fr));
+    gap: 14px;
+  }
+
+  /* ---------- cards ---------- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+  .tag {
+    font-size: 11.5px;
+    color: var(--ink-dim);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 8px;
+    white-space: nowrap;
+  }
+  .icon-lg {
+    height: 76px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    border: 1px dashed var(--border-strong);
+    border-radius: 4px;
+    color: var(--ink);
+  }
+  .icon-lg svg { width: 48px; height: 48px; }
+  .ctx {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 10px;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--accent);
+  }
+  .ctx svg { width: 16px; height: 16px; flex: none; }
+  .ctx .mono { color: var(--accent); }
+  .fname {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ---------- footer ---------- */
+  footer {
+    margin-top: 8px;
+    border-top: 1px solid var(--border);
+    padding-top: 18px;
+    font-size: 12.5px;
+    color: var(--ink-dim);
+  }
+  footer table { border-collapse: collapse; margin-top: 8px; }
+  footer td, footer th {
+    text-align: left;
+    padding: 3px 18px 3px 0;
+    font-size: 12.5px;
+    vertical-align: top;
+  }
+  footer th {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">AlbumShelf · Icon Review</div>
+    <h1>实体介质图标选型</h1>
+    <p class="lede">
+      为「实体收藏」标记挑选图标：<b>黑胶 / CD / 磁带</b>各选一枚，回复编号即可（如：黑胶 V3 · CD C2 · 磁带 T2）。
+      大图 48px 为详情面板尺寸，小图 16px 模拟列表列 / 唱片墙角标的实际大小；单色图标入应用后会随主题色着色（下方小图即模拟效果）。
+    </p>
+  </header>
+
+  <div class="baseline">
+    <span class="baseline-label">现行 emoji 参考</span>
+    <span class="baseline-item"><span class="e">💽</span><span class="n">黑胶（偏银蓝，与 CD 易混）</span></span>
+    <span class="baseline-item"><span class="e">💿</span><span class="n">CD</span></span>
+    <span class="baseline-item"><span class="e">📼</span><span class="n">磁带</span></span>
+  </div>
+
+  <section class="media">
+    <div class="sec-head">
+      <span class="sec-code">V</span>
+      <span class="sec-title">黑胶</span>
+      <span class="sec-sub">vinyl · 5 个候选</span>
+    </div>
+    <div class="grid">
+
+      <article class="card">
+        <div class="card-head"><span class="code">V1</span><span class="tag">Phosphor · 线性</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 256 256"><path fill="currentColor" d="M128 24a104 104 0 1 0 104 104A104.11 104.11 0 0 0 128 24m0 192a88 88 0 1 1 88-88a88.1 88.1 0 0 1-88 88m0-144a56.06 56.06 0 0 0-56 56a8 8 0 0 1-16 0a72.08 72.08 0 0 1 72-72a8 8 0 0 1 0 16m72 56a72.08 72.08 0 0 1-72 72a8 8 0 0 1 0-16a56.06 56.06 0 0 0 56-56a8 8 0 0 1 16 0m-40 0a32 32 0 1 0-32 32a32 32 0 0 0 32-32m-48 0a16 16 0 1 1 16 16a16 16 0 0 1-16-16"/></svg></div>
+        <div class="ctx mono"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 256 256"><path fill="currentColor" d="M128 24a104 104 0 1 0 104 104A104.11 104.11 0 0 0 128 24m0 192a88 88 0 1 1 88-88a88.1 88.1 0 0 1-88 88m0-144a56.06 56.06 0 0 0-56 56a8 8 0 0 1-16 0a72.08 72.08 0 0 1 72-72a8 8 0 0 1 0 16m72 56a72.08 72.08 0 0 1-72 72a8 8 0 0 1 0-16a56.06 56.06 0 0 0 56-56a8 8 0 0 1 16 0m-40 0a32 32 0 1 0-32 32a32 32 0 0 0 32-32m-48 0a16 16 0 1 1 16 16a16 16 0 0 1-16-16"/></svg>黑胶</div>
+        <div class="fname">vinyl/01-ph-phosphor.svg</div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><span class="code">V2</span><span class="tag">Font Awesome 7 · 实心</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 640 640"><path fill="currentColor" d="M64 320C64 178.6 178.6 64 320 64s256 114.6 256 256s-114.6 256-256 256S64 461.4 64 320m256-96c53 0 96 43 96 96s-43 96-96 96s-96-43-96-96s43-96 96-96m0 240c79.5 0 144-64.5 144-144s-64.5-144-144-144s-144 64.5-144 144s64.5 144 144 144m0-112c17.7 0 32-14.3 32-32s-14.3-32-32-32s-32 14.3-32 32s14.3 32 32 32"/></svg></div>
+        <div class="ctx mono"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 640 640"><path fill="currentColor" d="M64 320C64 178.6 178.6 64 320 64s256 114.6 256 256s-114.6 256-256 256S64 461.4 64 320m256-96c53 0 96 43 96 96s-43 96-96 96s-96-43-96-96s43-96 96-96m0 240c79.5 0 144-64.5 144-144s-64.5-144-144-144s-144 64.5-144 144s64.5 144 144 144m0-112c17.7 0 32-14.3 32-32s-14.3-32-32-32s-32 14.3-32 32s14.3 32 32 32"/></svg>黑胶</div>
+        <div class="fname">vinyl/02-fa7-solid.svg</div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><span class="code">V3</span><span class="tag">Solar · 线性</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path stroke-linecap="round" d="M4.92893 19.0711C8.83418 22.9763 15.1658 22.9763 19.0711 19.0711C22.9763 15.1658 22.9763 8.83418 19.0711 4.92893C15.1658 1.02369 8.83418 1.02369 4.92893 4.92893C1.02369 8.83418 1.02369 15.1658 4.92893 19.0711Z"/><path stroke-linecap="round" d="M7.40381 16.5967C4.8654 14.0583 4.8654 9.94271 7.40381 7.4043M16.5962 7.4043C19.1346 9.94271 19.1346 14.0583 16.5962 16.5967"/></g></svg></div>
+        <div class="ctx mono"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path stroke-linecap="round" d="M4.92893 19.0711C8.83418 22.9763 15.1658 22.9763 19.0711 19.0711C22.9763 15.1658 22.9763 8.83418 19.0711 4.92893C15.1658 1.02369 8.83418 1.02369 4.92893 4.92893C1.02369 8.83418 1.02369 15.1658 4.92893 19.0711Z"/><path stroke-linecap="round" d="M7.40381 16.5967C4.8654 14.0583 4.8654 9.94271 7.40381 7.4043M16.5962 7.4043C19.1346 9.94271 19.1346 14.0583 16.5962 16.5967"/></g></svg>黑胶</div>
+        <div class="fname">vinyl/03-solar-linear.svg</div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><span class="code">V4</span><span class="tag">MDI · 实心</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M12 11a1 1 0 0 0-1 1a1 1 0 0 0 1 1a1 1 0 0 0 1-1a1 1 0 0 0-1-1m0 5.5c-2.5 0-4.5-2-4.5-4.5s2-4.5 4.5-4.5s4.5 2 4.5 4.5s-2 4.5-4.5 4.5M12 2A10 10 0 0 0 2 12a10 10 0 0 0 10 10a10 10 0 0 0 10-10A10 10 0 0 0 12 2"/></svg></div>
+        <div class="ctx mono"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M12 11a1 1 0 0 0-1 1a1 1 0 0 0 1 1a1 1 0 0 0 1-1a1 1 0 0 0-1-1m0 5.5c-2.5 0-4.5-2-4.5-4.5s2-4.5 4.5-4.5s4.5 2 4.5 4.5s-2 4.5-4.5 4.5M12 2A10 10 0 0 0 2 12a10 10 0 0 0 10 10a10 10 0 0 0 10-10A10 10 0 0 0 12 2"/></svg>黑胶</div>
+        <div class="fname">vinyl/04-mdi-album.svg</div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><span class="code">V5</span><span class="tag">Twemoji · 彩色</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 36 36"><path fill="#292f33" d="M36 32a4 4 0 0 1-4 4H4a4 4 0 0 1-4-4V4a4 4 0 0 1 4-4h28a4 4 0 0 1 4 4z"/><path fill="#ffd983" d="M34 18c0 8.837-7.163 16-16 16S2 26.837 2 18S9.164 2 18 2s16 7.164 16 16m-16-2.667a2.667 2.667 0 1 0 0 5.334a2.667 2.667 0 0 0 0-5.334"/><path fill="#ffac33" d="M13.811 17.535a4.2 4.2 0 0 1 1.193-2.53L7.943 7.943a14.18 14.18 0 0 0-4.075 8.487zm8.378.93a4.22 4.22 0 0 1-1.194 2.53l7.062 7.062a14.18 14.18 0 0 0 4.075-8.487z"/><path fill="#ffe8b6" d="m18.469 22.189l1.111 9.941a14.18 14.18 0 0 0 8.476-4.074l-7.062-7.062a4.2 4.2 0 0 1-2.525 1.195m-.91-8.38l-1.048-9.953a14.2 14.2 0 0 0-8.569 4.087l7.062 7.062a4.2 4.2 0 0 1 2.555-1.196"/><path fill="#f5f8fa" d="M36 21a2 2 0 0 1-2 2H23a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2z"/></svg></div>
+        <div class="ctx"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 36 36"><path fill="#292f33" d="M36 32a4 4 0 0 1-4 4H4a4 4 0 0 1-4-4V4a4 4 0 0 1 4-4h28a4 4 0 0 1 4 4z"/><path fill="#ffd983" d="M34 18c0 8.837-7.163 16-16 16S2 26.837 2 18S9.164 2 18 2s16 7.164 16 16m-16-2.667a2.667 2.667 0 1 0 0 5.334a2.667 2.667 0 0 0 0-5.334"/><path fill="#ffac33" d="M13.811 17.535a4.2 4.2 0 0 1 1.193-2.53L7.943 7.943a14.18 14.18 0 0 0-4.075 8.487zm8.378.93a4.22 4.22 0 0 1-1.194 2.53l7.062 7.062a14.18 14.18 0 0 0 4.075-8.487z"/><path fill="#ffe8b6" d="m18.469 22.189l1.111 9.941a14.18 14.18 0 0 0 8.476-4.074l-7.062-7.062a4.2 4.2 0 0 1-2.525 1.195m-.91-8.38l-1.048-9.953a14.2 14.2 0 0 0-8.569 4.087l7.062 7.062a4.2 4.2 0 0 1 2.555-1.196"/><path fill="#f5f8fa" d="M36 21a2 2 0 0 1-2 2H23a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2z"/></svg>黑胶</div>
+        <div class="fname">vinyl/05-twemoji.svg</div>
+      </article>
+
+    </div>
+  </section>
+
+  <section class="media">
+    <div class="sec-head">
+      <span class="sec-code">C</span>
+      <span class="sec-title">CD</span>
+      <span class="sec-sub">cd · 4 个候选</span>
+    </div>
+    <div class="grid">
+
+      <article class="card">
+        <div class="card-head"><span class="code">C1</span><span class="tag">Font Awesome 6 · 实心</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 512 512"><path fill="currentColor" d="M0 256a256 256 0 1 1 512 0a256 256 0 1 1-512 0m256 32a32 32 0 1 1 0-64a32 32 0 1 1 0 64m-96-32a96 96 0 1 0 192 0a96 96 0 1 0-192 0m-64-16c0-35 17.5-71.1 45.2-98.8S205 96 240 96c8.8 0 16-7.2 16-16s-7.2-16-16-16c-45.4 0-89.2 22.3-121.5 54.5S64 194.6 64 240c0 8.8 7.2 16 16 16s16-7.2 16-16"/></svg></div>
+        <div class="ctx mono"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 512 512"><path fill="currentColor" d="M0 256a256 256 0 1 1 512 0a256 256 0 1 1-512 0m256 32a32 32 0 1 1 0-64a32 32 0 1 1 0 64m-96-32a96 96 0 1 0 192 0a96 96 0 1 0-192 0m-64-16c0-35 17.5-71.1 45.2-98.8S205 96 240 96c8.8 0 16-7.2 16-16s-7.2-16-16-16c-45.4 0-89.2 22.3-121.5 54.5S64 194.6 64 240c0 8.8 7.2 16 16 16s16-7.2 16-16"/></svg>CD</div>
+        <div class="fname">cd/01-fa6-solid.svg</div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><span class="code">C2</span><span class="tag">MDI · 实心</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M12 14a2 2 0 0 1-2-2c0-1.11.89-2 2-2s2 .89 2 2a2 2 0 0 1-2 2m0-10a8 8 0 0 0-8 8a8 8 0 0 0 8 8a8 8 0 0 0 8-8a8 8 0 0 0-8-8"/></svg></div>
+        <div class="ctx mono"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M12 14a2 2 0 0 1-2-2c0-1.11.89-2 2-2s2 .89 2 2a2 2 0 0 1-2 2m0-10a8 8 0 0 0-8 8a8 8 0 0 0 8 8a8 8 0 0 0 8-8a8 8 0 0 0-8-8"/></svg>CD</div>
+        <div class="fname">cd/02-mdi-disc.svg</div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><span class="code">C3</span><span class="tag">Iconoir · 线性</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2S2 6.477 2 12s4.477 10 10 10"/><path d="M12 15a3 3 0 1 0 0-6a3 3 0 0 0 0 6"/></g></svg></div>
+        <div class="ctx mono"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2S2 6.477 2 12s4.477 10 10 10"/><path d="M12 15a3 3 0 1 0 0-6a3 3 0 0 0 0 6"/></g></svg>CD</div>
+        <div class="fname">cd/03-iconoir.svg</div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><span class="code">C4</span><span class="tag">Twemoji · 彩色</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 36 36"><path fill="#8899a6" d="M36 18c0 9.941-8.059 18-18 18S0 27.941 0 18S8.059 0 18 0s18 8.059 18 18m-18-3a3 3 0 1 0 0 6a3 3 0 0 0 0-6"/><path fill="#ccd6dd" d="M13.288 17.476a4.74 4.74 0 0 1 1.343-2.846L6.686 6.686a15.95 15.95 0 0 0-4.584 9.547zm9.425 1.048a4.74 4.74 0 0 1-1.343 2.846l7.944 7.944a15.95 15.95 0 0 0 4.584-9.547z"/><path fill="#f5f8fa" d="m18.527 22.712l1.251 11.183a15.95 15.95 0 0 0 9.536-4.582l-7.944-7.944a4.75 4.75 0 0 1-2.843 1.343m-1.023-9.427L16.325 2.089a15.95 15.95 0 0 0-9.639 4.598l7.944 7.944a4.75 4.75 0 0 1 2.874-1.346"/></svg></div>
+        <div class="ctx"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 36 36"><path fill="#8899a6" d="M36 18c0 9.941-8.059 18-18 18S0 27.941 0 18S8.059 0 18 0s18 8.059 18 18m-18-3a3 3 0 1 0 0 6a3 3 0 0 0 0-6"/><path fill="#ccd6dd" d="M13.288 17.476a4.74 4.74 0 0 1 1.343-2.846L6.686 6.686a15.95 15.95 0 0 0-4.584 9.547zm9.425 1.048a4.74 4.74 0 0 1-1.343 2.846l7.944 7.944a15.95 15.95 0 0 0 4.584-9.547z"/><path fill="#f5f8fa" d="m18.527 22.712l1.251 11.183a15.95 15.95 0 0 0 9.536-4.582l-7.944-7.944a4.75 4.75 0 0 1-2.843 1.343m-1.023-9.427L16.325 2.089a15.95 15.95 0 0 0-9.639 4.598l7.944 7.944a4.75 4.75 0 0 1 2.874-1.346"/></svg>CD</div>
+        <div class="fname">cd/04-twemoji.svg</div>
+      </article>
+
+    </div>
+  </section>
+
+  <section class="media">
+    <div class="sec-head">
+      <span class="sec-code">T</span>
+      <span class="sec-title">磁带</span>
+      <span class="sec-sub">cassette · 5 个候选</span>
+    </div>
+    <div class="grid">
+
+      <article class="card">
+        <div class="card-head"><span class="code">T1</span><span class="tag">Lucide · 线性</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="20" height="16" x="2" y="4" rx="2"/><circle cx="8" cy="10" r="2"/><path d="M8 12h8"/><circle cx="16" cy="10" r="2"/><path d="m6 20l.7-2.9A1.4 1.4 0 0 1 8.1 16h7.8a1.4 1.4 0 0 1 1.4 1l.7 3"/></g></svg></div>
+        <div class="ctx mono"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="20" height="16" x="2" y="4" rx="2"/><circle cx="8" cy="10" r="2"/><path d="M8 12h8"/><circle cx="16" cy="10" r="2"/><path d="m6 20l.7-2.9A1.4 1.4 0 0 1 8.1 16h7.8a1.4 1.4 0 0 1 1.4 1l.7 3"/></g></svg>磁带</div>
+        <div class="fname">cassette/01-lucide.svg</div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><span class="code">T2</span><span class="tag">Phosphor · 实心</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 256 256"><path fill="currentColor" d="M224 48H32a16 16 0 0 0-16 16v128a16 16 0 0 0 16 16h192a16 16 0 0 0 16-16V64a16 16 0 0 0-16-16M80 192l12-16h72l12 16Zm144 0h-28l-21.6-28.8a8 8 0 0 0-6.4-3.2H88a8 8 0 0 0-6.4 3.2L60 192H32V64h192zM176 80H80a32 32 0 0 0 0 64h96a32 32 0 0 0 0-64m-27.7 16a31.92 31.92 0 0 0 0 32h-40.6a31.92 31.92 0 0 0 0-32ZM64 112a16 16 0 1 1 16 16a16 16 0 0 1-16-16m112 16a16 16 0 1 1 16-16a16 16 0 0 1-16 16"/></svg></div>
+        <div class="ctx mono"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 256 256"><path fill="currentColor" d="M224 48H32a16 16 0 0 0-16 16v128a16 16 0 0 0 16 16h192a16 16 0 0 0 16-16V64a16 16 0 0 0-16-16M80 192l12-16h72l12 16Zm144 0h-28l-21.6-28.8a8 8 0 0 0-6.4-3.2H88a8 8 0 0 0-6.4 3.2L60 192H32V64h192zM176 80H80a32 32 0 0 0 0 64h96a32 32 0 0 0 0-64m-27.7 16a31.92 31.92 0 0 0 0 32h-40.6a31.92 31.92 0 0 0 0-32ZM64 112a16 16 0 1 1 16 16a16 16 0 0 1-16-16m112 16a16 16 0 1 1 16-16a16 16 0 0 1-16 16"/></svg>磁带</div>
+        <div class="fname">cassette/02-ph-phosphor.svg</div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><span class="code">T3</span><span class="tag">Font Awesome 7 · 实心</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 640 640"><path fill="currentColor" d="M444.8 480c41.5-40.7 67.2-97.3 67.2-160c0-123.7-100.3-224-224-224S64 196.3 64 320s100.3 224 224 224h288c17.7 0 32-14.3 32-32s-14.3-32-32-32zM288 224c53 0 96 43 96 96s-43 96-96 96s-96-43-96-96s43-96 96-96m48 96c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48"/></svg></div>
+        <div class="ctx mono"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 640 640"><path fill="currentColor" d="M444.8 480c41.5-40.7 67.2-97.3 67.2-160c0-123.7-100.3-224-224-224S64 196.3 64 320s100.3 224 224 224h288c17.7 0 32-14.3 32-32s-14.3-32-32-32zM288 224c53 0 96 43 96 96s-43 96-96 96s-96-43-96-96s43-96 96-96m48 96c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48"/></svg>磁带</div>
+        <div class="fname">cassette/03-fa7-solid.svg</div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><span class="code">T4</span><span class="tag">MingCute · 线性</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M9 13.5a.5.5 0 1 1-1 0a.5.5 0 0 1 1 0m7 0a.5.5 0 1 1-1 0a.5.5 0 0 1 1 0"/><path fill="none" stroke="currentColor" stroke-width="2" d="m7 5l.81 3.243A1 1 0 0 0 8.78 9h6.44a1 1 0 0 0 .97-.757L17 5m-8 8.5a.5.5 0 1 1-1 0a.5.5 0 0 1 1 0Zm7 0a.5.5 0 1 1-1 0a.5.5 0 0 1 1 0ZM5 19h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2Z"/></svg></div>
+        <div class="ctx mono"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M9 13.5a.5.5 0 1 1-1 0a.5.5 0 0 1 1 0m7 0a.5.5 0 1 1-1 0a.5.5 0 0 1 1 0"/><path fill="none" stroke="currentColor" stroke-width="2" d="m7 5l.81 3.243A1 1 0 0 0 8.78 9h6.44a1 1 0 0 0 .97-.757L17 5m-8 8.5a.5.5 0 1 1-1 0a.5.5 0 0 1 1 0Zm7 0a.5.5 0 1 1-1 0a.5.5 0 0 1 1 0ZM5 19h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2Z"/></svg>磁带</div>
+        <div class="fname">cassette/04-mingcute.svg</div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><span class="code">T5</span><span class="tag">Twemoji · 彩色</span></div>
+        <div class="icon-lg"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 36 36"><path fill="#31373d" d="M36 25s0 4-4 4H4s-4 0-4-4V10c0-4 4-4 4-4h28s4 0 4 4z"/><path fill="#ccd6dd" d="M32 12h-6s-1 0-1 1v8s0 1 1 1h6c1 0 2-2 2-5s-1-5-2-5"/><path d="M29.894 12H26s-1 0-1 1v1a3 3 0 0 1 0 6v1s0 1 1 1h3.895A6.97 6.97 0 0 0 32 17a6.98 6.98 0 0 0-2.106-5"/><path fill="#66757f" d="M28 17a3 3 0 0 0-3-3v6a3 3 0 0 0 3-3"/><path fill="#ccd6dd" d="M4 12h6s1 0 1 1v8s0 1-1 1H4c-1 0-2-2-2-5s1-5 2-5"/><path d="M11 20a3 3 0 1 1 0-6v-1c0-1-1-1-1-1H6.106C4.808 13.271 4 15.04 4 17s.808 3.729 2.106 5H10c1 0 1-1 1-1z"/><path fill="#66757f" d="M8 17a3 3 0 0 0 3 3v-6a3 3 0 0 0-3 3"/><path fill="#88c9f9" d="M13 14s0-1 1-1h8s1 0 1 1v6s0 1-1 1h-8s-1 0-1-1z"/><path d="M34 26a1 1 0 0 1-1 1H3a1 1 0 1 1 0-2h30a1 1 0 0 1 1 1"/></svg></div>
+        <div class="ctx"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 36 36"><path fill="#31373d" d="M36 25s0 4-4 4H4s-4 0-4-4V10c0-4 4-4 4-4h28s4 0 4 4z"/><path fill="#ccd6dd" d="M32 12h-6s-1 0-1 1v8s0 1 1 1h6c1 0 2-2 2-5s-1-5-2-5"/><path d="M29.894 12H26s-1 0-1 1v1a3 3 0 0 1 0 6v1s0 1 1 1h3.895A6.97 6.97 0 0 0 32 17a6.98 6.98 0 0 0-2.106-5"/><path fill="#66757f" d="M28 17a3 3 0 0 0-3-3v6a3 3 0 0 0 3-3"/><path fill="#ccd6dd" d="M4 12h6s1 0 1 1v8s0 1-1 1H4c-1 0-2-2-2-5s1-5 2-5"/><path d="M11 20a3 3 0 1 1 0-6v-1c0-1-1-1-1-1H6.106C4.808 13.271 4 15.04 4 17s.808 3.729 2.106 5H10c1 0 1-1 1-1z"/><path fill="#66757f" d="M8 17a3 3 0 0 0 3 3v-6a3 3 0 0 0-3 3"/><path fill="#88c9f9" d="M13 14s0-1 1-1h8s1 0 1 1v6s0 1-1 1h-8s-1 0-1-1z"/><path d="M34 26a1 1 0 0 1-1 1H3a1 1 0 1 1 0-2h30a1 1 0 0 1 1 1"/></svg>磁带</div>
+        <div class="fname">cassette/05-twemoji.svg</div>
+      </article>
+
+    </div>
+  </section>
+
+  <footer>
+    <strong>来源与许可</strong>（均通过 Iconify API 获取，可自由用于个人/商业项目）
+    <table>
+      <tr><th>图标家族</th><th>候选</th><th>许可</th></tr>
+      <tr><td>Phosphor</td><td>V1 · T2</td><td>MIT</td></tr>
+      <tr><td>Font Awesome Free</td><td>V2 · C1 · T3</td><td>CC BY 4.0</td></tr>
+      <tr><td>Solar</td><td>V3</td><td>MIT</td></tr>
+      <tr><td>Material Design Icons</td><td>V4 · C2</td><td>Apache 2.0</td></tr>
+      <tr><td>Twemoji</td><td>V5 · C4 · T5</td><td>CC BY 4.0</td></tr>
+      <tr><td>Iconoir</td><td>C3</td><td>MIT</td></tr>
+      <tr><td>Lucide</td><td>T1</td><td>ISC</td></tr>
+      <tr><td>MingCute</td><td>T4</td><td>Apache 2.0</td></tr>
+    </table>
+  </footer>
+</div>

@@ -92,6 +92,10 @@ export function initDatabase(): Database.Database {
   if (!albumColumns.some((c) => c.name === 'user_rating')) {
     db.exec('ALTER TABLE album ADD COLUMN user_rating REAL')
   }
+  // Add physical_media if missing (实体介质标记：vinyl/cd/cassette，逗号分隔，可空)
+  if (!albumColumns.some((c) => c.name === 'physical_media')) {
+    db.exec('ALTER TABLE album ADD COLUMN physical_media TEXT')
+  }
 
   // Migration: track table
   const trackColumns = db
@@ -192,26 +196,28 @@ export function importDatabase(data: ExportData): ImportResult {
             title = ?, artist = ?, cover_url = ?, release_date = ?,
             musicbrainz_id = ?, mb_rating = ?, mb_rating_count = ?,
             track_count = ?, enriched_at = ?, user_rating = ?,
-            netease_original_id = ?
+            netease_original_id = ?, physical_media = ?
           WHERE id = ?
         `).run(
           album.title, album.artist, album.cover_url, album.release_date,
           album.musicbrainz_id, album.mb_rating, album.mb_rating_count,
           album.track_count, album.enriched_at, album.user_rating,
-          album.netease_original_id, existing.id
+          album.netease_original_id, album.physical_media, existing.id
         )
         albumIdMap.set(album.id as number, existing.id)
         result.albumsUpdated++
       } else {
         const info = database.prepare(`
           INSERT INTO album (netease_album_id, netease_original_id, musicbrainz_id, title, artist,
-            cover_url, release_date, mb_rating, mb_rating_count, track_count, synced_at, enriched_at, user_rating)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            cover_url, release_date, mb_rating, mb_rating_count, track_count, synced_at, enriched_at, user_rating,
+            physical_media)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           album.netease_album_id, album.netease_original_id, album.musicbrainz_id,
           album.title, album.artist, album.cover_url, album.release_date,
           album.mb_rating, album.mb_rating_count, album.track_count,
-          album.synced_at || new Date().toISOString(), album.enriched_at, album.user_rating
+          album.synced_at || new Date().toISOString(), album.enriched_at, album.user_rating,
+          album.physical_media
         )
         albumIdMap.set(album.id as number, info.lastInsertRowid as number)
         result.albumsAdded++

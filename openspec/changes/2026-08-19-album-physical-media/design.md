@@ -8,12 +8,16 @@
 - 渲染层与主进程共用常量（主进程在 ipc-handlers.ts 校验用；渲染层在 App.vue 渲染用）：
   ```ts
   const MEDIA_TYPES = [
-    { key: 'vinyl', label: '黑胶', icon: '💽' },
-    { key: 'cd', label: 'CD', icon: '💿' },
-    { key: 'cassette', label: '磁带', icon: '📼' },
+    { key: 'vinyl', label: '黑胶' },
+    { key: 'cd', label: 'CD' },
+    { key: 'cassette', label: '磁带' },
   ] as const
   ```
-  > emoji 说明：黑胶无标准 emoji，💽（计算机磁盘）视觉最接近唱片；💿 为 CD；📼 为录像带（视觉最接近盒式磁带）。后续如需更精确可用自定义 SVG 替换，不影响数据层。
+- 图标已由用户从 14 枚候选中选定（候选见 `icon-candidates/`）：
+  - 黑胶：**MDI `album`**（单色，`fill="currentColor"`，随文字颜色着色）
+  - CD：**Twemoji `1f4bf`**（彩色）
+  - 磁带：**Twemoji `1f4fc`**（彩色）
+  - 实现：内联 SVG 到新组件 `MediaIcon.vue`（宽高 `1em`，由 font-size 控制尺寸），组件注释标注来源与许可
 
 ### 1.2 存储格式
 

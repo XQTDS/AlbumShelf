@@ -153,6 +153,7 @@
               我的评分
               <span class="sort-arrow" v-if="sortBy === 'user_rating'">{{ sortOrder === 'desc' ? '▼' : '▲' }}</span>
             </th>
+            <th class="col-media">实体</th>
             <th class="col-mb-rating sortable" @click="toggleSort('mb_rating')" @contextmenu.prevent="cancelSort('mb_rating')">
               MB评分
               <span class="sort-arrow" v-if="sortBy === 'mb_rating'">{{ sortOrder === 'desc' ? '▼' : '▲' }}</span>
@@ -194,6 +195,19 @@
                 </span>
                 <span v-else class="rating-na">—</span>
               </td>
+              <td class="col-media">
+                <span v-if="parseMedia(album).length > 0" class="media-chips">
+                  <span
+                    v-for="m in parseMedia(album)"
+                    :key="m"
+                    class="media-chip"
+                    :title="MEDIA_TYPES.find((t) => t.key === m)?.label || m"
+                  >
+                    <MediaIcon :type="m" />
+                  </span>
+                </span>
+                <span v-else class="rating-na">—</span>
+              </td>
               <td class="col-mb-rating">
                 <span v-if="album.mb_rating != null" class="rating-badge">
                   ⭐ {{ album.mb_rating.toFixed(1) }}
@@ -218,7 +232,7 @@
           </template>
           <!-- 哨兵元素和加载更多 -->
           <tr v-if="hasMore || loadingMore" class="sentinel-row">
-            <td colspan="7" style="padding: 0; border: none;">
+            <td colspan="8" style="padding: 0; border: none;">
               <div ref="sentinelRef" class="load-more-sentinel">
                 <div v-if="loadingMore" class="load-more-spinner">
                   <span class="spinner small"></span>
@@ -269,6 +283,17 @@
             <div class="card-overlay">
               <div class="card-title">{{ album.title }}</div>
               <div class="card-artist">{{ album.artist }}</div>
+            </div>
+            <!-- 实体介质角标（左上角，常驻显示） -->
+            <div v-if="parseMedia(album).length > 0" class="card-media-badges">
+              <span
+                v-for="m in parseMedia(album)"
+                :key="m"
+                class="card-media-badge"
+                :title="MEDIA_TYPES.find((t) => t.key === m)?.label || m"
+              >
+                <MediaIcon :type="m" />
+              </span>
             </div>
             <!-- 排序角标：按当前排序字段显示对应信息 -->
             <div v-if="cardBadgeText(album)" class="card-badge">{{ cardBadgeText(album) }}</div>
@@ -412,6 +437,23 @@
                       >★</span>
                     </template>
                     <span v-if="selectedAlbum.user_rating != null" class="star-rating-value">{{ selectedAlbum.user_rating.toFixed(1) }}</span>
+                  </div>
+                </div>
+                <!-- 实体收藏 -->
+                <div class="detail-section detail-section-media">
+                  <div class="detail-label">实体收藏</div>
+                  <div class="media-segment">
+                    <button
+                      v-for="m in MEDIA_TYPES"
+                      :key="m.key"
+                      class="media-segment-btn"
+                      :class="{ active: hasMedia(selectedAlbum, m.key) }"
+                      :title="hasMedia(selectedAlbum, m.key) ? `取消${m.label}标记` : `标记为${m.label}`"
+                      @click.stop="toggleMedia(selectedAlbum.id, m.key)"
+                    >
+                      <MediaIcon :type="m.key" />
+                      <span>{{ m.label }}</span>
+                    </button>
                   </div>
                 </div>
                 <!-- 元数据信息 -->
@@ -659,6 +701,7 @@ import SettingsModal from './SettingsModal.vue'
 import GenreStatsModal from './GenreStatsModal.vue'
 import AboutModal from './AboutModal.vue'
 import PlayerBar from './PlayerBar.vue'
+import MediaIcon from './MediaIcon.vue'
 
 // ==================== 状态 ====================
 
@@ -669,6 +712,7 @@ interface Album {
   mb_rating: number | null
   mb_rating_count: number | null
   user_rating: number | null
+  physical_media: string | null
   release_date: string | null
   genres?: string[]
   cover_url?: string | null
@@ -1028,6 +1072,62 @@ async function handleSetRating(albumId: number, rating: number) {
     // 回退
     album.user_rating = oldRating
     showMessage('评分失败：未知错误', 'error')
+  }
+}
+
+// ==================== 实体介质标记 ====================
+
+/** 介质类型封闭集合（展示顺序即存储排序顺序） */
+const MEDIA_TYPES = [
+  { key: 'vinyl', label: '黑胶' },
+  { key: 'cd', label: 'CD' },
+  { key: 'cassette', label: '磁带' },
+] as const
+type MediaType = (typeof MEDIA_TYPES)[number]['key']
+
+/** 解析逗号分隔的介质标记为数组（按展示顺序） */
+function parseMedia(album: Album): MediaType[] {
+  if (!album.physical_media) return []
+  return album.physical_media.split(',').filter((m): m is MediaType =>
+    MEDIA_TYPES.some((t) => t.key === m)
+  )
+}
+
+/** 专辑是否标记了某介质 */
+function hasMedia(album: Album, type: MediaType): boolean {
+  return parseMedia(album).includes(type)
+}
+
+// 切换介质标记（乐观更新）
+async function toggleMedia(albumId: number, type: MediaType) {
+  const album = albums.value.find((a) => a.id === albumId)
+  if (!album) return
+
+  const oldValue = album.physical_media
+  const set = new Set(parseMedia(album))
+  if (set.has(type)) {
+    set.delete(type)
+  } else {
+    set.add(type)
+  }
+  const ordered = MEDIA_TYPES.map((m) => m.key).filter((k) => set.has(k))
+  // 乐观更新
+  album.physical_media = ordered.length > 0 ? ordered.join(',') : null
+
+  try {
+    const result = await window.api.albumSetPhysicalMedia(
+      albumId,
+      ordered.length > 0 ? ordered : null
+    )
+    if (!result.success) {
+      // 回退
+      album.physical_media = oldValue
+      showMessage(`标记失败：${result.error}`, 'error')
+    }
+  } catch (error) {
+    // 回退
+    album.physical_media = oldValue
+    showMessage('标记失败：未知错误', 'error')
   }
 }
 
@@ -3062,6 +3162,32 @@ body {
   text-overflow: ellipsis;
 }
 
+/* 实体介质角标（左上角，常驻显示，与左下排序角标/右下播放按钮互不重叠） */
+.card-media-badges {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  display: flex;
+  gap: 4px;
+}
+
+.card-media-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+}
+
+.card-media-badge svg {
+  width: 15px;
+  height: 15px;
+}
+
 .grid-sentinel {
   grid-column: 1 / -1;
 }
@@ -3583,9 +3709,33 @@ body {
 .col-title { width: 24%; }
 .col-artist { width: 16%; }
 .col-user-rating { width: 120px; text-align: center; }
+.col-media { width: 80px; text-align: center; }
 .col-mb-rating { width: 80px; text-align: center; }
 .col-genre { width: 22%; }
 .col-date { width: 100px; }
+
+.media-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.media-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--primary);
+}
+
+.media-chip svg {
+  width: 14px;
+  height: 14px;
+}
 
 .album-title {
   font-weight: 500;
@@ -4193,6 +4343,54 @@ body {
   font-size: 14px;
   font-weight: 600;
   color: #d97706;
+}
+
+/* ==================== 实体介质标记 ==================== */
+.detail-section-media {
+  align-items: center;
+}
+
+.media-segment {
+  display: flex;
+  gap: 6px;
+}
+
+.media-segment-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.media-segment-btn svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.media-segment-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.media-segment-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.media-segment-btn.active:hover {
+  background: var(--primary-hover);
+  color: #fff;
 }
 
 </style>

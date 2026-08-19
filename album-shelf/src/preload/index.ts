@@ -78,6 +78,10 @@ const albumShelfAPI = {
   albumSetRating: (albumId: number, rating: number | null) =>
     ipcRenderer.invoke('album:setRating', albumId, rating),
 
+  // 实体介质标记（黑胶/CD/磁带，可多选）
+  albumSetPhysicalMedia: (albumId: number, mediaTypes: string[] | null) =>
+    ipcRenderer.invoke('album:setPhysicalMedia', albumId, mediaTypes),
+
   // 风格统计
   genreStats: () => ipcRenderer.invoke('genre:stats'),
 

@@ -15,6 +15,7 @@ export interface Album {
   mb_rating: number | null
   mb_rating_count: number | null
   user_rating: number | null
+  physical_media: string | null
   track_count: number | null
   synced_at: string
   enriched_at: string | null
@@ -42,6 +43,7 @@ export interface AlbumUpdate {
   mb_rating?: number | null
   mb_rating_count?: number | null
   user_rating?: number | null
+  physical_media?: string | null
   track_count?: number | null
   enriched_at?: string | null
 }

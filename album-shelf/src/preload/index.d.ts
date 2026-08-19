@@ -22,6 +22,7 @@ interface Album {
   mb_rating: number | null
   mb_rating_count: number | null
   user_rating: number | null
+  physical_media: string | null
   track_count: number | null
   synced_at: string
   enriched_at: string | null
@@ -249,6 +250,7 @@ interface AlbumShelfAPI {
   albumReleaseDateFillStart: () => Promise<IpcResult<ReleaseDateFillResult>>
   onReleaseDateFillProgress: (callback: (progress: ReleaseDateFillProgress) => void) => () => void
   albumSetRating: (albumId: number, rating: number | null) => Promise<IpcResult>
+  albumSetPhysicalMedia: (albumId: number, mediaTypes: string[] | null) => Promise<IpcResult>
   genreStats: () => Promise<IpcResult<{
     stats: { name: string; count: number }[]
     totalAlbums: number

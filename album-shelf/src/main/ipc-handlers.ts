@@ -552,6 +552,47 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // ==================== 实体介质标记 ====================
+
+  /**
+   * 设置/清除实体介质标记（黑胶/CD/磁带，可多选）
+   * mediaTypes: 合法枚举数组，或 null 表示清除
+   */
+  ipcMain.handle(
+    'album:setPhysicalMedia',
+    async (_event, albumId: number, mediaTypes: string[] | null) => {
+      try {
+        const VALID_MEDIA_TYPES = ['vinyl', 'cd', 'cassette']
+        if (mediaTypes !== null) {
+          if (!Array.isArray(mediaTypes)) {
+            return { success: false, error: 'mediaTypes 必须是数组或 null' }
+          }
+          if (mediaTypes.some((m) => !VALID_MEDIA_TYPES.includes(m))) {
+            return { success: false, error: `非法介质类型，仅支持 ${VALID_MEDIA_TYPES.join('/')}` }
+          }
+        }
+
+        const album = albumService.getAlbumById(albumId)
+        if (!album) {
+          return { success: false, error: `专辑不存在 (id: ${albumId})` }
+        }
+
+        // 去重、按展示顺序排序后逗号拼接；空集合存 NULL（语义同未评分）
+        const normalized =
+          mediaTypes && mediaTypes.length > 0
+            ? [...new Set(mediaTypes)]
+                .sort((a, b) => VALID_MEDIA_TYPES.indexOf(a) - VALID_MEDIA_TYPES.indexOf(b))
+                .join(',')
+            : null
+
+        albumService.updateAlbum(albumId, { physical_media: normalized })
+        return { success: true }
+      } catch (error) {
+        return { success: false, error: (error as Error).message }
+      }
+    }
+  )
+
   // ==================== 风格统计 ====================
 
   /**
