@@ -1,13 +1,12 @@
 <script setup lang="ts">
 /**
- * 底部常驻播放条：封面、歌曲/艺术家/专辑信息、播控按钮与可点可拖进度条。
- * 状态与命令均由父组件（App.vue）持有与派发，本组件只负责展示与交互反馈。
+ * 底部常驻播放条：封面、歌曲名/艺术家两行信息（固定宽度、超长缓慢滚动）、
+ * 播控按钮与可点可拖进度条。状态与命令均由父组件（App.vue）持有与派发。
  */
-import { computed, ref, watch, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 
 const props = defineProps<{
   albumId: number | null
-  albumTitle: string
   /** 专辑原始封面 URL（cover:// 协议失败时回退用） */
   coverUrl: string | null
   trackTitle: string
@@ -21,6 +20,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  coverClick: []
   toggle: []
   next: []
   prev: []
@@ -61,6 +61,50 @@ function formatTime(seconds: number): string {
   const s = total % 60
   return `${m}:${String(s).padStart(2, '0')}`
 }
+
+// ==================== 信息区超长文本缓慢滚动 ====================
+// 信息区宽度固定（CSS），文本超长时测量溢出宽度，用 CSS 动画缓慢往返滚动。
+
+const trackLineRef = ref<HTMLElement | null>(null)
+const trackTextRef = ref<HTMLElement | null>(null)
+const artistLineRef = ref<HTMLElement | null>(null)
+const artistTextRef = ref<HTMLElement | null>(null)
+
+const trackScrollStyle = ref<Record<string, string>>({})
+const artistScrollStyle = ref<Record<string, string>>({})
+
+/** 按约 24px/s 的速度计算往返滚动动画样式；文本未溢出时返回空样式静态显示 */
+function marqueeStyle(lineEl: HTMLElement, textEl: HTMLElement): Record<string, string> {
+  const overflow = textEl.scrollWidth - lineEl.clientWidth
+  if (overflow <= 4) return {}
+  const duration = Math.max(4, overflow / 24)
+  return {
+    '--marquee-distance': `${-overflow}px`,
+    animation: `player-marquee ${duration}s ease-in-out 1.2s infinite alternate`
+  }
+}
+
+function measureMarquee(): void {
+  if (trackLineRef.value && trackTextRef.value) {
+    trackScrollStyle.value = marqueeStyle(trackLineRef.value, trackTextRef.value)
+  }
+  if (artistLineRef.value && artistTextRef.value) {
+    artistScrollStyle.value = marqueeStyle(artistLineRef.value, artistTextRef.value)
+  }
+}
+
+// 切换歌曲后重新测量（文本 span 以内容为 key 重建，动画随之从起点重启）
+watch(
+  [() => props.trackTitle, () => props.trackArtist],
+  async () => {
+    await nextTick()
+    measureMarquee()
+  }
+)
+
+onMounted(() => {
+  void nextTick(measureMarquee)
+})
 
 // ==================== 进度条（点击/拖动跳转） ====================
 
@@ -167,8 +211,12 @@ function onVolumeUp(e: PointerEvent): void {
 
 <template>
   <footer class="player-bar">
-    <!-- 封面 -->
-    <div class="player-cover">
+    <!-- 封面：点击定位到详情面板的当前专辑 -->
+    <button
+      class="player-cover"
+      :title="albumId !== null ? '查看专辑详情' : undefined"
+      @click="emit('coverClick')"
+    >
       <img
         v-if="coverSrc"
         :src="coverSrc"
@@ -177,15 +225,28 @@ function onVolumeUp(e: PointerEvent): void {
         @error="coverProtocolFailed = true"
       />
       <span v-else class="player-cover-placeholder">💿</span>
-    </div>
+    </button>
 
-    <!-- 曲目信息 -->
+    <!-- 曲目信息：歌曲名在上、艺术家在下，固定宽度，超长文本缓慢滚动 -->
     <div class="player-info">
-      <div class="player-title-line">
-        <span class="player-track">{{ trackTitle || '—' }}</span>
-        <span v-if="trackArtist" class="player-artist">{{ trackArtist }}</span>
+      <div ref="trackLineRef" class="player-info-line">
+        <span
+          :key="trackTitle"
+          ref="trackTextRef"
+          class="player-info-text"
+          :style="trackScrollStyle"
+          :title="trackTitle || '—'"
+        >{{ trackTitle || '—' }}</span>
       </div>
-      <div class="player-album">{{ albumTitle || '—' }}</div>
+      <div ref="artistLineRef" class="player-info-line">
+        <span
+          :key="trackArtist"
+          ref="artistTextRef"
+          class="player-info-text player-info-text-secondary"
+          :style="artistScrollStyle"
+          :title="trackArtist || undefined"
+        >{{ trackArtist }}</span>
+      </div>
     </div>
 
     <!-- 播控按钮 -->
@@ -250,6 +311,7 @@ function onVolumeUp(e: PointerEvent): void {
   flex-shrink: 0;
   width: 44px;
   height: 44px;
+  padding: 0;
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--bg);
@@ -257,6 +319,12 @@ function onVolumeUp(e: PointerEvent): void {
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.player-cover:hover {
+  border-color: var(--primary);
 }
 
 .player-cover img {
@@ -270,39 +338,36 @@ function onVolumeUp(e: PointerEvent): void {
 }
 
 .player-info {
-  flex-shrink: 1;
+  /* 宽度固定：切换歌曲不再引起播控按钮/进度条位置变化 */
+  flex-shrink: 0;
+  width: 220px;
   min-width: 0;
-  max-width: 320px;
-}
-
-.player-title-line {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
 }
 
-.player-track {
+.player-info-line {
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.player-info-text {
+  display: inline-block;
+  white-space: nowrap;
   font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 14px;
+  line-height: 20px;
+  will-change: transform;
 }
 
-.player-artist {
-  color: var(--text-secondary);
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.player-album {
-  color: var(--text-secondary);
+.player-info-text-secondary {
+  font-weight: 400;
   font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 16px;
+  color: var(--text-secondary);
 }
 
 .player-controls {
@@ -455,5 +520,21 @@ function onVolumeUp(e: PointerEvent): void {
 
 .player-volume-slider:hover .player-volume-thumb {
   opacity: 1;
+}
+</style>
+
+<!--
+  marquee 动画由内联 style 以固定名称引用（--marquee-distance 动态计算），
+  故 keyframes 必须放在非 scoped 块中：scoped 块会把 keyframes 名称改写为带
+  data-v 哈希，内联 animation 引用将失配。
+-->
+<style>
+@keyframes player-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--marquee-distance, 0));
+  }
 }
 </style>

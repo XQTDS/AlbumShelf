@@ -589,7 +589,6 @@
     <PlayerBar
       v-if="nowPlaying"
       :album-id="nowPlaying.albumId"
-      :album-title="nowPlaying.albumTitle"
       :cover-url="nowPlaying.coverUrl"
       :track-title="nowPlaying.trackTitle"
       :track-artist="nowPlaying.trackArtist"
@@ -597,6 +596,7 @@
       :position="displayPosition"
       :duration="playback.duration"
       :volume="volume"
+      @cover-click="handlePlayerCoverClick"
       @toggle="handleTogglePlay"
       @next="handlePlayerNext"
       @prev="handlePlayerPrev"
@@ -1412,6 +1412,35 @@ async function handlePlayerStop(): Promise<void> {
   if (!result.success) {
     showMessage(`停止失败：${result.error}`, 'error')
   }
+}
+
+/**
+ * 点击播放条封面：详情面板定位到当前播放专辑。
+ * 专辑在当前列表时直接选中；被搜索/筛选/分页过滤时清除过滤条件、
+ * 分页加载并滚动定位后选中（复用随机选择/移除筛选的定位机制）。
+ */
+function handlePlayerCoverClick(): void {
+  if (!nowPlaying.value || nowPlaying.value.albumId === null) return
+  const albumId = nowPlaying.value.albumId
+  if (albums.value.some((a) => a.id === albumId)) {
+    selectedAlbumId.value = albumId
+    return
+  }
+  // 清除过滤条件（镜像 handleRandomPick 的清条件逻辑）
+  searchQuery.value = ''
+  selectedArtist.value = ''
+  artistInput.value = ''
+  selectedGenres.value = []
+  genreInput.value = ''
+  sortBy.value = undefined
+  sortOrder.value = 'desc'
+  // 重置分页并定位：fetchAlbumsAndScrollTo 持续分页直到找到目标专辑
+  albums.value = []
+  currentPage.value = 1
+  hasMore.value = true
+  void fetchAlbumsAndScrollTo(albumId).then(() => {
+    selectedAlbumId.value = albumId
+  })
 }
 
 const coverErrorSet = ref<Set<number>>(new Set())
