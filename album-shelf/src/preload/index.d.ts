@@ -132,6 +132,28 @@ interface NcmCredentialStatus {
   appId: string | null
 }
 
+/** 播放器完整状态（ncm-cli state；pause 后 status 也为 'stopped'，需结合 queueLength 判定会话存活） */
+interface PlaybackState {
+  status: string
+  /** 合并串 "歌名 - 艺术家-"；空队列时为 null */
+  title: string | null
+  /** 当前播放位置（秒） */
+  position: number | null
+  /** 总时长（秒） */
+  duration: number | null
+  currentIndex: number
+  queueLength: number
+}
+
+/** 上一首/下一首命令结果（队列边界时 boundary=true 并携带提示文案） */
+interface PlayerStepResult {
+  success: boolean
+  boundary?: boolean
+  message?: string
+  error?: string
+  loginRequired?: boolean
+}
+
 interface IpcResult<T = void> {
   success: boolean
   data?: T
@@ -243,6 +265,14 @@ interface AlbumShelfAPI {
     totalTracks: number
   }>>
   playerPlaySong: (encryptedId: string, originalId: number) => Promise<IpcResult<void>>
+  playerPause: () => Promise<IpcResult>
+  playerResume: () => Promise<IpcResult>
+  playerNext: () => Promise<PlayerStepResult>
+  playerPrev: () => Promise<PlayerStepResult>
+  playerSeek: (seconds: number) => Promise<IpcResult>
+  playerSetVolume: (level: number) => Promise<IpcResult>
+  playerState: () => Promise<IpcResult<PlaybackState | null>>
+  playerStop: () => Promise<IpcResult>
   enrichStatus: () => Promise<
     IpcResult<{ pending: number; enriching: boolean; hasCredentials: boolean }>
   >

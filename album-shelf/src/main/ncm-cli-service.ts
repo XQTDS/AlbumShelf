@@ -161,6 +161,28 @@ export interface NcmCredentialStatus {
   appId: string | null
 }
 
+/** 播放器完整状态（ncm-cli state 命令返回的 state 字段） */
+export interface PlaybackState {
+  /** 'playing' | 'stopped' | 'unknown'；注意：pause 后 ncm-cli 也返回 'stopped'，会话是否存活需结合 queueLength 判定 */
+  status: string
+  /** 合并串 "歌名 - 艺术家-"（艺术家尾部带 "-"）；空队列时无此字段，为 null */
+  title: string | null
+  /** 当前播放位置（秒，浮点）；未知为 null */
+  position: number | null
+  /** 总时长（秒，浮点）；未知为 null */
+  duration: number | null
+  /** 队列中当前曲目下标 */
+  currentIndex: number
+  /** 队列长度 */
+  queueLength: number
+}
+
+/** 播放控制命令结果（next/prev 队列边界时 ok=false 携带提示文案） */
+export interface PlayerCommandResult {
+  ok: boolean
+  message: string | null
+}
+
 /** ncm-cli login status 返回结构 */
 interface NcmLoginStatusResponse {
   account?: {
@@ -197,6 +219,9 @@ interface NcmLoginResult {
 // ==================== NcmCliService ====================
 
 const NCM_CLI_TIMEOUT = 15_000 // 15 seconds
+
+/** executePlayerCmd 业务失败错误信息前缀（next/prev 边界提示复用其文案） */
+const NCM_PLAYER_FAIL_PREFIX = 'ncm-cli 播放控制失败: '
 
 /**
  * 解析内置 ncm-cli 的入口文件路径（package.json main 字段指向的 dist/index.js）
@@ -515,7 +540,7 @@ export class NcmCliService {
         if (isLoginRequiredMessage(errorMessage)) {
           throw new NcmLoginRequiredError(errorMessage)
         }
-        throw new Error(`ncm-cli 播放控制失败: ${errorMessage}`)
+        throw new Error(`${NCM_PLAYER_FAIL_PREFIX}${errorMessage}`)
       }
 
       return response
@@ -568,6 +593,97 @@ export class NcmCliService {
       '--encrypted-id', encryptedId,
       '--original-id', String(originalId)
     ])
+  }
+
+  /**
+   * 暂停播放
+   */
+  async pause(): Promise<void> {
+    await this.executePlayerCmd(['pause'])
+  }
+
+  /**
+   * 恢复播放
+   */
+  async resume(): Promise<void> {
+    await this.executePlayerCmd(['resume'])
+  }
+
+  /**
+   * 下一首
+   *
+   * 队列边界时 ncm-cli 返回 success: false 与中文提示（如"已是最后一首"），
+   * 作为正常结果返回（ok=false）而非抛错；登录要求等真实错误照常抛出。
+   */
+  async next(): Promise<PlayerCommandResult> {
+    return this.executeQueueStepCmd(['next'])
+  }
+
+  /**
+   * 上一首
+   */
+  async prev(): Promise<PlayerCommandResult> {
+    return this.executeQueueStepCmd(['prev'])
+  }
+
+  /**
+   * 执行上一首/下一首类命令：队列边界 success: false 转换为正常返回
+   */
+  private async executeQueueStepCmd(args: string[]): Promise<PlayerCommandResult> {
+    try {
+      const response = await this.executePlayerCmd(args)
+      return { ok: true, message: response.message ?? null }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith(NCM_PLAYER_FAIL_PREFIX)) {
+        return { ok: false, message: error.message.slice(NCM_PLAYER_FAIL_PREFIX.length) }
+      }
+      throw error
+    }
+  }
+
+  /**
+   * 跳转到指定播放位置（播放中与暂停态均支持）
+   *
+   * @param seconds 目标位置（秒，非负）
+   */
+  async seek(seconds: number): Promise<void> {
+    await this.executePlayerCmd(['seek', String(seconds)])
+  }
+
+  /**
+   * 设置音量（ncm-cli 无音量读取命令，仅写不读；越界值由 ncm-cli 钳位）
+   *
+   * @param level 音量 0-100
+   */
+  async setVolume(level: number): Promise<void> {
+    await this.executePlayerCmd(['volume', String(level)])
+  }
+
+  /**
+   * 查询完整播放器状态
+   *
+   * 与 getState 不同：字段级容错（缺失字段给默认值）、单次查询失败
+   * 返回 null 而非抛错——供渲染层轮询降级（保留上次状态）。
+   */
+  async getPlaybackState(): Promise<PlaybackState | null> {
+    try {
+      const response = await this.executePlayerCmd(['state'])
+      const raw = (response as unknown as { state?: Record<string, unknown> }).state
+      if (!raw || typeof raw !== 'object') {
+        return null
+      }
+      return {
+        status: typeof raw.status === 'string' ? raw.status : 'unknown',
+        title: typeof raw.title === 'string' ? raw.title : null,
+        position: typeof raw.position === 'number' ? raw.position : null,
+        duration: typeof raw.duration === 'number' ? raw.duration : null,
+        currentIndex: typeof raw.currentIndex === 'number' ? raw.currentIndex : 0,
+        queueLength: typeof raw.queueLength === 'number' ? raw.queueLength : 0
+      }
+    } catch (error) {
+      console.warn('[ncm-cli] 查询播放状态失败:', error)
+      return null
+    }
   }
 
   /**

@@ -89,6 +89,14 @@ const albumShelfAPI = {
   playerPlayAlbum: (albumId: number) => ipcRenderer.invoke('player:playAlbum', albumId),
   playerPlaySong: (encryptedId: string, originalId: number) =>
     ipcRenderer.invoke('player:playSong', encryptedId, originalId),
+  playerPause: () => ipcRenderer.invoke('player:pause'),
+  playerResume: () => ipcRenderer.invoke('player:resume'),
+  playerNext: () => ipcRenderer.invoke('player:next'),
+  playerPrev: () => ipcRenderer.invoke('player:prev'),
+  playerSeek: (seconds: number) => ipcRenderer.invoke('player:seek', seconds),
+  playerSetVolume: (level: number) => ipcRenderer.invoke('player:volume', level),
+  playerState: () => ipcRenderer.invoke('player:state'),
+  playerStop: () => ipcRenderer.invoke('player:stop'),
 
   // 数据补全
   enrichStatus: () => ipcRenderer.invoke('enrich:status'),

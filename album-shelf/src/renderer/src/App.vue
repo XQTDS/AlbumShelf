@@ -575,6 +575,26 @@
       <p>正在加载...</p>
     </main>
 
+    <!-- 底部常驻播放条（播放会话存活时显示） -->
+    <PlayerBar
+      v-if="nowPlaying"
+      :album-id="nowPlaying.albumId"
+      :album-title="nowPlaying.albumTitle"
+      :cover-url="nowPlaying.coverUrl"
+      :track-title="nowPlaying.trackTitle"
+      :track-artist="nowPlaying.trackArtist"
+      :status="playback.status"
+      :position="displayPosition"
+      :duration="playback.duration"
+      :volume="volume"
+      @toggle="handleTogglePlay"
+      @next="handlePlayerNext"
+      @prev="handlePlayerPrev"
+      @seek="handlePlayerSeek"
+      @volume="handlePlayerVolume"
+      @mute-toggle="handleVolumeMuteToggle"
+      @stop="handlePlayerStop"
+    />
 
     <!-- 登录弹窗 -->
     <LoginModal
@@ -619,7 +639,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import LoginModal from './LoginModal.vue'
 import LoginGuideModal from './LoginGuideModal.vue'
 import FuzzyMatchModal from './FuzzyMatchModal.vue'
@@ -628,6 +648,7 @@ import AlbumSearchModal from './AlbumSearchModal.vue'
 import SettingsModal from './SettingsModal.vue'
 import GenreStatsModal from './GenreStatsModal.vue'
 import AboutModal from './AboutModal.vue'
+import PlayerBar from './PlayerBar.vue'
 
 // ==================== 状态 ====================
 
@@ -1000,9 +1021,213 @@ async function handleSetRating(albumId: number, rating: number) {
   }
 }
 
-// 播放状态
+// ==================== 播放状态 ====================
+
 const playingAlbumId = ref<number | null>(null)
 const playingTrackId = ref<number | null>(null)
+
+/** 正在播放的曲目上下文：本地元数据 + 队列快照（ncm-cli state 不含专辑名，由本地提供） */
+const nowPlaying = ref<{
+  albumId: number | null
+  albumTitle: string
+  /** 专辑原始封面 URL（cover:// 协议失败时回退用） */
+  coverUrl: string | null
+  trackTitle: string
+  trackArtist: string
+  /** 本地队列快照（发起播放时构建，next/prev 后按 currentIndex 更新标题/艺术家） */
+  queue: { title: string; artist: string }[]
+} | null>(null)
+
+/**
+ * 播放器运行时状态
+ * status 以本地为权威：ncm-cli pause 后 state.status 也返回 'stopped'（实测），
+ * 会话是否存活需结合 state.queueLength 判定，不能依赖 state.status。
+ */
+const playback = reactive({
+  status: 'stopped' as 'stopped' | 'playing' | 'paused' | 'unknown',
+  /** state 锚点位置（秒） */
+  position: 0,
+  /** 锚点采样时刻（performance.now），用于轮询间隔内插值 */
+  anchorAt: 0,
+  duration: 0,
+  currentIndex: 0
+})
+
+// ==================== 音量控制 ====================
+
+// 音量由应用本地管理：ncm-cli 无音量读取命令（state.volume 恒为 null），
+// UI 是唯一事实源，localStorage 持久化，播放会话启动时应用到后端。
+const VOLUME_STORAGE_KEY = 'albumShelfPlayerVolume'
+const DEFAULT_VOLUME = 100
+
+function loadStoredVolume(): number {
+  const raw = localStorage.getItem(VOLUME_STORAGE_KEY)
+  const parsed = raw === null ? NaN : Number(raw)
+  return Number.isFinite(parsed) ? Math.min(100, Math.max(0, Math.round(parsed))) : DEFAULT_VOLUME
+}
+
+const volume = ref(loadStoredVolume())
+/** 静音前的非零音量（图标点击在 0 ↔ lastNonZeroVolume 间切换） */
+let lastNonZeroVolume = volume.value > 0 ? volume.value : DEFAULT_VOLUME
+
+// 轮询间隔：播放中 1s、暂停中 3s（每次 state 是一次子进程调用，需克制频率）
+const PLAYER_POLL_PLAYING_MS = 1000
+const PLAYER_POLL_IDLE_MS = 3000
+let playerPollTimer: ReturnType<typeof setInterval> | null = null
+
+/**
+ * 会话存活确认：playSong 返回后播放器后端可能尚未就绪，立即轮询会读到
+ * queueLength 0 而误判会话结束。仅在观察到 queueLength > 0 之后，
+ * 队列再次清空才判定为会话结束。
+ */
+let playerSessionSeenActive = false
+
+/**
+ * seek 宽限期：跳转命令发出时，可能有一个进行中的轮询带着旧 position 晚到，
+ * 回写会令进度条回跳。跳转后 2 秒内忽略轮询的 position 回写。
+ */
+let seekGraceUntil = 0
+
+// rAF 心跳：playing 时驱动进度插值重算（computed 仅在依赖变化时求值，需持续心跳）
+let progressRafId: number | null = null
+const progressTick = ref(0)
+
+/** 插值后的展示进度：playing 时从锚点按时间线性推进，保证 1s 轮询间隔内平滑 */
+const displayPosition = computed(() => {
+  if (playback.status !== 'playing') return playback.position
+  void progressTick.value // 依赖 rAF 心跳持续重算
+  const elapsed = (performance.now() - playback.anchorAt) / 1000
+  const pos = playback.position + elapsed
+  return playback.duration > 0 ? Math.min(pos, playback.duration) : pos
+})
+
+function tickProgress(): void {
+  progressTick.value = performance.now()
+  progressRafId = requestAnimationFrame(tickProgress)
+}
+
+function startProgressTicker(): void {
+  if (progressRafId !== null) return
+  progressRafId = requestAnimationFrame(tickProgress)
+}
+
+function stopProgressTicker(): void {
+  if (progressRafId !== null) {
+    cancelAnimationFrame(progressRafId)
+    progressRafId = null
+  }
+}
+
+// 播放中启动进度心跳，暂停/停止即停
+watch(
+  () => playback.status,
+  (s) => {
+    if (s === 'playing') startProgressTicker()
+    else stopProgressTicker()
+  }
+)
+
+/** 解析 state.title 合并串 "歌名 - 艺术家-"（剥离艺术家尾部 "-" 怪癖） */
+function parseStateTitle(title: string): { track: string; artist: string } {
+  const cleaned = title.trim().replace(/-+$/, '').trim()
+  const idx = cleaned.lastIndexOf(' - ')
+  if (idx === -1) return { track: cleaned, artist: '' }
+  return { track: cleaned.slice(0, idx).trim(), artist: cleaned.slice(idx + 3).trim() }
+}
+
+/** 轮询播放器状态：锚点更新 + 本地快照推进标题/艺术家 + 队列清空判定会话结束 */
+async function pollPlayerState(): Promise<void> {
+  const result = await window.api.playerState()
+  if (!result.success || !result.data) {
+    return // 单次失败保留上次状态，静默重试
+  }
+  const state = result.data
+
+  if (performance.now() >= seekGraceUntil) {
+    playback.position = state.position ?? playback.position
+  }
+  playback.duration = state.duration ?? playback.duration
+  playback.currentIndex = state.currentIndex
+  playback.anchorAt = performance.now()
+
+  // 队列清空 = 播放会话结束 → 停止轮询并隐藏播放条
+  // （会话尚未观察到存活时不判定结束，规避播放启动瞬间后端未就绪的误杀）
+  if (state.queueLength === 0) {
+    if (!playerSessionSeenActive) return
+    stopPlayerPolling()
+    nowPlaying.value = null
+    playback.status = 'stopped'
+    return
+  }
+  playerSessionSeenActive = true
+
+  // 曲目标题/艺术家：本地队列快照优先；无快照（应用外启动的播放）时用 state.title 兜底
+  if (nowPlaying.value) {
+    const snap = nowPlaying.value.queue[state.currentIndex]
+    if (snap) {
+      nowPlaying.value.trackTitle = snap.title
+      nowPlaying.value.trackArtist = snap.artist
+    } else if (state.title) {
+      const parsed = parseStateTitle(state.title)
+      nowPlaying.value.trackTitle = parsed.track
+      nowPlaying.value.trackArtist = parsed.artist
+    }
+  }
+
+  // 仅当 state 确认 playing 时同步回放状态（本地 pause 动作已先行置位，此处不回写冲突）
+  if (state.status === 'playing' && playback.status !== 'playing') {
+    playback.status = 'playing'
+  }
+}
+
+function startPlayerPolling(): void {
+  stopPlayerPolling()
+  playerPollTimer = setInterval(pollPlayerState, PLAYER_POLL_PLAYING_MS)
+}
+
+/** 按当前状态调整轮询间隔（pause 后 state.status 为 'stopped'，间隔以本地状态为准） */
+function adjustPlayerPollInterval(): void {
+  if (!playerPollTimer) return
+  clearInterval(playerPollTimer)
+  const interval = playback.status === 'playing' ? PLAYER_POLL_PLAYING_MS : PLAYER_POLL_IDLE_MS
+  playerPollTimer = setInterval(pollPlayerState, interval)
+}
+
+function stopPlayerPolling(): void {
+  if (playerPollTimer) {
+    clearInterval(playerPollTimer)
+    playerPollTimer = null
+  }
+}
+
+/** 播放成功后初始化播放上下文：本地元数据 + 队列快照 + 启动轮询 */
+function beginPlaybackContext(context: {
+  albumId: number | null
+  albumTitle: string
+  coverUrl: string | null
+  tracks: Track[]
+}): void {
+  nowPlaying.value = {
+    albumId: context.albumId,
+    albumTitle: context.albumTitle,
+    coverUrl: context.coverUrl,
+    trackTitle: context.tracks[0]?.title || '',
+    trackArtist: context.tracks[0]?.artist || '',
+    queue: context.tracks.map((t) => ({ title: t.title, artist: t.artist || '' }))
+  }
+  playback.status = 'playing'
+  playback.position = 0
+  playback.duration = 0
+  playback.currentIndex = 0
+  playback.anchorAt = performance.now()
+  playerSessionSeenActive = false
+  startPlayerPolling()
+  pollPlayerState() // 立即拉取一次，快速获得 duration 等初始状态
+  // 会话启动时把本地音量应用到后端（后端无读取渠道，可能被外部修改过）
+  void window.api.playerSetVolume(volume.value).then((r) => {
+    if (!r.success) console.warn('应用音量失败:', r.error)
+  })
+}
 
 async function handlePlayAlbum(albumId: number) {
   if (playingAlbumId.value !== null) return
@@ -1012,7 +1237,18 @@ async function handlePlayAlbum(albumId: number) {
     const result = await window.api.playerPlayAlbum(albumId)
     if (!result.success) {
       console.error('播放专辑失败:', result.error)
+      return
     }
+    // 主进程已确保曲目入库（缺失时自动拉取），取本地曲目构建队列快照
+    await loadTracks(albumId)
+    const tracks = trackCache.value.get(albumId) || []
+    const album = albums.value.find((a) => a.id === albumId)
+    beginPlaybackContext({
+      albumId,
+      albumTitle: album?.title || '',
+      coverUrl: album?.cover_url || null,
+      tracks
+    })
   } catch (error) {
     console.error('播放专辑失败:', error)
   } finally {
@@ -1020,13 +1256,7 @@ async function handlePlayAlbum(albumId: number) {
   }
 }
 
-interface TrackInfo {
-  id: number
-  netease_song_id: string | null
-  netease_original_id: number | null
-}
-
-async function handlePlayTrack(_albumId: number, track: TrackInfo) {
+async function handlePlayTrack(_albumId: number, track: Track) {
   if (playingTrackId.value !== null) return
   if (!track.netease_song_id || !track.netease_original_id) {
     console.error('该曲目缺少歌曲 ID，无法播放')
@@ -1041,11 +1271,136 @@ async function handlePlayTrack(_albumId: number, track: TrackInfo) {
     )
     if (!result.success) {
       console.error('播放曲目失败:', result.error)
+      return
     }
+    const album = albums.value.find((a) => a.id === _albumId)
+    beginPlaybackContext({
+      albumId: _albumId,
+      albumTitle: album?.title || '',
+      coverUrl: album?.cover_url || null,
+      tracks: [track]
+    })
   } catch (error) {
     console.error('播放曲目失败:', error)
   } finally {
     playingTrackId.value = null
+  }
+}
+
+/** 播放/暂停切换（本地状态先行置位，失败回退） */
+async function handleTogglePlay(): Promise<void> {
+  if (!nowPlaying.value) return
+  if (playback.status === 'playing') {
+    playback.status = 'paused'
+    adjustPlayerPollInterval()
+    const result = await window.api.playerPause()
+    if (!result.success) {
+      playback.status = 'playing'
+      adjustPlayerPollInterval()
+      showMessage(`暂停失败：${result.error}`, 'error')
+    }
+  } else {
+    playback.status = 'playing'
+    playback.anchorAt = performance.now()
+    adjustPlayerPollInterval()
+    const result = await window.api.playerResume()
+    if (!result.success) {
+      playback.status = 'paused'
+      adjustPlayerPollInterval()
+      showMessage(`播放失败：${result.error}`, 'error')
+    }
+  }
+}
+
+/** 下一首：乐观更新本地快照显示，下一轮 state 回填 currentIndex 后保持一致 */
+async function handlePlayerNext(): Promise<void> {
+  const result = await window.api.playerNext()
+  if (result.boundary) {
+    showMessage(result.message || '已是最后一首', 'info')
+    return
+  }
+  if (!result.success) {
+    showMessage(`下一首失败：${result.error}`, 'error')
+    return
+  }
+  if (nowPlaying.value) {
+    const nextIdx = Math.min(playback.currentIndex + 1, nowPlaying.value.queue.length - 1)
+    const snap = nowPlaying.value.queue[nextIdx]
+    if (snap) {
+      nowPlaying.value.trackTitle = snap.title
+      nowPlaying.value.trackArtist = snap.artist
+      playback.currentIndex = nextIdx
+    }
+  }
+  playback.position = 0
+  playback.anchorAt = performance.now()
+}
+
+/** 上一首（乐观更新逻辑同 next） */
+async function handlePlayerPrev(): Promise<void> {
+  const result = await window.api.playerPrev()
+  if (result.boundary) {
+    showMessage(result.message || '已是第一首', 'info')
+    return
+  }
+  if (!result.success) {
+    showMessage(`上一首失败：${result.error}`, 'error')
+    return
+  }
+  if (nowPlaying.value) {
+    const prevIdx = Math.max(playback.currentIndex - 1, 0)
+    const snap = nowPlaying.value.queue[prevIdx]
+    if (snap) {
+      nowPlaying.value.trackTitle = snap.title
+      nowPlaying.value.trackArtist = snap.artist
+      playback.currentIndex = prevIdx
+    }
+  }
+  playback.position = 0
+  playback.anchorAt = performance.now()
+}
+
+/** 进度跳转：锚点先行（PlayerBar 拖动期间已本地预览），宽限期内忽略轮询旧值回写 */
+async function handlePlayerSeek(seconds: number): Promise<void> {
+  playback.position = seconds
+  playback.anchorAt = performance.now()
+  seekGraceUntil = performance.now() + 2000
+  const result = await window.api.playerSeek(seconds)
+  if (!result.success) {
+    showMessage(`跳转失败：${result.error}`, 'error')
+  }
+}
+
+/** 音量调整：本地先行（滑块拖动期间已本地预览），持久化并应用到后端，失败回滚 */
+async function handlePlayerVolume(level: number): Promise<void> {
+  const clamped = Math.min(100, Math.max(0, Math.round(level)))
+  const previous = volume.value
+  volume.value = clamped
+  if (clamped > 0) lastNonZeroVolume = clamped
+  localStorage.setItem(VOLUME_STORAGE_KEY, String(clamped))
+  const result = await window.api.playerSetVolume(clamped)
+  if (!result.success) {
+    volume.value = previous
+    localStorage.setItem(VOLUME_STORAGE_KEY, String(previous))
+    showMessage(`音量设置失败：${result.error}`, 'error')
+  }
+}
+
+/** 静音切换（图标点击）：在 0 ↔ 上次非零音量 间切换 */
+function handleVolumeMuteToggle(): void {
+  void handlePlayerVolume(volume.value > 0 ? 0 : lastNonZeroVolume)
+}
+
+/** 停止播放（播放条关闭按钮）：清空队列并隐藏播放条 */
+async function handlePlayerStop(): Promise<void> {
+  stopPlayerPolling()
+  nowPlaying.value = null
+  playback.status = 'stopped'
+  playback.position = 0
+  playback.duration = 0
+  const result = await window.api.playerStop()
+  if (!result.success) {
+    showMessage(`停止失败：${result.error}`, 'error')
   }
 }
 
@@ -2033,6 +2388,10 @@ onMounted(async () => {
 onUnmounted(() => {
   // 清理 Esc 监听
   document.removeEventListener('keydown', handleDetailKeydown)
+
+  // 清理播放状态轮询与进度心跳
+  stopPlayerPolling()
+  stopProgressTicker()
 
   // 清理 IntersectionObserver
   if (intersectionObserver) {

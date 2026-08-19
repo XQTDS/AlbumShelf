@@ -671,6 +671,112 @@ export function registerIpcHandlers(): void {
   )
 
   /**
+   * 播放控制类 handler 的统一执行与错误处理：
+   * 登录要求自动弹窗，其余错误返回 { success: false, error }
+   */
+  async function runPlayerCommand(
+    action: () => Promise<unknown>
+  ): Promise<{ success: boolean; error?: string; loginRequired?: boolean }> {
+    try {
+      await action()
+      return { success: true }
+    } catch (error) {
+      if (authService.handleLoginRequiredError(error)) {
+        return { success: false, error: '请先登录网易云音乐账号', loginRequired: true }
+      }
+      return { success: false, error: (error as Error).message }
+    }
+  }
+
+  /**
+   * 暂停播放
+   */
+  ipcMain.handle('player:pause', async () => {
+    return runPlayerCommand(() => ncmCliService.pause())
+  })
+
+  /**
+   * 恢复播放
+   */
+  ipcMain.handle('player:resume', async () => {
+    return runPlayerCommand(() => ncmCliService.resume())
+  })
+
+  /**
+   * 下一首
+   * 队列边界（已是最后一首）不算错误：success: false 附带 boundary 标记与提示文案
+   */
+  ipcMain.handle('player:next', async () => {
+    try {
+      const result = await ncmCliService.next()
+      if (!result.ok) {
+        return { success: false, boundary: true, message: result.message || '无法切换到下一首' }
+      }
+      return { success: true, message: result.message }
+    } catch (error) {
+      if (authService.handleLoginRequiredError(error)) {
+        return { success: false, error: '请先登录网易云音乐账号', loginRequired: true }
+      }
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 上一首（队列边界处理同 next）
+   */
+  ipcMain.handle('player:prev', async () => {
+    try {
+      const result = await ncmCliService.prev()
+      if (!result.ok) {
+        return { success: false, boundary: true, message: result.message || '无法切换到上一首' }
+      }
+      return { success: true, message: result.message }
+    } catch (error) {
+      if (authService.handleLoginRequiredError(error)) {
+        return { success: false, error: '请先登录网易云音乐账号', loginRequired: true }
+      }
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 跳转到指定播放位置（秒）
+   */
+  ipcMain.handle('player:seek', async (_event, seconds: number) => {
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) {
+      return { success: false, error: '无效的跳转位置' }
+    }
+    return runPlayerCommand(() => ncmCliService.seek(seconds))
+  })
+
+  /**
+   * 设置音量（0-100，越界钳位；ncm-cli 无音量读取命令，仅写不读）
+   */
+  ipcMain.handle('player:volume', async (_event, level: number) => {
+    if (typeof level !== 'number' || !Number.isFinite(level)) {
+      return { success: false, error: '无效的音量值' }
+    }
+    const clamped = Math.min(100, Math.max(0, Math.round(level)))
+    return runPlayerCommand(() => ncmCliService.setVolume(clamped))
+  })
+
+  /**
+   * 查询播放器状态（渲染层轮询用）
+   * 查询失败返回 success: false 而非抛错，渲染层保留上次状态继续轮询
+   */
+  ipcMain.handle('player:state', async () => {
+    const state = await ncmCliService.getPlaybackState()
+    return { success: state !== null, data: state }
+  })
+
+  /**
+   * 停止播放（清空播放队列，播放条关闭按钮用）
+   */
+  ipcMain.handle('player:stop', async () => {
+    return runPlayerCommand(() => ncmCliService.queueClear())
+  })
+
+  /**
    * 主动触发单个专辑的曲目同步
    */
   ipcMain.handle('track:syncByAlbum', async (_event, albumId: number) => {
@@ -1028,16 +1134,22 @@ export function registerIpcHandlers(): void {
  *
  * 播放由 ncm-cli 启动的独立播放器进程驱动，不随应用退出而停止。
  * 退出流程（index.ts before-quit）调用本函数：查询播放器状态，
- * playing / paused 时清空队列停止播放；状态查询失败或未知时不做干预。
- * 任何失败仅记录日志，不阻塞退出。
+ * 会话存活（playing / paused / 队列非空）时清空队列停止播放；
+ * 状态查询失败或未知时不做干预。任何失败仅记录日志，不阻塞退出。
+ *
+ * 注意：ncm-cli 的 pause 后 state.status 也返回 'stopped'（实测），
+ * 因此 paused 判定不可依赖 status，需以 queueLength > 0 兜底识别暂停会话。
  */
 export async function stopPlaybackOnQuit(): Promise<void> {
   if (!ncmCliService) {
     return
   }
   try {
-    const state = await ncmCliService.getState()
-    if (state.status === 'playing' || state.status === 'paused') {
+    const state = await ncmCliService.getPlaybackState()
+    const sessionActive =
+      state !== null &&
+      (state.status === 'playing' || state.status === 'paused' || state.queueLength > 0)
+    if (sessionActive) {
       await ncmCliService.queueClear()
     }
   } catch (error) {
