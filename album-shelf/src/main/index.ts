@@ -243,15 +243,6 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
           }
         }
       ]
-    },
-    // 视图菜单
-    {
-      label: '视图',
-      submenu: [
-        { role: 'reload', label: '重新加载' },
-        { role: 'forceReload', label: '强制重新加载' },
-        { role: 'toggleDevTools', label: '开发者工具' }
-      ]
     }
   ]
 

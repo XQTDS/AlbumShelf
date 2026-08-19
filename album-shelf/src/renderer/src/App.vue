@@ -14,7 +14,7 @@
         </button>
         <button
           class="view-toggle-btn"
-          :title="viewMode === 'table' ? '切换到网格视图' : '切换到表格视图'"
+          :title="viewMode === 'table' ? '切换到唱片墙' : '切换到表格视图'"
           @click="toggleViewMode"
         >
           <span v-if="viewMode === 'table'">▦</span>
@@ -230,7 +230,7 @@
         </tbody>
       </table>
       </div>
-      <!-- 网格视图（唱片墙） -->
+      <!-- 唱片墙视图 -->
       <div v-else class="grid-scroll-container" ref="scrollContainerRef">
         <!-- 排序工具栏 -->
         <div class="grid-toolbar">
@@ -1082,7 +1082,7 @@ const sortOrder = ref<'asc' | 'desc'>('desc')
 // 无限滚动
 const currentPage = ref(1)
 const totalAlbums = ref(0)
-// 分页尺寸：网格视图卡片小，每页加载更多（40 张约 2-4 行）
+// 分页尺寸：唱片墙卡片小，每页加载更多（40 张约 2-4 行）
 const pageSize = computed(() => (viewMode.value === 'grid' ? 40 : 20))
 const loadingMore = ref(false)
 const hasMore = ref(true)
@@ -1571,7 +1571,7 @@ function toggleViewMode() {
   resetAndFetch()
 }
 
-// 网格视图排序下拉框的值，与表格列头排序共享 sortBy/sortOrder
+// 唱片墙排序下拉框的值，与表格列头排序共享 sortBy/sortOrder
 const gridSortKey = computed<string>({
   get: () => (sortBy.value ? `${sortBy.value}-${sortOrder.value}` : ''),
   set: (key: string) => {
