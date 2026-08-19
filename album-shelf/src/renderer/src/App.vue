@@ -272,6 +272,16 @@
             </div>
             <!-- 排序角标：按当前排序字段显示对应信息 -->
             <div v-if="cardBadgeText(album)" class="card-badge">{{ cardBadgeText(album) }}</div>
+            <!-- 悬停播放按钮（右下角）：点击播放整张专辑，不改变选中状态 -->
+            <button
+              class="btn-play btn-play-card"
+              title="播放整张专辑"
+              @click.stop="handlePlayAlbum(album.id)"
+              :disabled="playingAlbumId === album.id"
+            >
+              <span v-if="playingAlbumId === album.id" class="spinner small"></span>
+              <span v-else>▶</span>
+            </button>
           </div>
           <!-- 哨兵元素和加载更多 -->
           <div v-if="hasMore || loadingMore" ref="sentinelRef" class="load-more-sentinel grid-sentinel">
@@ -3016,7 +3026,8 @@ body {
   font-size: 11px;
   line-height: 1.4;
   border-radius: 4px;
-  max-width: calc(100% - 12px);
+  /* 右侧预留右下角播放按钮空间（28px 按钮 + 6px 边距 + 10px 间隙），避免长文本与按钮重叠 */
+  max-width: calc(100% - 44px);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3259,6 +3270,34 @@ body {
 .btn-play-album:hover:not(:disabled) {
   background: #4338ca;
   transform: scale(1.1);
+}
+
+/* 唱片墙卡片右下角悬停播放按钮：随卡片悬停淡入，播放中保持可见（spinner） */
+.btn-play-card {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.15s;
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+  background: var(--primary);
+  color: white;
+}
+
+.album-card:hover .btn-play-card {
+  opacity: 1;
+}
+
+.btn-play-card:hover:not(:disabled) {
+  background: #4338ca;
+  transform: scale(1.1);
+}
+
+.btn-play-card:disabled {
+  opacity: 1;
 }
 
 .btn-play-track {
