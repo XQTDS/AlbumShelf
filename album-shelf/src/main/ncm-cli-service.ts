@@ -219,7 +219,8 @@ function resolveNcmCliEntry(): string {
   return (
     resolved.slice(0, idx + 1) +
     'app.asar.unpacked' +
-    resolved.slice(idx + 'app.asar'.length)
+    sep +
+    resolved.slice(idx + marker.length)
   )
 }
 
