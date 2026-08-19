@@ -144,10 +144,8 @@ const albumShelfAPI = {
   settingsSetEnrichStrategies: (strategies: Record<string, boolean>) =>
     ipcRenderer.invoke('settings:saveEnrichStrategies', strategies),
 
-  // 网易云 API 凭证配置
+  // 网易云 API 凭证状态（内置凭证，只读）
   ncmGetCredentialStatus: () => ipcRenderer.invoke('ncm:getCredentialStatus'),
-  ncmConfigureCredentials: (payload: { appId: string; privateKey: string }) =>
-    ipcRenderer.invoke('ncm:configureCredentials', payload),
 
   // MusicBrainz 凭据管理
   mbSetCredentials: (credentials: { username: string; password: string }) =>

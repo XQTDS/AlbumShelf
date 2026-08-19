@@ -264,10 +264,6 @@ interface AlbumShelfAPI {
   }>>
   settingsSetEnrichStrategies: (strategies: Record<string, boolean>) => Promise<IpcResult>
   ncmGetCredentialStatus: () => Promise<IpcResult<NcmCredentialStatus>>
-  ncmConfigureCredentials: (payload: {
-    appId: string
-    privateKey: string
-  }) => Promise<IpcResult>
   mbSetCredentials: (credentials: {
     username: string
     password: string

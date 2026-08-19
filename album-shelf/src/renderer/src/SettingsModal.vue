@@ -90,7 +90,8 @@
         <div class="settings-section">
           <div class="group-title">网易云凭证</div>
           <p class="description">
-            配置网易云开放平台 API 凭证，保存到 ncm-cli 本地加密配置（~/.config/ncm-cli/），供同步、搜索、热评等网易云数据功能使用。Private Key 仅掩码输入，不会在界面回显或写入日志。
+            网易云 API 凭证已内置到应用中，启动时自动写入 ncm-cli
+            本地加密配置（~/.config/ncm-cli/），供同步、搜索、热评等网易云数据功能使用，无需手动配置。
           </p>
 
           <div
@@ -104,45 +105,9 @@
                   ? maskedAppId
                     ? `已配置（${maskedAppId}）`
                     : '已配置'
-                  : '未配置'
+                  : '未配置（请重启应用重试自动写入）'
               }}
             </span>
-          </div>
-
-          <div class="credential-form">
-            <label class="field-label" for="credential-appid">App ID</label>
-            <input
-              id="credential-appid"
-              v-model="credentialForm.appId"
-              type="text"
-              class="credential-input"
-              placeholder="网易云开放平台 App ID"
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <label class="field-label" for="credential-private-key">Private Key</label>
-            <input
-              id="credential-private-key"
-              v-model="credentialForm.privateKey"
-              type="password"
-              class="credential-input"
-              placeholder="网易云开放平台 Private Key"
-              autocomplete="new-password"
-            />
-            <button
-              class="credential-save-btn"
-              :disabled="savingCredentials"
-              @click="handleSaveCredentials"
-            >
-              {{ savingCredentials ? '保存中…' : '保存凭证' }}
-            </button>
-            <p
-              v-if="credentialMessage"
-              class="credential-message"
-              :class="credentialMessage.type"
-            >
-              {{ credentialMessage.text }}
-            </p>
           </div>
         </div>
       </div>
@@ -180,17 +145,11 @@ const form = reactive<StrategyForm>({
   F3_luceneTokenSearch: true
 })
 
-// ==================== 网易云 API 凭证配置 ====================
+// ==================== 网易云 API 凭证状态（内置凭证，只读展示） ====================
 
-const credentialForm = reactive({
-  appId: '',
-  privateKey: ''
-})
 const credentialConfigured = ref(false)
 const credentialAppId = ref<string | null>(null)
 const credentialStatusLoading = ref(false)
-const savingCredentials = ref(false)
-const credentialMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 
 /** 状态行展示的掩码 appId（仅前 8 位，避免完整标识长期回显） */
 const maskedAppId = computed(() => {
@@ -218,7 +177,6 @@ onUnmounted(() => {
 
 async function openSettings() {
   visible.value = true
-  credentialMessage.value = null
 
   const loadStrategies = window.api
     .settingsGetEnrichStrategies()
@@ -255,51 +213,9 @@ async function refreshCredentialStatus() {
   }
 }
 
-/** 保存凭证（独立于策略保存，不关闭弹窗）；错误透传主进程中文 message */
-async function handleSaveCredentials() {
-  if (savingCredentials.value) {
-    return
-  }
-  if (!credentialForm.appId.trim() || !credentialForm.privateKey.trim()) {
-    credentialMessage.value = { type: 'error', text: 'App ID 与 Private Key 均不能为空' }
-    return
-  }
-  savingCredentials.value = true
-  credentialMessage.value = null
-  try {
-    const result = await window.api.ncmConfigureCredentials({
-      appId: credentialForm.appId.trim(),
-      privateKey: credentialForm.privateKey
-    })
-    if (result.success) {
-      credentialMessage.value = { type: 'success', text: '凭证保存成功' }
-      // 保存成功后清空输入（私钥不留在内存/界面），并刷新状态行
-      credentialForm.appId = ''
-      credentialForm.privateKey = ''
-      await refreshCredentialStatus()
-    } else {
-      credentialMessage.value = {
-        type: 'error',
-        text: result.error || '凭证保存失败'
-      }
-    }
-  } catch (error) {
-    console.error('保存网易云凭证失败:', error)
-    credentialMessage.value = {
-      type: 'error',
-      text: error instanceof Error ? error.message : '凭证保存失败'
-    }
-  } finally {
-    savingCredentials.value = false
-  }
-}
-
-/** 关闭弹窗并清空凭证输入（凭据仅存内存，关闭即丢弃） */
+/** 关闭弹窗 */
 function closeSettings() {
   visible.value = false
-  credentialForm.appId = ''
-  credentialForm.privateKey = ''
-  credentialMessage.value = null
 }
 
 function handleCancel() {
@@ -387,7 +303,7 @@ async function handleSave() {
   margin: 12px 0 6px 0;
 }
 
-/* ==================== 网易云凭证配置 ==================== */
+/* ==================== 网易云凭证状态 ==================== */
 
 .credential-status {
   display: flex;
@@ -399,72 +315,12 @@ async function handleSave() {
   border: 1px solid #f0f0f0;
   font-size: 13px;
   color: #666;
-  margin-bottom: 12px;
 }
 
 .credential-status.configured {
   color: #2e7d32;
   background: #f1f8f1;
   border-color: #d7ebd7;
-}
-
-.field-label {
-  display: block;
-  font-size: 12px;
-  font-weight: 600;
-  color: #888;
-  margin-bottom: 4px;
-}
-
-.credential-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px 12px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  font-size: 14px;
-  margin-bottom: 12px;
-  outline: none;
-  transition: border-color 0.2s;
-}
-
-.credential-input:focus {
-  border-color: #c62f2f;
-}
-
-.credential-save-btn {
-  background: #c62f2f;
-  color: #fff;
-  border: none;
-  padding: 8px 20px;
-  border-radius: 20px;
-  cursor: pointer;
-  font-size: 14px;
-  transition: background 0.2s;
-}
-
-.credential-save-btn:hover:not(:disabled) {
-  background: #a82828;
-}
-
-.credential-save-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.credential-message {
-  margin: 10px 0 0 0;
-  font-size: 13px;
-  line-height: 1.5;
-  word-break: break-all;
-}
-
-.credential-message.success {
-  color: #2e7d32;
-}
-
-.credential-message.error {
-  color: #c62f2f;
 }
 
 .strategy-group {

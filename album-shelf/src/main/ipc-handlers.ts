@@ -4,6 +4,7 @@ import { exportDatabase, importDatabase, type ExportData } from './database'
 import { AlbumService, AlbumQueryOptions } from './album-service'
 import { TrackService } from './track-service'
 import { NcmCliService, publishTimeToReleaseDate } from './ncm-cli-service'
+import { ensureBuiltinCredentials } from './ncm-credentials'
 import { TrackSyncService } from './track-sync-service'
 import { SyncManager } from './sync/sync-manager'
 import { NcmCliSyncService } from './sync/ncm-cli-sync-service'
@@ -61,6 +62,12 @@ function initServices(): void {
  */
 export function registerIpcHandlers(): void {
   initServices()
+
+  // 启动时确保内置网易云 API 凭证已写入（fire-and-forget，不阻塞启动；
+  // 失败仅记日志，数据功能调用时会自然报"凭证未配置"错误）
+  ensureBuiltinCredentials(ncmCliService).catch((error) => {
+    console.error('[ncm-cli] 内置凭证写入失败:', error)
+  })
 
   // ==================== 同步操作 ====================
 
@@ -818,7 +825,7 @@ export function registerIpcHandlers(): void {
   // ==================== 网易云 API 凭证配置 ====================
 
   /**
-   * 获取网易云 API 凭证配置状态（设置界面展示）
+   * 获取网易云 API 凭证配置状态（设置界面只读展示）
    */
   ipcMain.handle('ncm:getCredentialStatus', async () => {
     try {
@@ -828,25 +835,6 @@ export function registerIpcHandlers(): void {
       return { success: false, error: (error as Error).message }
     }
   })
-
-  /**
-   * 保存网易云 API 凭证（appId + privateKey）
-   * 非交互调用内置 ncm-cli 的 config set 命令，无 TTY、不弹终端窗口
-   */
-  ipcMain.handle(
-    'ncm:configureCredentials',
-    async (_event, payload: { appId?: string; privateKey?: string }) => {
-      try {
-        await ncmCliService.configureWithCredentials(
-          payload?.appId ?? '',
-          payload?.privateKey ?? ''
-        )
-        return { success: true }
-      } catch (error) {
-        return { success: false, error: (error as Error).message }
-      }
-    }
-  )
 
   // ==================== 网易云音乐认证 ====================
 
