@@ -163,6 +163,8 @@ interface AddAlbumRequest {
   title: string
   artist: string
   cover_url?: string | null
+  /** 搜索结果的 publishTime（北京时间零点时间戳），用于写入发行日期 */
+  publish_time?: number | null
 }
 
 /** 封面补全进度 */
@@ -175,6 +177,21 @@ interface CoverFillProgress {
 
 /** 封面补全结果 */
 interface CoverFillResult {
+  total: number
+  filled: number
+  failed: number
+}
+
+/** 发行日期回填进度 */
+interface ReleaseDateFillProgress {
+  current: number
+  total: number
+  albumTitle: string
+  filled: number
+}
+
+/** 发行日期回填结果 */
+interface ReleaseDateFillResult {
   total: number
   filled: number
   failed: number
@@ -207,6 +224,8 @@ interface AlbumShelfAPI {
   >
   albumCoverFillStart: () => Promise<IpcResult<CoverFillResult>>
   onCoverFillProgress: (callback: (progress: CoverFillProgress) => void) => () => void
+  albumReleaseDateFillStart: () => Promise<IpcResult<ReleaseDateFillResult>>
+  onReleaseDateFillProgress: (callback: (progress: ReleaseDateFillProgress) => void) => () => void
   albumSetRating: (albumId: number, rating: number | null) => Promise<IpcResult>
   genreStats: () => Promise<IpcResult<{
     stats: { name: string; count: number }[]
@@ -269,6 +288,7 @@ interface AlbumShelfAPI {
   onMenuOpenLogin: (callback: () => void) => () => void
   onMenuSyncAlbums: (callback: () => void) => () => void
   onMenuCoverFill: (callback: () => void) => () => void
+  onMenuReleaseDateFill: (callback: () => void) => () => void
   onMenuGenreStats: (callback: () => void) => () => void
 
   // 在线搜索

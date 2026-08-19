@@ -241,6 +241,18 @@ function getNcmCliEntry(): string {
   return ncmCliEntry
 }
 
+/**
+ * 将 ncm publishTime（北京时间零点的毫秒时间戳）换算为北京日历日期
+ *
+ * publishTime 直接取 UTC 日期会早一天（北京时间零点 = 前一日 UTC 16:00），
+ * 因此加上 UTC+8 偏移后再取日期，与网易云展示的发行日期一致。
+ * @returns 形如 "2014-09-25" 的日期字符串
+ */
+export function publishTimeToReleaseDate(publishTime: number): string {
+  const BJ_OFFSET_MS = 8 * 60 * 60 * 1000
+  return new Date(publishTime + BJ_OFFSET_MS).toISOString().split('T')[0]
+}
+
 /** 需要登录的错误 */
 export class NcmLoginRequiredError extends Error {
   constructor(message: string = '请先登录') {

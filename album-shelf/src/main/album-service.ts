@@ -349,6 +349,24 @@ export class AlbumService {
   }
 
   /**
+   * Get albums without release date (发行日期缺失的专辑).
+   * 这些专辑 release_date 为空，需要通过 ncm-cli album get 的 publishTime 批量回填。
+   * 按 id 倒序排列，最新收藏的在前面。
+   */
+  getAlbumsWithoutReleaseDate(): Album[] {
+    const rows = this.db
+      .prepare(`
+        SELECT * FROM album
+        WHERE (release_date IS NULL OR release_date = '')
+          AND netease_album_id IS NOT NULL
+          AND netease_album_id != ''
+        ORDER BY id DESC
+      `)
+      .all() as Album[]
+    return rows
+  }
+
+  /**
    * Get albums without genres (风格标签缺失的专辑).
    * 这些是已经尝试补全过，但没有获得任何风格标签的专辑。
    * 按 id 倒序排列，最新收藏的在前面。

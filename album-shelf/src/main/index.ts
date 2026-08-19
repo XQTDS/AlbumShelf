@@ -165,6 +165,15 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
             }
           }
         },
+        {
+          label: '补全缺失发行日期',
+          click: (): void => {
+            const mainWindow = BrowserWindow.getAllWindows()[0]
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('menu:releaseDateFill')
+            }
+          }
+        },
         { type: 'separator' },
         {
           label: '补全缺失MB数据的专辑',

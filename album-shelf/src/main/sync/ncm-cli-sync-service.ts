@@ -1,5 +1,5 @@
 import { SyncService, NeteaseAlbum } from './sync-service'
-import { NcmCliService, NcmCliCollectedAlbum } from '../ncm-cli-service'
+import { NcmCliService, NcmCliCollectedAlbum, publishTimeToReleaseDate } from '../ncm-cli-service'
 
 /** 每页拉取数量（ncm-cli 0.1.6 实测 limit 过小时可能返回 HTTP 400，固定 50） */
 const PAGE_SIZE = 50
@@ -100,7 +100,7 @@ export class NcmCliSyncService implements SyncService {
       artist: record.artists.map((artist) => artist.name).join('/'),
       cover_url: record.coverImgUrl ?? undefined,
       release_date: record.publishTime
-        ? new Date(record.publishTime).toISOString().split('T')[0]
+        ? publishTimeToReleaseDate(record.publishTime)
         : undefined,
       // album collected 接口不返回曲目数量
       track_count: undefined

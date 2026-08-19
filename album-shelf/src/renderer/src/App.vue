@@ -123,6 +123,16 @@
       </div>
     </div>
 
+    <!-- 发行日期回填进度条 -->
+    <div v-if="releaseDateFillProgress" class="enrich-bar">
+      <div class="enrich-bar-inner">
+        <span class="enrich-text">正在回填发行日期 {{ releaseDateFillProgress.current }}/{{ releaseDateFillProgress.total }}：{{ releaseDateFillProgress.albumTitle }}</span>
+        <div class="enrich-progress-track">
+          <div class="enrich-progress-fill" :style="{ width: (releaseDateFillProgress.current / releaseDateFillProgress.total * 100) + '%' }"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- 提示信息 -->
     <div v-if="message" class="message-bar" :class="messageType">
       <span>{{ message }}</span>
@@ -1092,6 +1102,9 @@ const enrichProgress = ref<{ current: number; total: number; albumTitle: string 
 // 封面补全进度
 const coverFillProgress = ref<{ current: number; total: number; albumTitle: string; filled: number } | null>(null)
 
+// 发行日期回填进度
+const releaseDateFillProgress = ref<{ current: number; total: number; albumTitle: string; filled: number } | null>(null)
+
 // ==================== 数据获取 ====================
 
 async function fetchAlbums(append = false) {
@@ -1827,6 +1840,67 @@ function setupCoverFillProgressListener() {
   })
 }
 
+// ==================== 批量回填缺失发行日期 ====================
+
+let removeReleaseDateFillProgressListener: (() => void) | null = null
+let removeMenuReleaseDateFillListener: (() => void) | null = null
+
+async function handleReleaseDateFill() {
+  if (releaseDateFillProgress.value) {
+    showMessage('发行日期回填正在进行中，请等待完成', 'info')
+    return
+  }
+
+  showMessage('正在回填缺失发行日期...', 'info')
+
+  try {
+    const result = await window.api.albumReleaseDateFillStart()
+    if (!result.success) {
+      showMessage(`发行日期回填失败：${result.error}`, 'error')
+      return
+    }
+
+    if (result.data) {
+      const { total, filled, failed } = result.data
+      if (result.loginRequired) {
+        // 登录弹窗由后端触发，这里清理进度条并提示
+        releaseDateFillProgress.value = null
+        showMessage('发行日期回填已中止：需要先登录网易云', 'error')
+        return
+      }
+      if (total === 0) {
+        showMessage('所有专辑均已有发行日期，无需回填', 'info')
+      } else if (failed > 0) {
+        showMessage(`发行日期回填完成！成功 ${filled} 张，失败 ${failed} 张（可重新运行回填）`, 'info')
+      } else {
+        showMessage(`发行日期回填完成！成功 ${filled} 张`, 'success')
+      }
+    }
+    // 进度条清除与列表刷新由 onReleaseDateFillProgress 回调处理
+  } catch (error) {
+    showMessage('发行日期回填失败：未知错误', 'error')
+  }
+}
+
+function setupReleaseDateFillProgressListener() {
+  removeReleaseDateFillProgressListener = window.api.onReleaseDateFillProgress((progress) => {
+    releaseDateFillProgress.value = {
+      current: progress.current,
+      total: progress.total,
+      albumTitle: progress.albumTitle,
+      filled: progress.filled
+    }
+
+    // 回填完成
+    if (progress.current >= progress.total) {
+      setTimeout(async () => {
+        releaseDateFillProgress.value = null
+        await fetchAlbums()
+      }, 1000)
+    }
+  })
+}
+
 // ==================== 登录相关 ====================
 
 const showLoginModal = ref(false)
@@ -1851,6 +1925,7 @@ function handleLoginGuideLogin() {
 onMounted(async () => {
   setupProgressListener()
   setupCoverFillProgressListener()
+  setupReleaseDateFillProgressListener()
 
   // Esc 关闭详情抽屉
   document.addEventListener('keydown', handleDetailKeydown)
@@ -1877,6 +1952,11 @@ onMounted(async () => {
   // 监听菜单栏"补全缺失封面"事件
   removeMenuCoverFillListener = window.api.onMenuCoverFill(() => {
     handleCoverFill()
+  })
+
+  // 监听菜单栏"补全缺失发行日期"事件
+  removeMenuReleaseDateFillListener = window.api.onMenuReleaseDateFill(() => {
+    handleReleaseDateFill()
   })
 
   // 监听登录要求事件
@@ -2481,7 +2561,7 @@ body {
   overflow: hidden;
   cursor: pointer;
   box-shadow: var(--shadow);
-  transition: transform 0.1s;
+  transition: transform 0.15s, box-shadow 0.15s;
 }
 
 /* 卡片内封面/占位符自身清零圆角与阴影，否则内侧圆角会露出页面底色 */
@@ -2499,8 +2579,10 @@ body {
 }
 
 .album-card.card-selected {
-  outline: 2px solid var(--primary);
-  outline-offset: 1px;
+  /* 选中卡片像从唱片墙上抽出：轻微放大 + 强阴影，浮于相邻卡片之上（z-index 保证绘制层级） */
+  transform: scale(1.06);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 1;
 }
 
 .card-overlay {

@@ -53,6 +53,24 @@ const albumShelfAPI = {
     return () => ipcRenderer.removeListener('album:coverFillProgress', handler)
   },
 
+  // 批量回填缺失发行日期
+  albumReleaseDateFillStart: () => ipcRenderer.invoke('album:releaseDateFillStart'),
+
+  // 发行日期回填进度监听
+  onReleaseDateFillProgress: (
+    callback: (progress: {
+      current: number
+      total: number
+      albumTitle: string
+      filled: number
+    }) => void
+  ) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress)
+    ipcRenderer.on('album:releaseDateFillProgress', handler)
+    // 返回取消监听函数
+    return () => ipcRenderer.removeListener('album:releaseDateFillProgress', handler)
+  },
+
   // 单张专辑重新同步（封面 + 曲目 + 评分 + 风格）
   albumResync: (albumId: number) => ipcRenderer.invoke('album:resync', albumId),
 
@@ -204,6 +222,13 @@ const albumShelfAPI = {
     const handler = () => callback()
     ipcRenderer.on('menu:coverFill', handler)
     return () => ipcRenderer.removeListener('menu:coverFill', handler)
+  },
+
+  // 监听菜单栏补全缺失发行日期事件
+  onMenuReleaseDateFill: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:releaseDateFill', handler)
+    return () => ipcRenderer.removeListener('menu:releaseDateFill', handler)
   },
 
   // 监听菜单栏风格统计事件

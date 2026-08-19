@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'fs'
 import { exportDatabase, importDatabase, type ExportData } from './database'
 import { AlbumService, AlbumQueryOptions } from './album-service'
 import { TrackService } from './track-service'
-import { NcmCliService } from './ncm-cli-service'
+import { NcmCliService, publishTimeToReleaseDate } from './ncm-cli-service'
 import { TrackSyncService } from './track-sync-service'
 import { SyncManager } from './sync/sync-manager'
 import { NcmCliSyncService } from './sync/ncm-cli-sync-service'
@@ -32,6 +32,9 @@ let enrichService: EnrichService
 
 // 封面批量补全进行中标志（防重入）
 let coverFillRunning = false
+
+// 发行日期批量回填进行中标志（防重入）
+let releaseDateFillRunning = false
 
 /**
  * 初始化所有服务实例
@@ -344,8 +347,91 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  // ==================== 批量回填缺失发行日期 ====================
+
   /**
-   * 重新同步单张专辑的全部信息（封面 + 曲目 + 评分 + 风格）
+   * 批量回填所有缺失发行日期的专辑
+   * 逐个调用 getAlbumDetail 获取 publishTime 并持久化，通过 event 推送进度
+   * 仅填充 release_date 为空的专辑；已有日期（含 MB 补全所得）不被覆盖
+   * 失败不重试：重跑时仅处理仍缺日期的专辑，天然增量收敛
+   */
+  ipcMain.handle('album:releaseDateFillStart', async (event) => {
+    if (releaseDateFillRunning) {
+      return { success: false, error: '发行日期回填正在进行中，请稍后再试' }
+    }
+    releaseDateFillRunning = true
+
+    try {
+      const albums = albumService.getAlbumsWithoutReleaseDate()
+      const total = albums.length
+
+      if (total === 0) {
+        return { success: true, data: { total: 0, filled: 0, failed: 0 } }
+      }
+
+      // 登录前置检查：未登录直接弹登录窗，避免批量无效调用
+      const loginStatus = await ncmCliService.getLoginStatus()
+      if (!loginStatus.isLoggedIn) {
+        authService.triggerLoginPopup()
+        return { success: true, data: { total, filled: 0, failed: 0 }, loginRequired: true }
+      }
+
+      const sender = event.sender
+      let filled = 0
+      let failed = 0
+
+      for (let i = 0; i < albums.length; i++) {
+        const album = albums[i]
+
+        // 推送进度
+        sender.send('album:releaseDateFillProgress', {
+          current: i + 1,
+          total,
+          albumTitle: album.title,
+          filled
+        })
+
+        try {
+          const detail = await ncmCliService.getAlbumDetail(album.netease_album_id)
+
+          if (detail.publishTime) {
+            albumService.updateAlbum(album.id, {
+              release_date: publishTimeToReleaseDate(detail.publishTime)
+            })
+            filled++
+          } else {
+            // 网易云也没有发行日期，无法回填
+            failed++
+          }
+        } catch (err) {
+          // 登录失效：弹登录窗并中止
+          if (authService.handleLoginRequiredError(err)) {
+            return {
+              success: true,
+              data: { total, filled, failed },
+              loginRequired: true
+            }
+          }
+          console.error(`批量回填发行日期失败 (albumId: ${album.id}, title: ${album.title}):`, err)
+          failed++
+        }
+
+        // 限流：每次调用间隔 300ms
+        if (i < albums.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 300))
+        }
+      }
+
+      return { success: true, data: { total, filled, failed } }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    } finally {
+      releaseDateFillRunning = false
+    }
+  })
+
+  /**
+   * 重新同步单张专辑的全部信息（封面 + 发行日期 + 曲目 + 评分 + 风格）
    */
   ipcMain.handle('album:resync', async (event, albumId: number) => {
     try {
@@ -360,7 +446,7 @@ export function registerIpcHandlers(): void {
         enrich_matched: false
       }
 
-      // 1. 重新获取封面
+      // 1. 重新获取封面（顺带补发行日期：仅填充空值，不覆盖已有日期）
       if (album.netease_album_id) {
         try {
           const detail = await ncmCliService.getAlbumDetail(album.netease_album_id)
@@ -368,6 +454,11 @@ export function registerIpcHandlers(): void {
             const coverUrl = detail.coverImgUrl.replace(/^http:\/\//, 'https://')
             albumService.updateAlbum(albumId, { cover_url: coverUrl })
             result.cover_url = coverUrl
+          }
+          if (!album.release_date && detail.publishTime) {
+            albumService.updateAlbum(albumId, {
+              release_date: publishTimeToReleaseDate(detail.publishTime)
+            })
           }
         } catch (err) {
           console.error(`重新获取封面失败 (albumId: ${albumId}):`, err)
@@ -830,6 +921,7 @@ export function registerIpcHandlers(): void {
 
   /**
    * 添加专辑到收藏（写入数据库 + 自动补全）
+   * publish_time 为搜索结果的 publishTime（北京时间零点时间戳），用于写入发行日期
    */
   ipcMain.handle('album:addToCollection', async (_event, album: {
     netease_album_id: string
@@ -837,10 +929,20 @@ export function registerIpcHandlers(): void {
     title: string
     artist: string
     cover_url?: string | null
+    publish_time?: number | null
   }) => {
     try {
-      // 1. 写入数据库
-      const albumId = syncManager.syncSingleAlbum(album)
+      // 1. 写入数据库（搜索结果的 publishTime 换算为发行日期一并写入）
+      const albumId = syncManager.syncSingleAlbum({
+        netease_album_id: album.netease_album_id,
+        netease_original_id: album.netease_original_id,
+        title: album.title,
+        artist: album.artist,
+        cover_url: album.cover_url,
+        release_date: album.publish_time
+          ? publishTimeToReleaseDate(album.publish_time)
+          : null
+      })
 
       // 2. 自动触发 MusicBrainz 补全（如果客户端可用）
       if (isMbClientInitialized()) {

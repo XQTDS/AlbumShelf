@@ -116,7 +116,7 @@ export class SyncManager {
   /**
    * 同步单张专辑到数据库
    * 用于搜索添加场景，直接传入专辑信息写入数据库
-   * @param album 专辑信息
+   * @param album 专辑信息（release_date 由调用方提供，如搜索结果的 publishTime 换算值）
    * @returns 新增的专辑 ID，如果已存在则返回已有 ID
    */
   syncSingleAlbum(album: {
@@ -125,6 +125,7 @@ export class SyncManager {
     title: string
     artist: string
     cover_url?: string | null
+    release_date?: string | null
   }): number {
     const now = new Date().toISOString()
 
@@ -135,7 +136,7 @@ export class SyncManager {
       title: album.title,
       artist: album.artist,
       cover_url: album.cover_url ?? null,
-      release_date: null,
+      release_date: album.release_date ?? null,
       track_count: null,
       synced_at: now
     })
