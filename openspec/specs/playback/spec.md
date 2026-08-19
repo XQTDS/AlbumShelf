@@ -1,5 +1,35 @@
 ## Requirements
 
+### Requirement: 专辑播放即时反馈与后台补队列
+
+系统 SHALL 在 `player:playAlbum` 中完成「清空队列 → 播放首曲 → 确认开始播放」后立即返回成功结果，不等待剩余曲目入队；剩余曲目 SHALL 在主进程后台串行补入队列。新一轮播放或停止播放 SHALL 使上一轮未完成的后台补队列任务立即中止。
+
+#### Scenario: 播放条即时出现
+
+- **WHEN** 渲染层调用 `player:playAlbum`（专辑有可播放曲目）
+- **THEN** 系统 SHALL 依次执行 `queue clear`、播放首曲，并以短轮询（首查约 200ms、间隔约 300ms、总超时 5s）确认播放器进入 `playing` 后立即返回 `{ success: true }`
+- **AND** 剩余曲目 SHALL 在主进程后台逐首串行 `queue add`（约 1 秒/首），不阻塞 IPC 返回，渲染层播放条随返回即刻出现
+
+#### Scenario: 播放确认超时
+
+- **WHEN** 播放首曲后 5 秒内未能观察到 `playing` 状态
+- **THEN** 系统 SHALL 返回 `{ success: false, error: '播放失败' }`，且不启动后台补队列
+
+#### Scenario: 新一轮播放取代旧后台任务
+
+- **WHEN** 上一轮 `player:playAlbum` 的后台补队列尚未完成时发起新一轮 `player:playAlbum`
+- **THEN** 新一轮播放 SHALL 使旧后台任务失效（代际不匹配即中止），旧专辑曲目 SHALL NOT 写入新队列
+
+#### Scenario: 停止播放取消后台补队列
+
+- **WHEN** 后台补队列进行中调用 `player:stop`
+- **THEN** 系统 SHALL 先使后台任务失效再清空队列，清空后的队列 SHALL NOT 被旧任务重新填充
+
+#### Scenario: 后台补队列单曲失败
+
+- **WHEN** 后台补队列中某一首 `queue add` 失败（网络异常、登录失效等）
+- **THEN** 系统 SHALL 仅记录日志并继续后续曲目，SHALL NOT 中断补队列、不向用户报错、不弹出登录窗
+
 ### Requirement: 退出时停止播放
 
 系统 SHALL 在应用退出前停止正在进行的播放会话，避免播放器进程（ncm-cli 的独立播放后端）在应用关闭后继续播放。

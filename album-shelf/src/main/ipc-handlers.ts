@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow, dialog } from 'electron'
 import { readFileSync, writeFileSync } from 'fs'
 import { exportDatabase, importDatabase, type ExportData } from './database'
 import { AlbumService, AlbumQueryOptions } from './album-service'
-import { TrackService } from './track-service'
+import { TrackService, type Track } from './track-service'
 import { NcmCliService, publishTimeToReleaseDate } from './ncm-cli-service'
 import { ensureBuiltinCredentials } from './ncm-credentials'
 import { TrackSyncService } from './track-sync-service'
@@ -36,6 +36,10 @@ let coverFillRunning = false
 
 // 发行日期批量回填进行中标志（防重入）
 let releaseDateFillRunning = false
+
+// 播放会话代际：新一轮 player:playAlbum / player:stop 使上一轮未完成的
+// 后台补队列任务失效（代际不匹配即中止），避免旧任务污染新队列
+let playQueueGeneration = 0
 
 /**
  * 初始化所有服务实例
@@ -588,8 +592,30 @@ export function registerIpcHandlers(): void {
   // ==================== 播放控制 ====================
 
   /**
+   * 后台将剩余曲目串行加入队列（不阻塞 player:playAlbum 返回）
+   *
+   * 每次 queueAdd = 1 次 ncm-cli 子进程 + 1 次取播放地址 API（约 1 秒/首），
+   * 放后台执行避免阻塞播放条出现。每首前检查代际：新一轮播放/停止后
+   * 立即中止，避免旧专辑曲目写进新队列。单首失败仅记日志并继续后续
+   * （播放已开始，不打断用户，也不弹登录窗）。
+   */
+  async function fillQueueInBackground(
+    generation: number,
+    tracks: { netease_song_id: string; netease_original_id: number; title: string }[]
+  ): Promise<void> {
+    for (const track of tracks) {
+      if (generation !== playQueueGeneration) return
+      try {
+        await ncmCliService.queueAdd(track.netease_song_id, track.netease_original_id)
+      } catch (error) {
+        console.error(`[playAlbum] 后台补队列失败: ${track.title}:`, error)
+      }
+    }
+  }
+
+  /**
    * 播放整张专辑
-   * 清空队列 → 播放第一首 → 等待播放开始 → 将剩余曲目加入队列
+   * 清空队列 → 播放第一首 → 确认播放开始 → 立即返回（剩余曲目后台补入，不阻塞返回）
    */
   ipcMain.handle('player:playAlbum', async (_event, albumId: number) => {
     try {
@@ -608,39 +634,40 @@ export function registerIpcHandlers(): void {
         return { success: false, error: '该专辑没有可播放的曲目' }
       }
 
-      // 过滤出有 netease_song_id 的曲目
-      const playable = tracks.filter((t) => t.netease_song_id && t.netease_original_id)
+      // 过滤出有 netease_song_id 的曲目（谓词收窄类型，后续无需再断言非空）
+      const playable = tracks.filter(
+        (t): t is Track & { netease_song_id: string; netease_original_id: number } =>
+          Boolean(t.netease_song_id) && Boolean(t.netease_original_id)
+      )
       if (playable.length === 0) {
         return { success: false, error: '该专辑没有可播放的曲目（缺少歌曲 ID）' }
       }
+
+      // 新一轮播放：使上一轮未完成的后台补队列任务失效
+      const generation = ++playQueueGeneration
 
       // 1. 清空当前队列
       await ncmCliService.queueClear()
 
       // 2. 播放第一首
       await ncmCliService.playSong(
-        playable[0].netease_song_id!,
-        playable[0].netease_original_id!
+        playable[0].netease_song_id,
+        playable[0].netease_original_id
       )
 
       // 3. 等待播放器确认开始播放
-      let success = await ncmCliService.waitForPlaying()
-      if (success) {
-        // 4. 将剩余曲目按顺序加入队列
-        for (let i = 1; i < playable.length; i++) {
-          await ncmCliService.queueAdd(
-            playable[i].netease_song_id!,
-            playable[i].netease_original_id!
-          )
-        }
-
-        return {
-          success: true,
-          data: { playing: playable[0].title, totalTracks: playable.length }
-        }
+      const success = await ncmCliService.waitForPlaying()
+      if (!success) {
+        return { success: false, error: '播放失败' }
       }
 
-      return { success: false, error: '播放失败' }
+      // 4. 剩余曲目后台串行补入（每次 queueAdd 约 1s，不阻塞播放条出现）
+      void fillQueueInBackground(generation, playable.slice(1))
+
+      return {
+        success: true,
+        data: { playing: playable[0].title, totalTracks: playable.length }
+      }
     } catch (error) {
       // 检查是否需要登录，如果是则自动打开登录弹窗
       if (authService.handleLoginRequiredError(error)) {
@@ -773,6 +800,9 @@ export function registerIpcHandlers(): void {
    * 停止播放（清空播放队列，播放条关闭按钮用）
    */
   ipcMain.handle('player:stop', async () => {
+    // 先失效进行中的后台补队列（在途一首先完成、随后被 clear 覆盖），
+    // 保证清空后的队列不被旧任务重新填充
+    playQueueGeneration++
     return runPlayerCommand(() => ncmCliService.queueClear())
   })
 

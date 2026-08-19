@@ -697,13 +697,23 @@ export class NcmCliService {
 
   /**
    * 等待播放器进入 playing 状态
+   *
+   * 每次 state 查询都是一次子进程启动（~0.4s），先睡 1s 再轮询的旧策略
+   * 最顺利也要 ~1.4s。改为短暂首延迟（给播放后端启动留缓冲）后以短间隔
+   * 轮询，最顺利 ~0.6-0.9s，总超时仍兜底 5s。
+   *
    * @param maxWaitMs 最大等待时间（毫秒），默认 5 秒
-   * @param intervalMs 轮询间隔（毫秒），默认 1000ms
+   * @param intervalMs 轮询间隔（毫秒），默认 300ms
+   * @param firstDelayMs 首次查询前的延迟（毫秒），默认 200ms
    */
-  async waitForPlaying(maxWaitMs = 5_000, intervalMs = 1000): Promise<boolean> {
+  async waitForPlaying(
+    maxWaitMs = 5_000,
+    intervalMs = 300,
+    firstDelayMs = 200
+  ): Promise<boolean> {
     const start = Date.now()
+    await new Promise((resolve) => setTimeout(resolve, firstDelayMs))
     while (Date.now() - start < maxWaitMs) {
-      await new Promise((resolve) => setTimeout(resolve, intervalMs))
       try {
         const state = await this.getState()
         if (state.status === 'playing') {
@@ -712,6 +722,7 @@ export class NcmCliService {
       } catch {
         // 查询失败继续重试
       }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs))
     }
     console.warn('[ncm-cli] 等待播放超时')
     return false
