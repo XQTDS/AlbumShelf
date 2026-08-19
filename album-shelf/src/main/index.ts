@@ -225,7 +225,7 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
       label: '设置',
       submenu: [
         {
-          label: '匹配策略...',
+          label: '应用设置...',
           click: (): void => {
             const mainWindow = BrowserWindow.getAllWindows()[0]
             if (mainWindow && !mainWindow.isDestroyed()) {

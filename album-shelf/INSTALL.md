@@ -9,11 +9,11 @@
 网易云同步所需的 ncm-cli 已内置在安装包中，**无需预装 Node.js 和 ncm-cli**。
 
 1. 从 [GitHub Releases](https://github.com/XQTDS/AlbumShelf/releases) 下载最新版 NSIS 安装包并安装
-2. **一次性配置 API 凭证**：前往 [网易云音乐开放平台](https://developer.music.163.com/st/developer/apply/account?type=INDIVIDUAL) 完成入驻并申请 API Key（appId 和 privateKey），然后双击安装目录下 `resources\ncm-configure.bat`，按向导完成配置（凭证保存在用户主目录，与开发版共用）
+2. **一次性配置 API 凭证**：前往 [网易云音乐开放平台](https://developer.music.163.com/st/developer/apply/account?type=INDIVIDUAL) 完成入驻并申请 API Key（appId 和 privateKey），然后打开应用在「设置 → 应用设置」的「网易云凭证」区填写并保存（凭证加密保存在用户主目录 `~/.config/ncm-cli/`，与开发版共用）
 3. **登录授权**：打开应用，在「账户」菜单或登录引导弹窗中扫码登录
 4. 之后即可使用同步、在线搜索、热评等全部功能
 
-> 提示：`ncm-configure.bat` 通过应用内置运行时执行配置向导，不需要系统安装 Node.js。
+> 备用：双击安装目录下 `resources\ncm-configure.bat` 也可通过应用内置运行时运行交互式配置向导（不需要系统安装 Node.js），作为应用内设置的替代入口保留。
 
 ---
 
@@ -43,7 +43,7 @@ npm run dev
 ncm-cli 已作为项目依赖内置，无需全局安装。首次使用只需：
 
 1. 前往 [网易云音乐开放平台](https://developer.music.163.com/st/developer/apply/account?type=INDIVIDUAL) 申请 API Key（appId 和 privateKey）
-2. 执行 `npm run ncm-cli -- configure` 完成配置（凭证保存在用户主目录）
+2. 启动应用后打开「设置 → 应用设置」，在「网易云凭证」区填写 App ID 与 Private Key 并保存（凭证加密保存在用户主目录 `~/.config/ncm-cli/`）；备用方式：在终端执行 `npm run ncm-cli -- configure` 走交互式向导
 3. 启动应用后扫码登录
 
 > 如需在终端直接使用 CLI 的完整能力（播放、歌单管理等），可自行选择全局安装：`npm install -g @music163/ncm-cli`（与内置版本共用同一份配置与登录状态，版本需一致，当前为 0.1.6）。
@@ -70,7 +70,7 @@ ncm-cli 已作为项目依赖内置，无需全局安装。首次使用只需：
 | 问题 | 解决方法 |
 |------|----------|
 | 同步提示「请先登录」 | 在应用内扫码登录（菜单「账户 → 登录」） |
-| 登录时报错提示未配置 API 凭证 | 先运行 `resources\ncm-configure.bat`（安装包）或 `npm run ncm-cli -- configure`（源码）完成配置 |
+| 登录时报错提示未配置 API 凭证 | 在应用内「设置 → 应用设置」的「网易云凭证」区填写并保存；备用方式：运行 `resources\ncm-configure.bat`（安装包）或 `npm run ncm-cli -- configure`（源码） |
 | 登录超时 | 二维码过期，重新打开登录弹窗扫码 |
 | better-sqlite3 编译失败 | 确保安装了 Python 和 C++ 编译工具（Windows 需要 windows-build-tools） |
 

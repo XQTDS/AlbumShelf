@@ -724,6 +724,39 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  // ==================== 网易云 API 凭证配置 ====================
+
+  /**
+   * 获取网易云 API 凭证配置状态（设置界面展示）
+   */
+  ipcMain.handle('ncm:getCredentialStatus', async () => {
+    try {
+      const status = await ncmCliService.getCredentialConfigStatus()
+      return { success: true, data: status }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 保存网易云 API 凭证（appId + privateKey）
+   * 非交互调用内置 ncm-cli 的 config set 命令，无 TTY、不弹终端窗口
+   */
+  ipcMain.handle(
+    'ncm:configureCredentials',
+    async (_event, payload: { appId?: string; privateKey?: string }) => {
+      try {
+        await ncmCliService.configureWithCredentials(
+          payload?.appId ?? '',
+          payload?.privateKey ?? ''
+        )
+        return { success: true }
+      } catch (error) {
+        return { success: false, error: (error as Error).message }
+      }
+    }
+  )
+
   // ==================== 网易云音乐认证 ====================
 
   /**

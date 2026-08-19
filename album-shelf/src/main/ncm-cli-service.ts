@@ -1,7 +1,10 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { app } from 'electron'
-import { sep } from 'path'
+import { sep, join } from 'path'
+import { tmpdir } from 'os'
+import { randomBytes } from 'crypto'
+import { writeFileSync, existsSync, rmSync } from 'fs'
 
 const execFileAsync = promisify(execFile)
 
@@ -150,6 +153,14 @@ export interface NcmLoginStatus {
   user: NcmUser | null
 }
 
+/** 网易云 API 凭证配置状态 */
+export interface NcmCredentialStatus {
+  /** 是否已配置（appId 可读回或凭证文件存在） */
+  configured: boolean
+  /** 读回的 appId；未配置或读不到时为 null（UI 兜底只显示"已配置"） */
+  appId: string | null
+}
+
 /** ncm-cli login status 返回结构 */
 interface NcmLoginStatusResponse {
   account?: {
@@ -249,6 +260,42 @@ function isLoginRequiredMessage(message: string): boolean {
   ]
   const lowerMessage = message.toLowerCase()
   return loginRequiredPatterns.some(pattern => lowerMessage.includes(pattern.toLowerCase()))
+}
+
+/** 私钥掩码：仅保留前 8 个字符（与 ncm-cli 自身回显口径一致），过短则全掩 */
+function maskPrivateKey(key: string): string {
+  if (key.length <= 8) {
+    return '***'
+  }
+  return `${key.slice(0, 8)}***`
+}
+
+/**
+ * 解析 `config get appId` 的纯文本输出
+ *
+ * 实测格式（0.1.6）：
+ * - 已配置 → `appId: <值> (凭证文件)`
+ * - 未配置 → `appId: (未配置)`
+ * 含"(凭证文件)"标记但解析不出值时兜底判定为"已配置"（appId 为 null，UI 只显示状态）；
+ * 其余未知格式保守判定为"未配置"。
+ */
+function parseAppIdStatus(stdout: string): NcmCredentialStatus {
+  const line = stdout
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .find((s) => s.startsWith('appId:'))
+  if (!line) {
+    return { configured: false, appId: null }
+  }
+  const rest = line.slice('appId:'.length).trim()
+  if (!rest || rest === '(未配置)') {
+    return { configured: false, appId: null }
+  }
+  if (rest.includes('(凭证文件)')) {
+    const value = rest.replace('(凭证文件)', '').trim()
+    return { configured: true, appId: value || null }
+  }
+  return { configured: false, appId: null }
 }
 
 /**
@@ -539,6 +586,111 @@ export class NcmCliService {
     }
     console.warn('[ncm-cli] 等待播放超时')
     return false
+  }
+
+  // ==================== 凭证配置 ====================
+
+  /**
+   * 执行 config 系列命令（纯文本输出，非 JSON，不追加 --output json）
+   *
+   * config 命令失败时 exit code 非 0，execFileAsync reject 且 error 对象
+   * 携带 stdout/stderr——提取 CLI 输出的中文错误文案透传给调用方。
+   */
+  private async execNcmCliConfig(args: string[]): Promise<{ stdout: string; stderr: string }> {
+    const cmdStr = `ncm-cli ${args.join(' ')}`
+    console.log(`[ncm-cli] 执行: ${cmdStr}`)
+
+    try {
+      const result = await this.execNcmCli(args)
+      if (result.stderr) {
+        console.warn(`[ncm-cli] stderr: ${result.stderr.substring(0, 500)}`)
+      }
+      console.log(`[ncm-cli] stdout: ${result.stdout.substring(0, 500)}`)
+      return result
+    } catch (error: unknown) {
+      console.error(`[ncm-cli] 命令失败: ${cmdStr}`, error)
+      if (error instanceof Error) {
+        const err = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string }
+        // 超时与入口缺失与既有数据命令口径一致
+        if (error.message.includes('TIMEOUT') || err.code === 'ETIMEDOUT') {
+          throw new Error('ncm-cli 执行超时（15 秒），请检查网络连接')
+        }
+        if (err.code === 'ENOENT') {
+          throw new Error('内置 ncm-cli 启动失败（可执行文件或 CLI 入口缺失），请重新安装应用或执行 npm install')
+        }
+        // 非零退出码：stderr 优先（如"无效的配置项"），兜底 stdout，最后才是 error.message
+        const detail = (err.stderr || err.stdout || '').trim() || error.message
+        throw new Error(detail)
+      }
+      throw new Error(`ncm-cli 调用失败: ${String(error)}`)
+    }
+  }
+
+  /**
+   * 以非交互方式配置网易云 API 凭证（appId + privateKey）
+   *
+   * 通过 ncm-cli 官方 `config set` 命令完成（实测：无 TTY 可用、仅写
+   * credentials.enc.json、未登录可配置、登录态不受影响）：
+   * - appId 非机密，直接以 argv 传入
+   * - privateKey 绝不进入 argv：先写入系统临时目录的随机名临时文件
+   *   （不含换行，写入后 existsSync 校验，规避 CLI"文件不存在时把路径
+   *   本身当密钥写入"的静默陷阱），以文件路径传入 `config set privateKey`，
+   *   finally 删除临时文件
+   * - 完成后读回 appId 校验写入结果与预期一致
+   *
+   * @throws 参数为空、CLI 执行失败或读回校验不一致时抛出（message 为中文，透传 UI）
+   */
+  async configureWithCredentials(appId: string, privateKey: string): Promise<void> {
+    const trimmedAppId = appId.trim()
+    const trimmedKey = privateKey.trim()
+    if (!trimmedAppId || !trimmedKey) {
+      throw new Error('App ID 与 Private Key 均不能为空')
+    }
+
+    console.log(
+      `[ncm-cli] 配置凭证: appId=${trimmedAppId}, privateKey=${maskPrivateKey(trimmedKey)}`
+    )
+
+    // 1. 写 appId（非机密，直接 argv 传值）
+    await this.execNcmCliConfig(['config', 'set', 'appId', trimmedAppId])
+
+    // 2. 写 privateKey：临时文件路径输入（密钥不进 argv）
+    const tempPath = join(tmpdir(), `ncm-key-${randomBytes(6).toString('hex')}.tmp`)
+    try {
+      writeFileSync(tempPath, trimmedKey, 'utf8')
+      if (!existsSync(tempPath)) {
+        throw new Error('私钥临时文件写入失败，请重试')
+      }
+      await this.execNcmCliConfig(['config', 'set', 'privateKey', tempPath])
+    } finally {
+      try {
+        rmSync(tempPath, { force: true })
+      } catch {
+        // 临时文件删除失败不影响主流程（位于系统临时目录，系统会定期清理）
+      }
+    }
+
+    // 3. 读回校验
+    const status = await this.getCredentialConfigStatus()
+    if (!status.configured || status.appId !== trimmedAppId) {
+      throw new Error('凭证写入校验失败：读回的 appId 与输入不一致，请重试')
+    }
+  }
+
+  /**
+   * 获取网易云 API 凭证配置状态
+   *
+   * 执行 `config get appId` 解析纯文本输出。CLI 不可用或执行失败时
+   * 降级返回"未配置"，不抛错——设置界面仅展示状态。
+   */
+  async getCredentialConfigStatus(): Promise<NcmCredentialStatus> {
+    try {
+      const { stdout } = await this.execNcmCli(['config', 'get', 'appId'])
+      return parseAppIdStatus(stdout)
+    } catch (error) {
+      console.error('[ncm-cli] 获取凭证配置状态失败:', error)
+      return { configured: false, appId: null }
+    }
   }
 
   // ==================== 登录相关 ====================

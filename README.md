@@ -50,10 +50,10 @@ npm run dev
 ncm-cli 已作为依赖内置，**无需全局安装 Node 与 ncm-cli**。首次使用只需一次性配置 API 凭证，之后在应用内扫码登录即可：
 
 1. 前往[网易云音乐开放平台](https://developer.music.163.com/st/developer/apply/account?type=INDIVIDUAL)申请 API Key（appId 和 privateKey）
-2. 执行 `npm run ncm-cli -- configure` 完成配置（凭证保存在用户主目录，与安装包版共用）
-3. 启动应用后扫码登录（菜单「账户 → 登录」）
+2. 启动应用后打开「设置 → 应用设置」，在「网易云凭证」区填写 App ID 与 Private Key 并保存（凭证加密保存在用户主目录 `~/.config/ncm-cli/`，与安装包版共用；Private Key 仅掩码输入，不会回显或写入日志）
+3. 扫码登录（菜单「账户 → 登录」）
 
-安装包用户的配置方式（无需 Node 环境）与详细步骤见 [album-shelf/INSTALL.md](album-shelf/INSTALL.md)。
+备用方式：源码环境可执行 `npm run ncm-cli -- configure` 交互式向导，安装包用户可双击 `resources\ncm-configure.bat`，详见 [album-shelf/INSTALL.md](album-shelf/INSTALL.md)。
 
 ## 🛠 常用命令
 

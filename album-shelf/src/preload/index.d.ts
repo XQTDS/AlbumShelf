@@ -126,6 +126,12 @@ interface NcmQrcodeCheckResult {
   user?: NcmUser
 }
 
+/** 网易云 API 凭证配置状态 */
+interface NcmCredentialStatus {
+  configured: boolean
+  appId: string | null
+}
+
 interface IpcResult<T = void> {
   success: boolean
   data?: T
@@ -238,6 +244,11 @@ interface AlbumShelfAPI {
     F3_luceneTokenSearch: boolean
   }>>
   settingsSetEnrichStrategies: (strategies: Record<string, boolean>) => Promise<IpcResult>
+  ncmGetCredentialStatus: () => Promise<IpcResult<NcmCredentialStatus>>
+  ncmConfigureCredentials: (payload: {
+    appId: string
+    privateKey: string
+  }) => Promise<IpcResult>
   mbSetCredentials: (credentials: {
     username: string
     password: string
