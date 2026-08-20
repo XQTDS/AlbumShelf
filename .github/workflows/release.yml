@@ -1,6 +1,6 @@
 name: Release
 
-# 推送 v* 标签时自动构建 Windows 安装包并创建 GitHub Release
+# 推送 v* 标签时自动构建 Windows / macOS 安装包并创建 GitHub Release
 on:
   push:
     tags:
@@ -14,10 +14,23 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: win-x64
+          # macOS 15 runner 为 arm64（Apple Silicon）；Intel x64 后续可追加 macos-15-intel（2027-08 退役）
+          - os: macos-15
+            artifact: mac-arm64
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: album-shelf
+    env:
+      # macOS 无签名构建：跳过证书自动发现，electron-builder 退化为 ad-hoc 签名；
+      # Windows 无签名证书，此变量无副作用
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -34,12 +47,35 @@ jobs:
       - name: 安装依赖
         run: npm ci --registry=https://registry.npmjs.org --replace-registry-host=always --no-audit --no-fund
 
+      # 依赖安装后 electron-rebuild（postinstall）已按当前平台/架构编译 better-sqlite3
       - name: 构建安装包
         run: npm run dist
 
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.artifact }}
+          path: album-shelf/dist/*
+          if-no-files-found: error
+
+  release:
+    # 手动触发（workflow_dispatch）只做构建验证，不创建 Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载全部平台产物
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # 仅保留可分发的安装包（剔除 .blockmap / .yml 等辅助文件）
+      - name: 清理辅助文件
+        run: find artifacts -type f ! -name '*.exe' ! -name '*.dmg' ! -name '*.zip' -delete
+
       - name: 创建 Release 并上传安装包
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: album-shelf/dist/*.exe
+          files: artifacts/*
           generate_release_notes: true

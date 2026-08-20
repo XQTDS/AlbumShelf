@@ -66,7 +66,7 @@ ncm-cli 已作为依赖内置，**无需全局安装 Node 与 ncm-cli**。网易
 | `npm run build` | 构建产物到 `out/` |
 | `npm run typecheck` | 类型检查（node + web） |
 | `npm run pack` | 构建并打包为免安装目录 |
-| `npm run dist` | 构建并打包为安装包（NSIS） |
+| `npm run dist` | 构建并打包为安装包（Windows NSIS / macOS dmg+zip，按当前平台） |
 
 ## 📦 发版流程
 
@@ -75,9 +75,9 @@ ncm-cli 已作为依赖内置，**无需全局安装 Node 与 ncm-cli**。网易
 1. 日常开发提交到 `main` 分支
 2. 需要发版时，将 `main` 合并到 `release`，并按需在 `album-shelf/package.json` 中更新版本号
 3. 在 `release` 分支上打版本标签：`git tag v1.0.0 && git push origin v1.0.0`
-4. 推送标签后 GitHub Actions 自动构建 NSIS 安装包并创建 GitHub Release（附自动生成的更新说明）
+4. 推送标签后 GitHub Actions 自动构建 Windows NSIS 安装包与 macOS arm64 安装包（dmg/zip）并创建 GitHub Release（附自动生成的更新说明）
 
-手动触发构建（不创建 Release）可在仓库 Actions 页面点击 Release workflow 的「Run workflow」。安装包未配置代码签名，安装时可能出现 Windows SmartScreen 提示。
+手动触发构建（不创建 Release）可在仓库 Actions 页面点击 Release workflow 的「Run workflow」。安装包未配置代码签名：Windows 安装时可能出现 SmartScreen 提示；macOS 首次打开需右键 → 打开绕过 Gatekeeper（安装与使用说明详见 [INSTALL.md](album-shelf/INSTALL.md)）。
 
 ## 💾 数据存储
 

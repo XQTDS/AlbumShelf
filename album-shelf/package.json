@@ -33,23 +33,11 @@
     "files": [
       "out/**/*",
       "node_modules/**/*",
-      "!**/ffprobe-static/bin/darwin{,/**/*}",
-      "!**/ffprobe-static/bin/linux{,/**/*}",
       "!**/ffprobe-static/bin/win32/ia32{,/**/*}",
       "package.json"
     ],
     "asarUnpack": [
       "node_modules/**"
-    ],
-    "extraResources": [
-      {
-        "from": "build/ncm-configure.bat",
-        "to": "ncm-configure.bat"
-      },
-      {
-        "from": "build/ncm-configure.exe",
-        "to": "ncm-configure.exe"
-      }
     ],
     "win": {
       "target": [
@@ -60,7 +48,36 @@
           ]
         }
       ],
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "files": [
+        "!**/ffprobe-static/bin/darwin{,/**/*}",
+        "!**/ffprobe-static/bin/linux{,/**/*}"
+      ],
+      "extraResources": [
+        {
+          "from": "build/ncm-configure.bat",
+          "to": "ncm-configure.bat"
+        },
+        {
+          "from": "build/ncm-configure.exe",
+          "to": "ncm-configure.exe"
+        }
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "arch": [
+        "arm64"
+      ],
+      "category": "public.app-category.music",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "files": [
+        "!**/ffprobe-static/bin/win32{,/**/*}",
+        "!**/ffprobe-static/bin/linux{,/**/*}"
+      ]
     },
     "nsis": {
       "oneClick": false,
