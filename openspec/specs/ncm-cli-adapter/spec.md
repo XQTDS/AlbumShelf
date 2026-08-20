@@ -29,6 +29,25 @@
 - **WHEN** 应用在未安装 Node.js 与全局 ncm-cli 的机器上运行
 - **THEN** 系统 SHALL 仍能通过 Electron 内置 Node 执行内置 ncm-cli 完成数据查询（不依赖 PATH 中的 node 或 ncm-cli）
 
+### Requirement: 捆绑 mpv 的 PATH 注入
+
+系统 SHALL 在 Windows 上把捆绑的 mpv 目录前置到 ncm-cli 子进程的 PATH 环境变量，使 ncm-cli 播放后端（PlayerDaemon 继承子进程 env 并按 PATH 解析 mpv）解析到捆绑的 mpv，实现开箱即播；非 Windows 平台与捆绑缺失时 SHALL 保持子进程环境不变。
+
+#### Scenario: 打包版注入捆绑 mpv
+
+- **WHEN** Windows 打包版应用启动 ncm-cli 子进程，且安装目录 `resources/mpv/mpv.exe` 存在
+- **THEN** 子进程 env 的 PATH SHALL 以捆绑 mpv 目录开头（前置注入），播放命令 SHALL 使用捆绑 mpv（优先于用户自装）
+
+#### Scenario: 开发模式注入本地 mpv
+
+- **WHEN** Windows 开发模式（未打包）且项目 `build/mpv/mpv.exe` 存在（`npm run fetch-mpv` 产物）
+- **THEN** 子进程 env 的 PATH SHALL 前置项目 `build/mpv` 目录
+
+#### Scenario: 捆绑缺失回落
+
+- **WHEN** Windows 上捆绑 mpv 目录不存在（开发环境未拉取），或平台非 Windows
+- **THEN** 子进程 env SHALL 与现状一致（不修改 PATH），播放行为回落用户 PATH 中的 mpv
+
 ### Requirement: 拉取用户收藏专辑列表
 
 系统 SHALL 通过 `ncm-cli album collected` 命令分页获取用户收藏的专辑列表。

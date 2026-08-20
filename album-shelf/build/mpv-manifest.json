@@ -1,0 +1,11 @@
+{
+  "comment": "mpv 捆绑清单：升级 mpv 时更新 tag/asset/sha256（与 zhongfly/mpv-winbuild release 的 sha256.txt 一致），并重跑 npm run fetch-mpv",
+  "platform": "win32",
+  "arch": "x64",
+  "tag": "2026-08-19-e7191f2a65",
+  "asset": "mpv-x86_64-20260819-git-e7191f2a65.7z",
+  "sha256": "f3d2eddc19588b56ac0a9d4c829a446aa1b07d6ddcadd77cba73c9a07453366a",
+  "expectedExeSize": 119279104,
+  "licenseUrl": "https://raw.githubusercontent.com/mpv-player/mpv/e7191f2a65/LICENSE.GPL",
+  "licenseSha256": null
+}

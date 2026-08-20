@@ -48,6 +48,11 @@ jobs:
         run: npm ci --registry=https://registry.npmjs.org --replace-registry-host=always --no-audit --no-fund
 
       # 依赖安装后 electron-rebuild（postinstall）已按当前平台/架构编译 better-sqlite3
+      # Windows 包捆绑 mpv：拉取并校验 mpv 二进制（fetch 失败即中止构建，避免产出无 mpv 的安装包）；
+      # macOS 不捆绑（走 brew 安装），fetch 脚本按平台自动跳过，无需条件
+      - name: 拉取 mpv（Windows 专用）
+        run: npm run fetch-mpv
+
       - name: 构建安装包
         run: npm run dist
 

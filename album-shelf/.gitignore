@@ -3,3 +3,4 @@ dist
 out
 *.local
 .DS_Store
+build/mpv/

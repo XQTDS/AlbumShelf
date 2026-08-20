@@ -44,6 +44,26 @@
 - **WHEN** 构建 macOS 安装包
 - **THEN** `ncm-configure.bat` / `ncm-configure.exe`（Windows 专用遗留排查入口）SHALL NOT 被打包进 macOS 产物
 
+### Requirement: Windows 构建捆绑 mpv
+
+系统 SHALL 在发布流水线的 Windows 构建中于打包前执行 `npm run fetch-mpv`（按 `build/mpv-manifest.json` 锁定的版本下载 7z 归档、SHA256 校验、解压到 `build/mpv`），并将 `build/mpv` 打入 Windows 安装包 `resources/mpv`；拉取失败 SHALL 中止 Windows 构建，SHALL NOT 产出无 mpv 的安装包。macOS 构建 SHALL NOT 捆绑 mpv（mpv 由用户经 brew 安装，fetch 脚本按平台自动跳过）。
+
+#### Scenario: Windows 构建拉取并打包 mpv
+
+- **WHEN** 发布流水线在 windows-latest runner 上执行
+- **THEN** 在 `npm run dist` 之前 SHALL 执行 `npm run fetch-mpv`（下载、SHA256 校验、解压到 `build/mpv`）
+- **AND** 构建产物 SHALL 包含 `resources/mpv/mpv.exe`（electron-builder `win.extraResources` 产物）
+
+#### Scenario: mpv 拉取失败中止构建
+
+- **WHEN** `npm run fetch-mpv` 因网络异常、SHA256 不匹配或解压失败退出非零
+- **THEN** Windows 构建 SHALL 失败，SHALL NOT 产出无 mpv 的安装包；macOS 构建不受影响（`fail-fast: false`）
+
+#### Scenario: macOS 构建不捆绑 mpv
+
+- **WHEN** 发布流水线在 macOS runner 上执行
+- **THEN** `npm run fetch-mpv` SHALL 按平台自跳（非 win32 无操作），产物 SHALL NOT 包含 mpv
+
 ### Requirement: macOS 无签名构建与分发
 
 系统 SHALL 以无签名方式构建 macOS 安装包（构建环境 `CSC_IDENTITY_AUTO_DISCOVERY=false`，跳过证书自动发现，electron-builder 退化为 ad-hoc 签名），产物可在 arm64 Mac 上本地运行；下载分发的应用受 Gatekeeper 隔离，文档 SHALL 说明首次打开的绕过方式。

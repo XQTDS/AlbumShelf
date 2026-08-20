@@ -10,7 +10,7 @@
 - **专辑墙浏览**：网格视图 + 表格视图自由切换；封面本地缓存（`cover://` 协议）秒开，支持批量补全封面；悬停唱片墙卡片即可一键播放整张专辑
 - **专辑详情**：点击任意专辑展开详情面板，展示封面、艺术家、发行时间、MB 评分、曲目列表、网易云热评等完整信息
 - **实体收藏**：在详情面板标记你拥有的实体介质（黑胶/CD/磁带，可多选），标记显示在表格视图「实体」列与唱片墙卡片左上角
-- **内置播放**：播放整张专辑或单曲，底部常驻播放条提供播放/暂停、上一首/下一首、可点击跳转的进度条（已播/总时长）、音量控制与正在播放的歌曲/艺术家展示（超长文本缓慢滚动显示，点击封面直达对应专辑详情；基于内置 ncm-cli 播控命令）；一键播放专辑时播放条秒出，剩余曲目在后台自动补入队列
+- **内置播放**：播放整张专辑或单曲，底部常驻播放条提供播放/暂停、上一首/下一首、可点击跳转的进度条（已播/总时长）、音量控制与正在播放的歌曲/艺术家展示（超长文本缓慢滚动显示，点击封面直达对应专辑详情；基于内置 ncm-cli 播控命令）；一键播放专辑时播放条秒出，剩余曲目在后台自动补入队列；Windows 安装包内置 mpv 播放器（macOS 需 `brew install mpv`），开箱即播
 - **MusicBrainz 数据补全**：新专辑入库自动匹配 MB 评分与风格标签，支持模糊匹配人工确认、艺术家别名、匹配策略开关
 - **搜索**：本地按专辑名 / 艺术家搜索；在线搜索网易云音乐专辑并一键收藏
 - **筛选**：艺术家自动补全筛选、多风格 AND 筛选、风格统计面板（点击风格标签即可筛选）
@@ -47,6 +47,14 @@ npm install
 npm run dev
 ```
 
+### mpv 播放器（Windows 内置，macOS 需自装）
+
+播放功能依赖 mpv（ncm-cli 的播放后端）：
+
+- **Windows 安装包**：内置 mpv（安装目录 `resources/mpv`），**无需安装任何外部播放器**即可播放，优先于用户自装 mpv
+- **macOS**：需自装 mpv（`brew install mpv`）
+- **Windows 开发模式**：执行 `npm run fetch-mpv` 拉取 mpv 到 `build/mpv`（自动跳过非 Windows 平台）；未拉取时回落到系统 PATH 中的 mpv
+
 ### 配置网易云同步（启用同步功能时需要）
 
 ncm-cli 已作为依赖内置，**无需全局安装 Node 与 ncm-cli**。网易云 API 凭证已内置到应用中，启动时自动写入本地加密配置（`~/.config/ncm-cli/`，与安装包版共用），**无需手动配置**。首次使用直接扫码登录即可：
@@ -65,6 +73,7 @@ ncm-cli 已作为依赖内置，**无需全局安装 Node 与 ncm-cli**。网易
 | `npm run dev` | 启动开发模式（热更新） |
 | `npm run build` | 构建产物到 `out/` |
 | `npm run typecheck` | 类型检查（node + web） |
+| `npm run fetch-mpv` | 拉取并校验 mpv 到 `build/mpv`（Windows 专用，自动跳过其他平台） |
 | `npm run pack` | 构建并打包为免安装目录 |
 | `npm run dist` | 构建并打包为安装包（Windows NSIS / macOS dmg+zip，按当前平台） |
 
@@ -75,7 +84,7 @@ ncm-cli 已作为依赖内置，**无需全局安装 Node 与 ncm-cli**。网易
 1. 日常开发提交到 `main` 分支
 2. 需要发版时，将 `main` 合并到 `release`，并按需在 `album-shelf/package.json` 中更新版本号
 3. 在 `release` 分支上打版本标签：`git tag v1.0.0 && git push origin v1.0.0`
-4. 推送标签后 GitHub Actions 自动构建 Windows NSIS 安装包与 macOS arm64 安装包（dmg/zip）并创建 GitHub Release（附自动生成的更新说明）
+4. 推送标签后 GitHub Actions 自动构建 Windows NSIS 安装包与 macOS arm64 安装包（dmg/zip）并创建 GitHub Release（附自动生成的更新说明）；Windows 构建会在打包前自动拉取并捆绑 mpv（拉取或校验失败即中止构建），macOS 不捆绑 mpv
 
 手动触发构建（不创建 Release）可在仓库 Actions 页面点击 Release workflow 的「Run workflow」。安装包未配置代码签名：Windows 安装时可能出现 SmartScreen 提示；macOS 首次打开需右键 → 打开绕过 Gatekeeper（安装与使用说明详见 [INSTALL.md](album-shelf/INSTALL.md)）。
 
@@ -108,6 +117,7 @@ ncm-cli 已作为依赖内置，**无需全局安装 Node 与 ncm-cli**。网易
 | electron-vite | 构建工具 |
 | better-sqlite3 | 本地数据库 |
 | @music163/ncm-cli（内置） | 网易云音乐 CLI，随安装包分发，无需用户另行安装 |
+| mpv（Windows 内置） | 播放后端；Windows 安装包内置（构建时经 `fetch-mpv` 拉取锁定版本），macOS 需 `brew install mpv` |
 | musicbrainz-api | MusicBrainz 数据补全 |
 | electron-builder | 打包分发 |
 

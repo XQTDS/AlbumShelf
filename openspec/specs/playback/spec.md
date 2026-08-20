@@ -114,6 +114,25 @@
 - **WHEN** 发起播放后立即轮询（播放器后端尚未就绪，`queueLength` 可能仍为 0）
 - **THEN** 系统 SHALL 不判定会话结束；仅在曾观察到 `queueLength > 0` 之后队列清空才判定结束
 
+### Requirement: mpv 依赖解析与开箱即播
+
+系统 SHALL 保证播放命令解析到的 mpv 满足：Windows 安装包内置 mpv（`resources/mpv`），捆绑存在时优先使用；捆绑缺失时回落用户 PATH 中自装的 mpv；macOS 依赖用户通过 brew 安装的 mpv。
+
+#### Scenario: Windows 开箱即播
+
+- **WHEN** 用户在未安装 mpv 的 Windows 机器上从安装包安装应用并发起播放
+- **THEN** 播放 SHALL 使用安装包内置的 mpv（`resources/mpv/mpv.exe`），无需用户安装任何外部播放器
+
+#### Scenario: 捆绑 mpv 优先
+
+- **WHEN** 用户机器同时存在捆绑 mpv 与自装 mpv
+- **THEN** 播放 SHALL 使用捆绑 mpv（PATH 前置注入，ncm-cli 播放后端继承 env 解析）
+
+#### Scenario: 开发环境回落
+
+- **WHEN** 开发环境未执行 `npm run fetch-mpv`（`build/mpv` 不存在）
+- **THEN** 播放行为 SHALL 与捆绑前一致：使用用户 PATH 中的 mpv；无 mpv 时按 ncm-cli 既有行为报 `mpv not found`
+
 ### Requirement: 音量控制
 
 系统 SHALL 提供音量控制 IPC 通道（`player:volume`）与播放条音量控件（图标静音切换 + 滑块调音量）。音量状态由应用本地管理并持久化，播放会话启动时应用到播放后端（ncm-cli 无音量读取命令，`state.volume` 恒为 null，应用只写不读）。

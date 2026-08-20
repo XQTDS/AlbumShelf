@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { app } from 'electron'
-import { sep, join } from 'path'
+import { sep, join, delimiter } from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
 import { writeFileSync, existsSync, rmSync } from 'fs'
@@ -268,6 +268,36 @@ function getNcmCliEntry(): string {
 }
 
 /**
+ * 计算捆绑 mpv 的目录（Windows 专用，其余平台返回 null）
+ *
+ * 打包模式位于安装目录 resources/mpv（electron-builder win.extraResources
+ * 产物），开发模式位于项目 build/mpv（npm run fetch-mpv 产物）。
+ * 捆绑 mpv.exe 存在时把该目录前置到 ncm-cli 子进程 PATH：ncm-cli 的
+ * PlayerDaemon 继承子进程 env 并按 PATH 解析 mpv（2026-08-20 隔离 PATH
+ * 实验实测确认），从而实现开箱即播、无需用户自装 mpv。
+ */
+function resolveBundledMpvDir(): string | null {
+  if (process.platform !== 'win32') {
+    return null
+  }
+  const dir = app.isPackaged
+    ? join(process.resourcesPath, 'mpv')
+    : join(app.getAppPath(), 'build', 'mpv')
+  return existsSync(join(dir, 'mpv.exe')) ? dir : null
+}
+
+/** 捆绑 mpv 目录缓存（进程生命周期内不变；无捆绑时为 null） */
+let bundledMpvDir: string | null | undefined
+
+/** 获取捆绑 mpv 目录；不存在（未拉取/非 Windows）时返回 null，行为回落用户 PATH 中的 mpv */
+function getBundledMpvDir(): string | null {
+  if (bundledMpvDir === undefined) {
+    bundledMpvDir = resolveBundledMpvDir()
+  }
+  return bundledMpvDir
+}
+
+/**
  * 将 ncm publishTime（北京时间零点的毫秒时间戳）换算为北京日历日期
  *
  * publishTime 直接取 UTC 日期会早一天（北京时间零点 = 前一日 UTC 16:00），
@@ -353,11 +383,17 @@ export class NcmCliService {
    * （含空格等特殊字符由 Node 按 Windows 规则转义）。
    */
   private execNcmCli(args: string[]): Promise<{ stdout: string; stderr: string }> {
+    const mpvDir = getBundledMpvDir()
     return execFileAsync(process.execPath, [getNcmCliEntry(), ...args], {
       timeout: NCM_CLI_TIMEOUT,
       maxBuffer: 10 * 1024 * 1024,
       windowsHide: true,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+        // 捆绑 mpv 优先于用户自装 mpv（PATH 前置，PlayerDaemon 继承 env 后按 PATH 解析）
+        ...(mpvDir ? { PATH: `${mpvDir}${delimiter}${process.env.PATH ?? ''}` } : {})
+      }
     })
   }
 

@@ -28,12 +28,16 @@ electron-builder 的 `getFileMatchers`（app-builder-lib `fileMatcher.js`）对 
 
 ```jsonc
 "mac": {
-  "target": ["dmg", "zip"],
-  "arch": ["arm64"],
+  "target": [
+    { "target": "dmg", "arch": ["arm64"] },
+    { "target": "zip", "arch": ["arm64"] }
+  ],
   "category": "public.app-category.music",
   "artifactName": "${productName}-${version}-${arch}.${ext}"
 }
 ```
+
+- arch 必须放在每个 target 条目内（MacConfiguration 顶层无 `arch` 属性，26.8.1 schema 校验会拒绝；与 `win` 段 NSIS target 的写法一致）
 
 - 产物命名 `AlbumShelf-<version>-arm64.dmg/.zip`，与 Windows 的 `AlbumShelf Setup <version>.exe` 无冲突
 - 不配置 `icon`：现状 Windows 的 `build/icon.ico` 引用同样缺失（v1.0.0 起使用 Electron 默认图标），macOS 与其对等，图标作为独立 change 后续补齐
