@@ -1,2 +1,3 @@
-data
-scripts
+# 仅忽略仓库根目录的个人工具目录（锚定到根，避免误伤子项目的 scripts/ 等同名目录）
+/data
+/scripts
