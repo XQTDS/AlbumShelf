@@ -1521,7 +1521,7 @@ async function handlePlayerStop(): Promise<void> {
 /**
  * 点击播放条封面：详情面板定位到当前播放专辑。
  * 专辑在当前列表时直接选中；被搜索/筛选/分页过滤时清除过滤条件、
- * 分页加载并滚动定位后选中（复用随机选择/移除筛选的定位机制）。
+ * 全量加载并滚动定位后选中（与随机选择共用清除过滤 + 全量加载定位机制）。
  */
 function handlePlayerCoverClick(): void {
   if (!nowPlaying.value || nowPlaying.value.albumId === null) return
@@ -2049,25 +2049,25 @@ async function handleRandomPick() {
 
     const randomAlbum = result.data
 
-    // 优化：设置搜索词为专辑标题，利用搜索快速定位
-    // 后端 LIKE 搜索会将结果集缩小到极少条目（通常第1页）
-    searchQuery.value = randomAlbum.title
-    selectedArtist.value = ''
-    artistInput.value = ''
-    selectedGenres.value = []
-    genreInput.value = ''
-    sortBy.value = undefined
-    sortOrder.value = 'desc'
+    // 专辑已在当前列表时直接选中并滚动定位（保留现有搜索/筛选条件）；
+    // 否则清除过滤条件、一次全量加载并滚动定位后选中（复用播放条封面点击的定位机制，不做搜索定位）
+    if (albums.value.some((a) => a.id === randomAlbum.id)) {
+      scrollToAlbumRow(randomAlbum.id)
+    } else {
+      searchQuery.value = ''
+      selectedArtist.value = ''
+      artistInput.value = ''
+      selectedGenres.value = []
+      genreInput.value = ''
+      sortBy.value = undefined
+      sortOrder.value = 'desc'
 
-    // 重置列表并加载搜索结果（仅1页即可命中）
-    albums.value = []
-    currentPage.value = 1
-    hasMore.value = true
-    await fetchAlbums(false)
-
-    // 滚动到随机专辑
-    await nextTick()
-    scrollToAlbumRow(randomAlbum.id)
+      // 重置分页并定位：fetchAlbumsAndScrollTo 一次拉取完整结果集并滚动到目标专辑
+      albums.value = []
+      currentPage.value = 1
+      hasMore.value = true
+      await fetchAlbumsAndScrollTo(randomAlbum.id)
+    }
 
     // 展开该专辑
     selectedAlbumId.value = randomAlbum.id
