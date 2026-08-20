@@ -168,6 +168,7 @@
         <tbody>
           <template v-for="(album, index) in albums" :key="album.id">
             <tr
+              v-memo="[index, album.title, album.artist, album.user_rating, album.physical_media, album.mb_rating, album.release_date, album.genres, selectedAlbumId, playingAlbumId, selectedGenres]"
               class="album-row"
               :class="{ 'row-selected': selectedAlbumId === album.id }"
               @click="toggleSelect(album.id)"
@@ -264,6 +265,7 @@
           <div
             v-for="album in albums"
             :key="album.id"
+            v-memo="[album.title, album.artist, album.cover_url, album.physical_media, album.user_rating, album.mb_rating, album.release_date, album.genres, sortBy, sortOrder, selectedAlbumId, playingAlbumId, coverErrorSet.has(album.id), coverProtocolFailed.has(album.id)]"
             class="album-card"
             :class="{ 'card-selected': selectedAlbumId === album.id }"
             :data-id="album.id"
@@ -276,6 +278,8 @@
               :alt="album.title"
               class="cover-img"
               draggable="false"
+              loading="lazy"
+              decoding="async"
               @error="onCoverError(album.id)"
             />
             <div v-else class="cover-placeholder">💿</div>
@@ -1591,6 +1595,8 @@ const totalAlbums = ref(0)
 // 分页尺寸：唱片墙卡片小，每页加载更多（40 张约 2-4 行）
 const pageSize = computed(() => (viewMode.value === 'grid' ? 40 : 20))
 const loadingMore = ref(false)
+// 全量加载中（跳转定位/深拖到底时一次拉取完整结果集）
+const loadingAll = ref(false)
 const hasMore = ref(true)
 
 // 滚动容器和哨兵
@@ -1613,20 +1619,35 @@ const releaseDateFillProgress = ref<{ current: number; total: number; albumTitle
 
 // ==================== 数据获取 ====================
 
+// 构建统一的查询参数（筛选/排序/分页），分页加载与全量加载路径共用
+function buildAlbumQueryOptions() {
+  return {
+    search: searchQuery.value || undefined,
+    artist: selectedArtist.value || undefined,
+    genres: selectedGenres.value.length > 0 ? selectedGenres.value.join(',') : undefined,
+    sortBy: sortBy.value,
+    sortOrder: sortOrder.value,
+    page: currentPage.value,
+    pageSize: pageSize.value
+  }
+}
+
+// 应用全量查询结果（fetchAll 模式）：整列表替换，不再有更多分页
+function applyFullResult(result: { albums: Album[]; total: number }): void {
+  albums.value = result.albums
+  totalAlbums.value = result.total
+  hasMore.value = false
+  currentPage.value = 1
+}
+
 async function fetchAlbums(append = false) {
   try {
-    const result = await window.api.albumList({
-      search: searchQuery.value || undefined,
-      artist: selectedArtist.value || undefined,
-      genres: selectedGenres.value.length > 0 ? selectedGenres.value.join(',') : undefined,
-      sortBy: sortBy.value,
-      sortOrder: sortOrder.value,
-      page: currentPage.value,
-      pageSize: pageSize.value
-    })
+    const result = await window.api.albumList(buildAlbumQueryOptions())
 
     if (result.success && result.data) {
       if (append) {
+        // 过期分页结果丢弃：期间列表被重置/全量替换（page 不匹配）时避免追加重复行
+        if (result.data.page !== currentPage.value) return
         // 追加模式：将新数据添加到现有列表
         albums.value = [...albums.value, ...result.data.albums]
       } else {
@@ -1648,7 +1669,7 @@ async function fetchAlbums(append = false) {
 
 // 加载更多
 async function loadMore() {
-  if (loadingMore.value || !hasMore.value) return
+  if (loadingMore.value || loadingAll.value || !hasMore.value) return
   loadingMore.value = true
   currentPage.value++
   await fetchAlbums(true)
@@ -1690,15 +1711,25 @@ function resetAndFetch(scrollToAlbumId?: number | null) {
 }
 
 /**
- * 持续分页加载，直到找到目标专辑或加载完所有数据，然后滚动到目标专辑的行。
+ * 一次拉取完整结果集（fetchAll 模式）并滚动定位到目标专辑。
+ * 替代逐页顺序加载循环：底部专辑定位从几十轮 IPC 降为一次。
  */
 async function fetchAlbumsAndScrollTo(targetAlbumId: number) {
-  await fetchAlbums(false)
-
-  // 加载后检查目标专辑是否已在列表中；若不在且还有更多数据则继续加载
-  while (hasMore.value && !albums.value.some(a => a.id === targetAlbumId)) {
-    currentPage.value++
-    await fetchAlbums(true)
+  loadingAll.value = true
+  loadingMore.value = true
+  try {
+    const result = await window.api.albumList({ ...buildAlbumQueryOptions(), fetchAll: true })
+    if (result.success && result.data) {
+      applyFullResult(result.data)
+    } else {
+      showMessage('加载专辑列表失败', 'error')
+    }
+  } catch (error) {
+    showMessage('加载专辑列表失败', 'error')
+  } finally {
+    loading.value = false
+    loadingMore.value = false
+    loadingAll.value = false
   }
 
   // 滚动到目标专辑
@@ -1739,13 +1770,17 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null
 function debouncedSearch() {
   if (searchTimer) clearTimeout(searchTimer)
   searchTimer = setTimeout(() => {
-    resetAndFetch()
+    // 清空到空串且存在选中专辑时保持选中并定位（与清除筛选行为一致）
+    if (!searchQuery.value && selectedAlbumId.value) resetAndFetch(selectedAlbumId.value)
+    else resetAndFetch()
   }, 300)
 }
 
 function clearSearch() {
   searchQuery.value = ''
-  resetAndFetch()
+  // 存在选中专辑时定位保持选中，否则回到列表顶部
+  if (selectedAlbumId.value) resetAndFetch(selectedAlbumId.value)
+  else resetAndFetch()
 }
 
 // ==================== 筛选 ====================
@@ -2073,8 +2108,8 @@ function cancelSort(field: 'mb_rating' | 'release_date' | 'user_rating') {
 
 function toggleViewMode() {
   viewMode.value = viewMode.value === 'table' ? 'grid' : 'table'
-  // 分页尺寸随视图变化，切换后重置列表重新加载
-  resetAndFetch()
+  // 分页尺寸随视图变化，切换后重置列表重新加载；有选中专辑时定位保持选中
+  resetAndFetch(selectedAlbumId.value)
 }
 
 // 唱片墙排序下拉框的值，与表格列头排序共享 sortBy/sortOrder
@@ -2109,10 +2144,35 @@ function cardBadgeText(album: Album): string {
 
 // ==================== 滚动进度条处理 ====================
 
-function handleScrollSeek(scrollTop: number) {
-  if (scrollContainerRef.value) {
-    scrollContainerRef.value.scrollTop = scrollTop
+async function handleScrollSeek(scrollTop: number) {
+  const container = scrollContainerRef.value
+  if (!container) return
+
+  const maxScroll = container.scrollHeight - container.clientHeight
+  // 拖到已加载内容的末尾且还有更多数据：一次拉全量并按相同比例继续定位，
+  // 避免逐页加载导致需要反复拖动
+  if (hasMore.value && !loadingAll.value && maxScroll > 0 && scrollTop >= maxScroll - 200) {
+    const ratio = scrollTop / maxScroll
+    loadingAll.value = true
+    loadingMore.value = true
+    try {
+      const result = await window.api.albumList({ ...buildAlbumQueryOptions(), fetchAll: true })
+      if (result.success && result.data) {
+        applyFullResult(result.data)
+      }
+    } catch (error) {
+      showMessage('加载专辑列表失败', 'error')
+    } finally {
+      loadingMore.value = false
+      loadingAll.value = false
+    }
+    await nextTick()
+    const newMax = container.scrollHeight - container.clientHeight
+    container.scrollTop = Math.min(newMax, ratio * newMax)
+    return
   }
+
+  container.scrollTop = scrollTop
 }
 
 // ==================== 无限滚动 Observer ====================
@@ -2125,7 +2185,7 @@ function setupIntersectionObserver() {
   intersectionObserver = new IntersectionObserver(
     (entries) => {
       const entry = entries[0]
-      if (entry && entry.isIntersecting && hasMore.value && !loadingMore.value) {
+      if (entry && entry.isIntersecting && hasMore.value && !loadingMore.value && !loadingAll.value) {
         loadMore()
       }
     },
@@ -3025,6 +3085,9 @@ body {
 .album-table tbody tr.album-row {
   cursor: pointer;
   transition: background 0.1s;
+  /* 离屏行跳过渲染；若出现行高异常（Chromium 对 tr 的 content-visibility 有已知怪癖）则移除本规则 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 43px;
 }
 
 .album-table tbody tr.album-row:hover {
@@ -3080,6 +3143,9 @@ body {
   cursor: pointer;
   box-shadow: var(--shadow);
   transition: transform 0.15s, box-shadow 0.15s;
+  /* 离屏卡片跳过渲染：全量列表时只绘制视口附近卡片（auto 记忆真实尺寸避免滚动抖动） */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 160px;
 }
 
 /* 卡片内封面/占位符自身清零圆角与阴影，否则内侧圆角会露出页面底色 */

@@ -3,11 +3,12 @@ import { ElectronAPI } from '@electron-toolkit/preload'
 interface AlbumQueryOptions {
   search?: string
   artist?: string
-  genre?: string
+  genres?: string
   sortBy?: 'mb_rating' | 'release_date' | 'user_rating'
   sortOrder?: 'asc' | 'desc'
   page?: number
   pageSize?: number
+  fetchAll?: boolean
 }
 
 interface Album {

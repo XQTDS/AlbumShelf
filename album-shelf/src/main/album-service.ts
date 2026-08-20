@@ -56,6 +56,8 @@ export interface AlbumQueryOptions {
   sortOrder?: 'asc' | 'desc'
   page?: number
   pageSize?: number
+  // 一次性返回完整结果集（忽略 page/pageSize），用于跳转定位与深拖到底
+  fetchAll?: boolean
 }
 
 export interface AlbumQueryResult {
@@ -210,7 +212,8 @@ export class AlbumService {
       sortBy,
       sortOrder = 'desc',
       page = 1,
-      pageSize = 20
+      pageSize = 20,
+      fetchAll = false
     } = options
 
     const conditions: string[] = []
@@ -272,23 +275,41 @@ export class AlbumService {
       orderClause = `ORDER BY CASE WHEN a.user_rating IS NULL THEN 1 ELSE 0 END, a.user_rating ${dir}, a.id DESC`
     }
 
-    // Pagination
-    const offset = (page - 1) * pageSize
-    params.limit = pageSize
-    params.offset = offset
-
-    const dataSql = `
-      SELECT DISTINCT a.* FROM album a
-      ${whereClause}
-      ${orderClause}
-      LIMIT @limit OFFSET @offset
-    `
+    // Pagination（fetchAll 时跳过 LIMIT/OFFSET，一次返回完整结果集）
+    let dataSql: string
+    if (fetchAll) {
+      dataSql = `
+        SELECT DISTINCT a.* FROM album a
+        ${whereClause}
+        ${orderClause}
+      `
+    } else {
+      const offset = (page - 1) * pageSize
+      params.limit = pageSize
+      params.offset = offset
+      dataSql = `
+        SELECT DISTINCT a.* FROM album a
+        ${whereClause}
+        ${orderClause}
+        LIMIT @limit OFFSET @offset
+      `
+    }
 
     const rows = this.db.prepare(dataSql).all(params) as Album[]
 
     // Attach genres to each album
     for (const row of rows) {
       row.genres = this.getGenresForAlbum(row.id)
+    }
+
+    if (fetchAll) {
+      return {
+        albums: rows,
+        total,
+        page: 1,
+        pageSize: total,
+        totalPages: 1
+      }
     }
 
     const totalPages = Math.max(1, Math.ceil(total / pageSize))

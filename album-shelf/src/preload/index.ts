@@ -14,11 +14,12 @@ const albumShelfAPI = {
   albumList: (options: {
     search?: string
     artist?: string
-    genre?: string
+    genres?: string
     sortBy?: 'mb_rating' | 'release_date' | 'user_rating'
     sortOrder?: 'asc' | 'desc'
     page?: number
     pageSize?: number
+    fetchAll?: boolean
   }) => ipcRenderer.invoke('album:list', options),
 
   albumFilters: () => ipcRenderer.invoke('album:filters'),
