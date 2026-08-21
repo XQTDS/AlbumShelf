@@ -89,6 +89,8 @@ let startY = 0
 let startScrollTop = 0
 
 function handleThumbMouseDown(e: MouseEvent) {
+  // 阻止浏览器默认行为（文本选择），拖动滚动条时不选中页面文字
+  e.preventDefault()
   isDragging.value = true
   isScrolling.value = true
   startY = e.clientY
@@ -151,6 +153,7 @@ onUnmounted(() => {
   position: relative;
   cursor: pointer;
   transition: background 0.3s ease;
+  user-select: none; /* 按下/点击滚动条不触发文本选择 */
 }
 
 .scroll-progress-bar:hover,
