@@ -88,7 +88,7 @@ interface EnrichProgress {
 interface EnrichResult {
   matched: number
   failed: number
-  confirmed: number
+  pending: number
   total: number
 }
 
@@ -104,6 +104,8 @@ interface FuzzyConfirmRequest {
   albumId: number
   albumTitle: string
   albumArtist: string
+  coverUrl: string | null
+  pendingCount: number
   candidates: MbFuzzyCandidate[]
 }
 
@@ -284,6 +286,11 @@ interface AlbumShelfAPI {
   enrichReEnrichAll: () => Promise<IpcResult<EnrichResult>>
   onFuzzyConfirmRequest: (callback: (data: FuzzyConfirmRequest) => void) => () => void
   sendFuzzyConfirmReply: (reply: { mbid: string } | null) => void
+  onFuzzyResolved: (callback: (data: {
+    albumId: number
+    albumTitle: string
+    confirmed: boolean
+  }) => void) => () => void
   onEnrichProgress: (callback: (progress: EnrichProgress) => void) => () => void
   onMenuReEnrichAll: (callback: () => void) => () => void
   onMenuOpenSettings: (callback: () => void) => () => void

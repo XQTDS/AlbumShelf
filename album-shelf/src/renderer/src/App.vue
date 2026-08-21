@@ -2286,14 +2286,12 @@ function setupProgressListener() {
       albumTitle: progress.albumTitle
     }
 
-    // 补全完成
+    // 补全完成（完成提示由各补全入口根据结果统计展示）
     if (progress.current >= progress.total) {
       setTimeout(async () => {
         enrichProgress.value = null
         await fetchAlbums()
         await fetchFilters()
-
-        showMessage('数据补全完成！', 'success')
       }, 1000)
     }
   })
@@ -2315,8 +2313,9 @@ async function handleEnrichAlbumsWithoutMbData() {
     const result = await window.api.enrichAlbumsWithoutMbData()
     if (!result.success) {
       showMessage(`补全失败：${result.error}`, 'error')
+    } else if (result.data) {
+      showEnrichSummary('补全扫描完成', result.data)
     }
-    // 进度和完成提示由 onEnrichProgress 回调处理
   } catch (error) {
     showMessage('补全失败：未知错误', 'error')
   }
@@ -2325,6 +2324,7 @@ async function handleEnrichAlbumsWithoutMbData() {
 // ==================== 重新补全所有 ====================
 
 let removeMenuReEnrichListener: (() => void) | null = null
+let removeFuzzyResolvedListener: (() => void) | null = null
 
 async function handleReEnrichAll() {
   if (enrichProgress.value) {
@@ -2338,11 +2338,24 @@ async function handleReEnrichAll() {
     const result = await window.api.enrichReEnrichAll()
     if (!result.success) {
       showMessage(`重新补全失败：${result.error}`, 'error')
+    } else if (result.data) {
+      showEnrichSummary('重新补全扫描完成', result.data)
     }
-    // 进度和完成提示由 onEnrichProgress 回调处理
   } catch (error) {
     showMessage('重新补全失败：未知错误', 'error')
   }
+}
+
+/** 展示补全结果统计：精确匹配 / 待确认 / 跳过 */
+function showEnrichSummary(prefix: string, data: { matched: number; failed: number; pending: number }) {
+  const parts = [`精确匹配 ${data.matched} 张`]
+  if (data.pending > 0) {
+    parts.push(`${data.pending} 张等待确认（将依次弹出确认弹窗）`)
+  }
+  if (data.failed > 0) {
+    parts.push(`跳过 ${data.failed} 张`)
+  }
+  showMessage(`${prefix}：${parts.join('，')}`, 'success')
 }
 
 // ==================== 批量补全缺失封面 ====================
@@ -2509,6 +2522,15 @@ onMounted(async () => {
     handleReEnrichAll()
   })
 
+  // 监听模糊确认结算结果：确认写库后刷新列表与风格统计
+  removeFuzzyResolvedListener = window.api.onFuzzyResolved(async (data) => {
+    if (data.confirmed) {
+      showMessage(`已保存「${data.albumTitle}」的 MusicBrainz 匹配结果`, 'success')
+      await fetchAlbums()
+      await fetchFilters()
+    }
+  })
+
   // 监听菜单栏"同步专辑列表"事件
   const removeMenuSyncListener = window.api.onMenuSyncAlbums(async () => {
     console.log('[App] 收到菜单同步事件')
@@ -2612,6 +2634,9 @@ onUnmounted(() => {
   }
   if (removeMenuReEnrichListener) {
     removeMenuReEnrichListener()
+  }
+  if (removeFuzzyResolvedListener) {
+    removeFuzzyResolvedListener()
   }
   if (removeLoginRequiredListener) {
     removeLoginRequiredListener()
