@@ -11,6 +11,10 @@
           确认后将补全评分和风格标签。
         </p>
 
+        <p v-if="currentRequest?.pendingCount" class="queue-hint">
+          队列中还有 {{ currentRequest.pendingCount }} 张专辑待确认，补全流程会在后台继续
+        </p>
+
         <div class="match-group">
           <div class="match-group-header">
             <div class="album-info-row">
@@ -137,6 +141,7 @@ interface FuzzyConfirmRequest {
   albumTitle: string
   albumArtist: string
   coverUrl: string | null
+  pendingCount: number
   candidates: FuzzyCandidate[]
 }
 
@@ -320,6 +325,17 @@ function handleReject() {
   margin: 0 0 16px 0;
   color: #666;
   font-size: 14px;
+  line-height: 1.5;
+}
+
+.queue-hint {
+  margin: -8px 0 16px 0;
+  padding: 6px 10px;
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  border-radius: 6px;
+  color: #ad6800;
+  font-size: 12px;
   line-height: 1.5;
 }
 

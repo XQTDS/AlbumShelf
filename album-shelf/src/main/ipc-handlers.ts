@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog } from 'electron'
 import { readFileSync, writeFileSync } from 'fs'
 import { exportDatabase, importDatabase, type ExportData } from './database'
-import { AlbumService, AlbumQueryOptions } from './album-service'
+import { AlbumService, AlbumQueryOptions, type Album } from './album-service'
 import { TrackService, type Track } from './track-service'
 import { NcmCliService, publishTimeToReleaseDate } from './ncm-cli-service'
 import { ensureBuiltinCredentials } from './ncm-credentials'
@@ -19,7 +19,8 @@ import {
   getEnrichStrategies,
   loadSettings,
   saveSettings,
-  type MbCredentials
+  type MbCredentials,
+  type MbFuzzyCandidate
 } from './enrich'
 import * as authService from './auth-service'
 import { NcmLoginRequiredError } from './ncm-cli-service'
@@ -40,6 +41,16 @@ let releaseDateFillRunning = false
 // 播放会话代际：新一轮 player:playAlbum / player:stop 使上一轮未完成的
 // 后台补队列任务失效（代际不匹配即中止），避免旧任务污染新队列
 let playQueueGeneration = 0
+
+// 模糊确认弹窗队列：批量补全扫描遇到精确匹配失败的专辑时入队，
+// 由消费器串行弹窗（同一时刻最多一个），不阻塞批量补全流程
+interface FuzzyConfirmQueueItem {
+  album: Album
+  candidates: MbFuzzyCandidate[]
+}
+
+const fuzzyConfirmQueue: FuzzyConfirmQueueItem[] = []
+let fuzzyDialogDraining = false
 
 /**
  * 初始化所有服务实例
@@ -77,11 +88,15 @@ export function registerIpcHandlers(): void {
 
   /**
    * 触发同步操作
-   * 返回同步结果统计（新增/跳过/总数）
+   * 返回同步结果统计（新增/跳过/总数），同步过程中通过 sync:progress 推送进度
    */
-  ipcMain.handle('sync:start', async () => {
+  ipcMain.handle('sync:start', async (event) => {
     try {
-      const result = await syncManager.sync()
+      const result = await syncManager.sync((progress) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('sync:progress', progress)
+        }
+      })
 
       // 同步完成后，如果有新增专辑且 MB 客户端已初始化，自动触发补全
       if (result.added > 0 && isMbClientInitialized()) {
@@ -1243,47 +1258,114 @@ function ensureMbClient(): void {
 }
 
 /**
- * 构建逐条模糊确认回调：通过 IPC 与渲染进程交互
+ * 构建逐条模糊确认回调：将待确认专辑入队，由消费器串行弹窗，不阻塞批量补全流程
  */
 function createFuzzyMatchCallback(mainWindow: BrowserWindow | null) {
-  if (!mainWindow || mainWindow.isDestroyed()) return undefined
-
-  return async (album: { id: number; title: string; artist: string; netease_album_id?: string | null; cover_url?: string | null }, candidates: unknown[]) => {
-    return new Promise<{ mbid: string } | null>(async (resolve) => {
-      // 获取网易云封面 URL（优先数据库缓存，其次实时获取）
-      let coverUrl: string | null = album.cover_url ?? null
-      if (!coverUrl && album.netease_album_id) {
-        try {
-          const detail = await ncmCliService.getAlbumDetail(album.netease_album_id)
-          if (detail.coverImgUrl) {
-            coverUrl = detail.coverImgUrl.replace(/^http:\/\//, 'https://')
-            // 持久化到数据库
-            albumService.updateAlbum(album.id, { cover_url: coverUrl })
-          }
-        } catch (err) {
-          console.error(`获取封面失败 (albumId: ${album.id}):`, err)
-        }
-      }
-
-      // 发送候选到前端
-      mainWindow.webContents.send('enrich:fuzzy-confirm-request', {
-        albumId: album.id,
-        albumTitle: album.title,
-        albumArtist: album.artist,
-        coverUrl,
-        candidates
-      })
-
-      // 监听前端回复（一次性）
-      ipcMain.once('enrich:fuzzy-confirm-reply', (_event, reply: { mbid: string } | null) => {
-        resolve(reply)
-      })
-    })
+  return (album: Album, candidates: MbFuzzyCandidate[]) => {
+    fuzzyConfirmQueue.push({ album, candidates })
+    void drainFuzzyConfirmQueue(mainWindow)
   }
 }
 
 /**
- * 执行批量补全，发送进度到渲染进程，逐条确认模糊匹配
+ * 弹窗队列消费器：依次弹出确认弹窗，等待用户回复后异步结算。
+ * fuzzyDialogDraining 标志保证同一时刻只有一个消费器（即最多一个弹窗）。
+ */
+async function drainFuzzyConfirmQueue(mainWindow: BrowserWindow | null): Promise<void> {
+  if (fuzzyDialogDraining) return
+  fuzzyDialogDraining = true
+  try {
+    while (fuzzyConfirmQueue.length > 0) {
+      const item = fuzzyConfirmQueue.shift()!
+      const reply = await showFuzzyConfirmDialog(mainWindow, item)
+      await enrichService.confirmFuzzyMatch(item.album, item.candidates, reply)
+
+      // 通知渲染层刷新列表与风格统计
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('enrich:fuzzy-resolved', {
+          albumId: item.album.id,
+          albumTitle: item.album.title,
+          confirmed: reply !== null
+        })
+      }
+    }
+  } finally {
+    fuzzyDialogDraining = false
+  }
+}
+
+/**
+ * 弹出单张专辑的模糊确认弹窗，等待用户回复。
+ * 窗口销毁时以 null（跳过）结算，避免队列悬挂。
+ */
+function showFuzzyConfirmDialog(
+  mainWindow: BrowserWindow | null,
+  item: FuzzyConfirmQueueItem
+): Promise<{ mbid: string } | null> {
+  const { album, candidates } = item
+
+  return new Promise<{ mbid: string } | null>(async (resolve) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      resolve(null)
+      return
+    }
+
+    // 获取网易云封面 URL（优先数据库缓存，其次实时获取）
+    let coverUrl: string | null = album.cover_url ?? null
+    if (!coverUrl && album.netease_album_id) {
+      try {
+        const detail = await ncmCliService.getAlbumDetail(album.netease_album_id)
+        if (detail.coverImgUrl) {
+          coverUrl = detail.coverImgUrl.replace(/^http:\/\//, 'https://')
+          // 持久化到数据库
+          albumService.updateAlbum(album.id, { cover_url: coverUrl })
+        }
+      } catch (err) {
+        console.error(`获取封面失败 (albumId: ${album.id}):`, err)
+      }
+    }
+
+    // 封面获取期间窗口可能已销毁
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      resolve(null)
+      return
+    }
+
+    let settled = false
+    const finish = (reply: { mbid: string } | null) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(reply)
+    }
+
+    const onReply = (_event: Electron.IpcMainEvent, reply: { mbid: string } | null) => {
+      finish(reply)
+    }
+    const onWindowDestroyed = () => finish(null)
+
+    const cleanup = () => {
+      ipcMain.removeListener('enrich:fuzzy-confirm-reply', onReply)
+      mainWindow?.webContents.removeListener('destroyed', onWindowDestroyed)
+    }
+
+    ipcMain.once('enrich:fuzzy-confirm-reply', onReply)
+    mainWindow.webContents.once('destroyed', onWindowDestroyed)
+
+    // 发送候选到前端（pendingCount 为队列中剩余的待确认数量）
+    mainWindow.webContents.send('enrich:fuzzy-confirm-request', {
+      albumId: album.id,
+      albumTitle: album.title,
+      albumArtist: album.artist,
+      coverUrl,
+      candidates,
+      pendingCount: fuzzyConfirmQueue.length
+    })
+  })
+}
+
+/**
+ * 执行批量补全，发送进度到渲染进程，模糊匹配入队依次确认
  */
 async function enrichAll(mainWindow: BrowserWindow | null) {
   const result = await enrichService.enrichAll(
@@ -1298,7 +1380,7 @@ async function enrichAll(mainWindow: BrowserWindow | null) {
 }
 
 /**
- * 补全所有缺失 MB 数据的专辑，发送进度到渲染进程，逐条确认模糊匹配
+ * 补全所有缺失 MB 数据的专辑，发送进度到渲染进程，模糊匹配入队依次确认
  */
 async function enrichAlbumsWithoutMbData(mainWindow: BrowserWindow | null) {
   const result = await enrichService.enrichAlbumsWithoutMbData(
@@ -1313,7 +1395,7 @@ async function enrichAlbumsWithoutMbData(mainWindow: BrowserWindow | null) {
 }
 
 /**
- * 执行全量重新补全，发送进度到渲染进程，逐条确认模糊匹配
+ * 执行全量重新补全，发送进度到渲染进程，模糊匹配入队依次确认
  */
 async function reEnrichAll(mainWindow: BrowserWindow | null) {
   const result = await enrichService.reEnrichAll(

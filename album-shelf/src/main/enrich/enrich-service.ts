@@ -49,16 +49,18 @@ export interface MbFuzzyCandidate {
 }
 
 /**
- * 模糊匹配回调类型：由调用方实现，用于逐条确认
+ * 模糊匹配回调类型：由调用方实现，将待确认请求入队。
+ *
+ * 不阻塞批量补全流程：调用方把（专辑, 候选列表）放入弹窗队列后立即返回，
+ * 用户回复后由调用方异步调用 {@link EnrichService.confirmFuzzyMatch} 结算。
  *
  * @param album 当前专辑
- * @param candidates 候选列表
- * @returns 用户选择的候选 mbid，或 null 表示拒绝
+ * @param candidates 候选列表（可能为空，用户可手动粘贴 MusicBrainz 链接）
  */
 export type OnFuzzyMatchCallback = (
   album: Album,
   candidates: MbFuzzyCandidate[]
-) => Promise<{ mbid: string } | null>
+) => void
 
 /**
  * 补全进度信息
@@ -82,8 +84,8 @@ export interface EnrichResult {
   matched: number
   /** 完全失败数 */
   failed: number
-  /** 用户确认的模糊匹配数 */
-  confirmed: number
+  /** 等待用户在弹窗中确认的模糊匹配数 */
+  pending: number
   /** 总数 */
   total: number
 }
@@ -465,13 +467,14 @@ export class EnrichService {
    * 数据补全逻辑：将匹配结果写入数据库
    *
    * @param album 待补全的专辑
-   * @param onFuzzyMatch 模糊匹配回调，用于逐条确认（可选，无则模糊匹配视为失败）
-   * @returns 'matched' 匹配成功（含用户确认）, 'failed' 完全失败
+   * @param onFuzzyMatch 模糊匹配回调，用于将待确认请求入队（可选，无则模糊匹配视为失败）
+   * @returns 'matched' 匹配成功（精确匹配），'failed' 完全失败，
+   *          'pending' 已入队等待用户确认（结果由 confirmFuzzyMatch 异步结算）
    */
   async enrichAlbum(
     album: Album,
     onFuzzyMatch?: OnFuzzyMatchCallback
-  ): Promise<'matched' | 'failed'> {
+  ): Promise<'matched' | 'failed' | 'pending'> {
     const result = await this.matchAlbum(album.title, album.artist, album.release_date)
 
     if (result) {
@@ -499,21 +502,41 @@ export class EnrichService {
     )
 
     if (onFuzzyMatch) {
-      // 弹窗请求用户确认（即使候选为空，用户也可以手动粘贴 MusicBrainz 链接）
-      const reply = await onFuzzyMatch(album, fuzzyCandidates)
-
-      if (reply) {
-        // 用户确认了某个候选或手动指定了 MBID
-        const confirmed = await this.processConfirmedMatch(album, reply.mbid, fuzzyCandidates)
-        return confirmed ? 'matched' : 'failed'
-      }
+      // 入队弹窗请求，不阻塞批量流程；用户回复后由 confirmFuzzyMatch 异步结算
+      // （即使候选为空也入队，用户可手动粘贴 MusicBrainz 链接）
+      onFuzzyMatch(album, fuzzyCandidates)
+      return 'pending'
     }
 
-    // 完全失败或用户拒绝，标记 enriched_at 避免重复尝试
+    // 完全失败，标记 enriched_at 避免重复尝试
     this.albumService.updateAlbum(album.id, {
       enriched_at: new Date().toISOString()
     })
     return 'failed'
+  }
+
+  /**
+   * 结算队列中待确认的模糊匹配（由 IPC 弹窗消费器在用户回复后调用）。
+   *
+   * - 确认：lookup 详情、写入数据库、自动学习别名
+   * - 跳过或处理失败：标记 enriched_at 避免重复尝试
+   *
+   * @param album 待确认的专辑
+   * @param candidates 弹窗展示过的候选列表
+   * @param reply 用户回复：选中的 mbid，或 null 表示跳过
+   */
+  async confirmFuzzyMatch(
+    album: Album,
+    candidates: MbFuzzyCandidate[],
+    reply: { mbid: string } | null
+  ): Promise<void> {
+    if (reply) {
+      const confirmed = await this.processConfirmedMatch(album, reply.mbid, candidates)
+      if (confirmed) return
+    }
+    this.albumService.updateAlbum(album.id, {
+      enriched_at: new Date().toISOString()
+    })
   }
 
   /**
@@ -580,7 +603,7 @@ export class EnrichService {
    * 批量补全流程：对所有未补全的专辑逐个发起匹配
    *
    * @param onProgress 进度回调函数，每处理完一个专辑调用一次
-   * @param onFuzzyMatch 模糊匹配回调，用于逐条确认
+   * @param onFuzzyMatch 模糊匹配回调，用于将待确认请求入队（不阻塞批量流程）
    * @returns 补全结果统计
    */
   async enrichAll(
@@ -598,30 +621,23 @@ export class EnrichService {
       const total = unenrichedAlbums.length
 
       if (total === 0) {
-        return { matched: 0, failed: 0, confirmed: 0, total: 0 }
+        return { matched: 0, failed: 0, pending: 0, total: 0 }
       }
 
       let matched = 0
       let failed = 0
-      let confirmed = 0
-
-      // 包装 onFuzzyMatch 回调以计数用户确认次数
-      const wrappedOnFuzzyMatch: OnFuzzyMatchCallback | undefined = onFuzzyMatch
-        ? async (album, candidates) => {
-            const reply = await onFuzzyMatch(album, candidates)
-            if (reply) confirmed++
-            return reply
-          }
-        : undefined
+      let pending = 0
 
       for (let i = 0; i < unenrichedAlbums.length; i++) {
         const album = unenrichedAlbums[i]
-        const status = await this.enrichAlbum(album, wrappedOnFuzzyMatch)
+        const status = await this.enrichAlbum(album, onFuzzyMatch)
 
         if (status === 'matched') {
           matched++
         } else if (status === 'failed') {
           failed++
+        } else {
+          pending++
         }
 
         // 进度回调
@@ -635,7 +651,7 @@ export class EnrichService {
         }
       }
 
-      return { matched, failed, confirmed, total }
+      return { matched, failed, pending, total }
     } finally {
       this.isEnriching = false
     }
@@ -665,29 +681,23 @@ export class EnrichService {
       const total = allAlbums.length
 
       if (total === 0) {
-        return { matched: 0, failed: 0, confirmed: 0, total: 0 }
+        return { matched: 0, failed: 0, pending: 0, total: 0 }
       }
 
       let matched = 0
       let failed = 0
-      let confirmed = 0
-
-      const wrappedOnFuzzyMatch: OnFuzzyMatchCallback | undefined = onFuzzyMatch
-        ? async (album, candidates) => {
-            const reply = await onFuzzyMatch(album, candidates)
-            if (reply) confirmed++
-            return reply
-          }
-        : undefined
+      let pending = 0
 
       for (let i = 0; i < allAlbums.length; i++) {
         const album = allAlbums[i]
-        const status = await this.enrichAlbum(album, wrappedOnFuzzyMatch)
+        const status = await this.enrichAlbum(album, onFuzzyMatch)
 
         if (status === 'matched') {
           matched++
         } else if (status === 'failed') {
           failed++
+        } else {
+          pending++
         }
 
         if (onProgress) {
@@ -700,7 +710,7 @@ export class EnrichService {
         }
       }
 
-      return { matched, failed, confirmed, total }
+      return { matched, failed, pending, total }
     } finally {
       this.isEnriching = false
     }
@@ -710,7 +720,7 @@ export class EnrichService {
    * 补全所有缺失 MB 数据的专辑：针对没有 musicbrainz_id 的专辑进行匹配补全。
    *
    * @param onProgress 进度回调函数，每处理完一个专辑调用一次
-   * @param onFuzzyMatch 模糊匹配回调，用于逐条确认
+   * @param onFuzzyMatch 模糊匹配回调，用于将待确认请求入队（不阻塞批量流程）
    * @returns 补全结果统计
    */
   async enrichAlbumsWithoutMbData(
@@ -728,29 +738,23 @@ export class EnrichService {
       const total = albumsWithoutMb.length
 
       if (total === 0) {
-        return { matched: 0, failed: 0, confirmed: 0, total: 0 }
+        return { matched: 0, failed: 0, pending: 0, total: 0 }
       }
 
       let matched = 0
       let failed = 0
-      let confirmed = 0
-
-      const wrappedOnFuzzyMatch: OnFuzzyMatchCallback | undefined = onFuzzyMatch
-        ? async (album, candidates) => {
-            const reply = await onFuzzyMatch(album, candidates)
-            if (reply) confirmed++
-            return reply
-          }
-        : undefined
+      let pending = 0
 
       for (let i = 0; i < albumsWithoutMb.length; i++) {
         const album = albumsWithoutMb[i]
-        const status = await this.enrichAlbum(album, wrappedOnFuzzyMatch)
+        const status = await this.enrichAlbum(album, onFuzzyMatch)
 
         if (status === 'matched') {
           matched++
         } else if (status === 'failed') {
           failed++
+        } else {
+          pending++
         }
 
         // 进度回调
@@ -764,7 +768,7 @@ export class EnrichService {
         }
       }
 
-      return { matched, failed, confirmed, total }
+      return { matched, failed, pending, total }
     } finally {
       this.isEnriching = false
     }

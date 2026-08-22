@@ -78,6 +78,13 @@ interface SyncResult {
   total: number
 }
 
+/** 同步进度（fetching 阶段 total 为 null，writing 阶段为专辑总数） */
+interface SyncProgress {
+  phase: 'fetching' | 'writing'
+  current: number
+  total: number | null
+}
+
 interface EnrichProgress {
   current: number
   total: number
@@ -88,7 +95,7 @@ interface EnrichProgress {
 interface EnrichResult {
   matched: number
   failed: number
-  confirmed: number
+  pending: number
   total: number
 }
 
@@ -104,6 +111,8 @@ interface FuzzyConfirmRequest {
   albumId: number
   albumTitle: string
   albumArtist: string
+  coverUrl: string | null
+  pendingCount: number
   candidates: MbFuzzyCandidate[]
 }
 
@@ -236,6 +245,7 @@ interface ExportResult {
 
 interface AlbumShelfAPI {
   syncStart: () => Promise<IpcResult<SyncResult>>
+  onSyncProgress: (callback: (progress: SyncProgress) => void) => () => void
   albumRandom: () => Promise<IpcResult<Album>>
   albumList: (options: AlbumQueryOptions) => Promise<IpcResult<AlbumQueryResult>>
   albumFilters: () => Promise<IpcResult<{ artists: string[]; genres: string[] }>>
@@ -284,6 +294,11 @@ interface AlbumShelfAPI {
   enrichReEnrichAll: () => Promise<IpcResult<EnrichResult>>
   onFuzzyConfirmRequest: (callback: (data: FuzzyConfirmRequest) => void) => () => void
   sendFuzzyConfirmReply: (reply: { mbid: string } | null) => void
+  onFuzzyResolved: (callback: (data: {
+    albumId: number
+    albumTitle: string
+    confirmed: boolean
+  }) => void) => () => void
   onEnrichProgress: (callback: (progress: EnrichProgress) => void) => () => void
   onMenuReEnrichAll: (callback: () => void) => () => void
   onMenuOpenSettings: (callback: () => void) => () => void

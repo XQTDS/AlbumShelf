@@ -26,7 +26,7 @@ export class NcmCliSyncService implements SyncService {
     this.ncmCliService = ncmCliService || new NcmCliService()
   }
 
-  async fetchCollectedAlbums(): Promise<NeteaseAlbum[]> {
+  async fetchCollectedAlbums(onProgress?: (fetched: number) => void): Promise<NeteaseAlbum[]> {
     const albums: NeteaseAlbum[] = []
     let offset = 0
     let pageCount = 0
@@ -53,6 +53,9 @@ export class NcmCliSyncService implements SyncService {
       for (const record of records) {
         albums.push(this.toNeteaseAlbum(record))
       }
+
+      // 每页拉取完成后推送进度（翻页频率约 1 秒/页，事件频次天然受网络限流）
+      onProgress?.(albums.length)
 
       console.log(
         `[NcmCliSyncService] 已拉取 ${albums.length} 张收藏专辑（第 ${pageCount} 页）`

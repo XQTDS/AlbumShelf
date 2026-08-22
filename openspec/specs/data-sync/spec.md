@@ -53,6 +53,25 @@
 - **WHEN** 用户登录成功或应用启动时已登录
 - **THEN** 系统 SHALL NOT 自动触发同步；同步仅由菜单栏「数据 → 同步专辑列表」入口触发
 
+### Requirement: 同步进度反馈
+
+同步过程 SHALL 通过 `sync:progress` 事件向 UI 推送进度，页面顶部显示与补全流程同款样式的进度条。
+
+#### Scenario: 拉取阶段进度
+
+- **WHEN** 同步处于拉取收藏列表阶段（总数未知）
+- **THEN** 系统 SHALL 每拉完一页推送 `{ phase: 'fetching', current: 已拉取张数, total: null }`，UI 显示不定长动画进度条与「已获取 X 张」文案
+
+#### Scenario: 写入阶段进度
+
+- **WHEN** 拉取完成进入写入阶段
+- **THEN** 系统 SHALL 推送 `{ phase: 'writing', current, total }`（起始 0、每处理 50 张一次、结束为总数），UI 显示按比例填充的进度条与「X/Y 张」文案
+
+#### Scenario: 同步结束清除进度条
+
+- **WHEN** 同步结束（成功或失败）
+- **THEN** UI SHALL 清除同步进度条，最终统计仍由消息提示展示
+
 ### Requirement: 同步数据源为 ncm-cli album collected
 
 系统 SHALL 通过 NcmCliSyncService 调用 `ncm-cli album collected` 命令分页拉取用户收藏的专辑列表，作为同步的唯一数据源。

@@ -22,51 +22,48 @@
 #### Scenario: 模糊查询的质量过滤
 
 - **WHEN** 模糊查询返回结果
-- **THEN** 系统 SHALL 仅保留 score >= 50 的候选项，并使用与精确匹配相同的 pickBestReleaseGroup 逻辑选出最佳候选
+- **THEN** 系统 SHALL 仅保留 score >= 50 的候选项，并取前 5 个作为候选列表
 
 ### Requirement: 模糊匹配结果不自动应用
 
 模糊匹配的结果 SHALL 不自动写入数据库，MUST 经过用户确认后才应用。
 
-#### Scenario: 模糊匹配成功时暂存候选
+#### Scenario: 模糊匹配时入队不阻塞
 
-- **WHEN** 模糊查询找到最佳候选
-- **THEN** 系统 SHALL 将候选信息（含本地专辑 ID、本地标题、MB 标题、MB 艺术家信用、MBID、score、首发日期）暂存到内存中的待确认列表，不标记该专辑的 enriched_at
+- **WHEN** 精确匹配失败，且存在模糊确认回调（批量补全、单张重新同步场景）
+- **THEN** 系统 SHALL 将待确认项（本地专辑信息 + 候选列表）加入弹窗队列，不标记该专辑的 enriched_at
+- **AND** 系统 SHALL 立即返回，不阻塞批量补全扫描流程
 
 #### Scenario: 模糊匹配时不预取详细信息
 
 - **WHEN** 模糊查询找到候选
 - **THEN** 系统 SHALL 不立即调用 MusicBrainz lookup API 获取 ratings 和 genres，推迟到用户确认后执行
 
-### Requirement: 用户确认模糊匹配
+### Requirement: 弹窗队列依次确认
 
-系统 SHALL 在批量补全完成后，向用户展示待确认的模糊匹配列表，支持确认和跳过操作。
+系统 SHALL 通过队列依次弹出确认弹窗（同一时刻最多一个），用户可在批量补全进行中或结束后随时处理。
 
-#### Scenario: 批量补全完成后展示待确认列表
+#### Scenario: 依次弹出确认弹窗
 
-- **WHEN** 批量补全完成且待确认列表不为空
-- **THEN** 系统 SHALL 弹出确认面板，展示所有待确认项目，每项显示本地标题、MB 标题对比、MB 艺术家信用和匹配分数
+- **WHEN** 队列中有一个或多个待确认项
+- **THEN** 系统 SHALL 逐个弹出确认弹窗，每项展示本地专辑信息、候选对比（MB 标题、艺术家信用、匹配分数、首发日期）以及队列中剩余待确认数量
+
+#### Scenario: 候选为空的专辑同样入队
+
+- **WHEN** 精确匹配失败且模糊查询未产生任何候选
+- **THEN** 系统 SHALL 仍弹出确认弹窗，允许用户手动粘贴 MusicBrainz 链接或跳过
 
 #### Scenario: 用户确认匹配
 
-- **WHEN** 用户选中待确认项目并点击确认
-- **THEN** 系统 SHALL 对选中的每个项目调用 MusicBrainz lookup API 获取 ratings 和 genres，写入数据库，并标记 enriched_at
+- **WHEN** 用户选中候选或手动粘贴的 MB 链接并点击确认
+- **THEN** 系统 SHALL 对该专辑调用 MusicBrainz lookup API 获取 ratings 和 genres，写入数据库，标记 enriched_at，并通知渲染层刷新列表与风格统计
 
 #### Scenario: 用户跳过匹配
 
-- **WHEN** 用户关闭确认面板或未选中某些项目
-- **THEN** 未确认的专辑 SHALL 不标记 enriched_at，下次补全时仍可重新尝试
+- **WHEN** 用户点击跳过
+- **THEN** 该专辑 SHALL 标记 enriched_at，下次补全不再重复尝试
 
-### Requirement: 待确认列表的全选与批量操作
+#### Scenario: 窗口销毁保护
 
-确认面板 SHALL 支持全选和全不选操作，方便用户批量处理。
-
-#### Scenario: 默认全选
-
-- **WHEN** 确认面板打开
-- **THEN** 所有待确认项目 SHALL 默认为选中状态
-
-#### Scenario: 全选与全不选
-
-- **WHEN** 用户点击全选或全不选按钮
-- **THEN** 系统 SHALL 相应地选中或取消选中所有项目
+- **WHEN** 确认弹窗等待期间主窗口销毁
+- **THEN** 系统 SHALL 以"跳过"结算当前弹窗并结束队列消费，避免流程悬挂

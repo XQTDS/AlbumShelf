@@ -7,6 +7,20 @@ const albumShelfAPI = {
   // 同步操作
   syncStart: () => ipcRenderer.invoke('sync:start'),
 
+  // 同步进度监听（fetching 阶段 total 为 null，writing 阶段为专辑总数）
+  onSyncProgress: (
+    callback: (progress: {
+      phase: 'fetching' | 'writing'
+      current: number
+      total: number | null
+    }) => void
+  ) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress)
+    ipcRenderer.on('sync:progress', handler)
+    // 返回取消监听函数
+    return () => ipcRenderer.removeListener('sync:progress', handler)
+  },
+
   // 随机专辑
   albumRandom: () => ipcRenderer.invoke('album:random'),
 
@@ -109,13 +123,14 @@ const albumShelfAPI = {
   enrichAlbumsWithoutMbData: () => ipcRenderer.invoke('enrich:enrichAlbumsWithoutMbData'),
   enrichReEnrichAll: () => ipcRenderer.invoke('enrich:reEnrichAll'),
 
-  // 模糊匹配逐条确认（新机制）
+  // 模糊匹配逐条确认（队列机制：主进程串行弹窗，同一时刻最多一个）
   onFuzzyConfirmRequest: (
     callback: (data: {
       albumId: number
       albumTitle: string
       albumArtist: string
       coverUrl: string | null
+      pendingCount: number
       candidates: {
         mbid: string
         mbTitle: string
@@ -131,6 +146,15 @@ const albumShelfAPI = {
   },
   sendFuzzyConfirmReply: (reply: { mbid: string } | null) =>
     ipcRenderer.send('enrich:fuzzy-confirm-reply', reply),
+
+  // 模糊确认结算结果（用户回复并写库后触发，用于刷新列表与风格统计）
+  onFuzzyResolved: (
+    callback: (data: { albumId: number; albumTitle: string; confirmed: boolean }) => void
+  ) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data)
+    ipcRenderer.on('enrich:fuzzy-resolved', handler)
+    return () => ipcRenderer.removeListener('enrich:fuzzy-resolved', handler)
+  },
 
   // 补全进度监听
   onEnrichProgress: (

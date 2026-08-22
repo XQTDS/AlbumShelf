@@ -103,6 +103,27 @@
       </div>
     </div>
 
+    <!-- 同步进度条 -->
+    <div v-if="syncProgress" class="enrich-bar">
+      <div class="enrich-bar-inner">
+        <span class="enrich-text">
+          {{
+            syncProgress.phase === 'fetching'
+              ? `正在获取收藏专辑列表…已获取 ${syncProgress.current} 张`
+              : `正在同步专辑 ${syncProgress.current}/${syncProgress.total} 张`
+          }}
+        </span>
+        <div class="enrich-progress-track">
+          <div
+            v-if="syncProgress.phase === 'writing' && syncProgress.total"
+            class="enrich-progress-fill"
+            :style="{ width: (syncProgress.current / syncProgress.total * 100) + '%' }"
+          ></div>
+          <div v-else class="enrich-progress-fill sync-progress-indeterminate"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- 补全进度条 -->
     <div v-if="enrichProgress" class="enrich-bar">
       <div class="enrich-bar-inner">
@@ -2226,6 +2247,8 @@ watch(scrollContainerRef, (newVal) => {
 
 // ==================== 同步 ====================
 
+const syncProgress = ref<{ phase: 'fetching' | 'writing'; current: number; total: number | null } | null>(null)
+
 async function handleSync() {
   syncing.value = true
   showMessage('正在同步专辑数据...', 'info')
@@ -2250,7 +2273,21 @@ async function handleSync() {
     showMessage('同步失败：网络错误', 'error')
   } finally {
     syncing.value = false
+    // 清除同步进度条（成功/失败统一清理，最终统计由消息提示展示）
+    syncProgress.value = null
   }
+}
+
+let removeSyncProgressListener: (() => void) | null = null
+
+function setupSyncProgressListener() {
+  removeSyncProgressListener = window.api.onSyncProgress((progress) => {
+    syncProgress.value = {
+      phase: progress.phase,
+      current: progress.current,
+      total: progress.total
+    }
+  })
 }
 
 // 处理搜索添加专辑
@@ -2286,14 +2323,12 @@ function setupProgressListener() {
       albumTitle: progress.albumTitle
     }
 
-    // 补全完成
+    // 补全完成（完成提示由各补全入口根据结果统计展示）
     if (progress.current >= progress.total) {
       setTimeout(async () => {
         enrichProgress.value = null
         await fetchAlbums()
         await fetchFilters()
-
-        showMessage('数据补全完成！', 'success')
       }, 1000)
     }
   })
@@ -2315,8 +2350,9 @@ async function handleEnrichAlbumsWithoutMbData() {
     const result = await window.api.enrichAlbumsWithoutMbData()
     if (!result.success) {
       showMessage(`补全失败：${result.error}`, 'error')
+    } else if (result.data) {
+      showEnrichSummary('补全扫描完成', result.data)
     }
-    // 进度和完成提示由 onEnrichProgress 回调处理
   } catch (error) {
     showMessage('补全失败：未知错误', 'error')
   }
@@ -2325,6 +2361,7 @@ async function handleEnrichAlbumsWithoutMbData() {
 // ==================== 重新补全所有 ====================
 
 let removeMenuReEnrichListener: (() => void) | null = null
+let removeFuzzyResolvedListener: (() => void) | null = null
 
 async function handleReEnrichAll() {
   if (enrichProgress.value) {
@@ -2338,11 +2375,24 @@ async function handleReEnrichAll() {
     const result = await window.api.enrichReEnrichAll()
     if (!result.success) {
       showMessage(`重新补全失败：${result.error}`, 'error')
+    } else if (result.data) {
+      showEnrichSummary('重新补全扫描完成', result.data)
     }
-    // 进度和完成提示由 onEnrichProgress 回调处理
   } catch (error) {
     showMessage('重新补全失败：未知错误', 'error')
   }
+}
+
+/** 展示补全结果统计：精确匹配 / 待确认 / 跳过 */
+function showEnrichSummary(prefix: string, data: { matched: number; failed: number; pending: number }) {
+  const parts = [`精确匹配 ${data.matched} 张`]
+  if (data.pending > 0) {
+    parts.push(`${data.pending} 张等待确认（将依次弹出确认弹窗）`)
+  }
+  if (data.failed > 0) {
+    parts.push(`跳过 ${data.failed} 张`)
+  }
+  showMessage(`${prefix}：${parts.join('，')}`, 'success')
 }
 
 // ==================== 批量补全缺失封面 ====================
@@ -2490,6 +2540,7 @@ function handleLoginGuideLogin() {
 
 onMounted(async () => {
   setupProgressListener()
+  setupSyncProgressListener()
   setupCoverFillProgressListener()
   setupReleaseDateFillProgressListener()
 
@@ -2507,6 +2558,15 @@ onMounted(async () => {
   // 监听菜单栏"重新补全所有专辑"事件
   removeMenuReEnrichListener = window.api.onMenuReEnrichAll(() => {
     handleReEnrichAll()
+  })
+
+  // 监听模糊确认结算结果：确认写库后刷新列表与风格统计
+  removeFuzzyResolvedListener = window.api.onFuzzyResolved(async (data) => {
+    if (data.confirmed) {
+      showMessage(`已保存「${data.albumTitle}」的 MusicBrainz 匹配结果`, 'success')
+      await fetchAlbums()
+      await fetchFilters()
+    }
   })
 
   // 监听菜单栏"同步专辑列表"事件
@@ -2601,6 +2661,9 @@ onUnmounted(() => {
   if (removeProgressListener) {
     removeProgressListener()
   }
+  if (removeSyncProgressListener) {
+    removeSyncProgressListener()
+  }
   if (removeCoverFillProgressListener) {
     removeCoverFillProgressListener()
   }
@@ -2612,6 +2675,9 @@ onUnmounted(() => {
   }
   if (removeMenuReEnrichListener) {
     removeMenuReEnrichListener()
+  }
+  if (removeFuzzyResolvedListener) {
+    removeFuzzyResolvedListener()
   }
   if (removeLoginRequiredListener) {
     removeLoginRequiredListener()
@@ -2950,6 +3016,17 @@ body {
   background: var(--primary);
   border-radius: 2px;
   transition: width 0.3s;
+}
+
+/* 同步拉取阶段的不定长进度动画（总数未知，填充块在轨道内往返平移） */
+.sync-progress-indeterminate {
+  width: 30%;
+  animation: sync-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes sync-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(433%); }
 }
 
 /* ==================== Message Bar ==================== */
