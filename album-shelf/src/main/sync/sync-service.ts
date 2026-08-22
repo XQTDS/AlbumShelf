@@ -25,8 +25,11 @@ export interface NeteaseAlbum {
  * 由 NcmCliSyncService 实现，通过 ncm-cli album collected 直接拉取收藏列表。
  */
 export interface SyncService {
-  /** 获取用户收藏的专辑列表 */
-  fetchCollectedAlbums(): Promise<NeteaseAlbum[]>
+  /**
+   * 获取用户收藏的专辑列表
+   * @param onProgress 分页拉取进度回调（每拉完一页调用一次，参数为已拉取张数）
+   */
+  fetchCollectedAlbums(onProgress?: (fetched: number) => void): Promise<NeteaseAlbum[]>
   /** 检查登录状态 */
   checkLoginStatus(): Promise<boolean>
 }

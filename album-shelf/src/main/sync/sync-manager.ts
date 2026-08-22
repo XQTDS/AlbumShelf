@@ -12,6 +12,18 @@ export interface SyncResult {
   total: number
 }
 
+export interface SyncProgress {
+  /** 当前阶段：fetching（拉取收藏列表，总数未知）/ writing（写入数据库，总数已知） */
+  phase: 'fetching' | 'writing'
+  /** 已处理数量：fetching 阶段为已拉取张数；writing 阶段为已检查写入张数 */
+  current: number
+  /** 专辑总数：fetching 阶段为 null（未知）；writing 阶段为拉取到的总数 */
+  total: number | null
+}
+
+/** writing 阶段进度推送粒度：写入循环为同步的本地 SQLite 检查，按页粒度节流避免事件洪泛 */
+const WRITE_PROGRESS_STEP = 50
+
 /**
  * SyncManager - 同步管理器
  *
@@ -34,8 +46,10 @@ export class SyncManager {
    * - 从同步源获取收藏专辑列表
    * - 通过 netease_album_id 增量去重写入数据库（已存在专辑不改动）
    * - 返回同步结果统计
+   * @param onProgress 进度回调：fetching 阶段每页推送已拉取张数（total 为 null），
+   *   writing 阶段推送已处理张数/总数
    */
-  async sync(): Promise<SyncResult> {
+  async sync(onProgress?: (progress: SyncProgress) => void): Promise<SyncResult> {
     if (this.isSyncing) {
       throw new Error('同步正在进行中，请勿重复触发。')
     }
@@ -44,8 +58,11 @@ export class SyncManager {
 
     try {
       // 1. 从同步源获取收藏专辑列表（完整拉取，失败则整体中止，不执行删除）
-      const neteaseAlbums = await this.syncService.fetchCollectedAlbums()
+      const neteaseAlbums = await this.syncService.fetchCollectedAlbums((fetched) => {
+        onProgress?.({ phase: 'fetching', current: fetched, total: null })
+      })
       const now = new Date().toISOString()
+      const total = neteaseAlbums.length
 
       let added = 0
       let skipped = 0
@@ -53,7 +70,13 @@ export class SyncManager {
       // 2. 逐个检查并写入数据库（通过 netease_album_id 去重，已存在的不修改）
       const albumsToInsert: AlbumInsert[] = []
 
-      for (const album of neteaseAlbums) {
+      // 拉取完成，进度条切换为定长模式（收藏为空时不推送，避免进度条闪现 0/0）
+      if (total > 0) {
+        onProgress?.({ phase: 'writing', current: 0, total })
+      }
+
+      for (let i = 0; i < neteaseAlbums.length; i++) {
+        const album = neteaseAlbums[i]
         const existing = this.albumService.getAlbumByNeteaseAlbumId(album.netease_album_id)
         if (existing) {
           skipped++
@@ -70,6 +93,15 @@ export class SyncManager {
           })
           added++
         }
+
+        // 按页粒度节流推送写入进度
+        if ((i + 1) % WRITE_PROGRESS_STEP === 0) {
+          onProgress?.({ phase: 'writing', current: i + 1, total })
+        }
+      }
+      // 写入检查完成，推送最终进度（100%）
+      if (total > 0) {
+        onProgress?.({ phase: 'writing', current: total, total })
       }
 
       // 3. 批量插入新专辑

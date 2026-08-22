@@ -78,6 +78,13 @@ interface SyncResult {
   total: number
 }
 
+/** 同步进度（fetching 阶段 total 为 null，writing 阶段为专辑总数） */
+interface SyncProgress {
+  phase: 'fetching' | 'writing'
+  current: number
+  total: number | null
+}
+
 interface EnrichProgress {
   current: number
   total: number
@@ -238,6 +245,7 @@ interface ExportResult {
 
 interface AlbumShelfAPI {
   syncStart: () => Promise<IpcResult<SyncResult>>
+  onSyncProgress: (callback: (progress: SyncProgress) => void) => () => void
   albumRandom: () => Promise<IpcResult<Album>>
   albumList: (options: AlbumQueryOptions) => Promise<IpcResult<AlbumQueryResult>>
   albumFilters: () => Promise<IpcResult<{ artists: string[]; genres: string[] }>>

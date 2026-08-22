@@ -103,6 +103,27 @@
       </div>
     </div>
 
+    <!-- 同步进度条 -->
+    <div v-if="syncProgress" class="enrich-bar">
+      <div class="enrich-bar-inner">
+        <span class="enrich-text">
+          {{
+            syncProgress.phase === 'fetching'
+              ? `正在获取收藏专辑列表…已获取 ${syncProgress.current} 张`
+              : `正在同步专辑 ${syncProgress.current}/${syncProgress.total} 张`
+          }}
+        </span>
+        <div class="enrich-progress-track">
+          <div
+            v-if="syncProgress.phase === 'writing' && syncProgress.total"
+            class="enrich-progress-fill"
+            :style="{ width: (syncProgress.current / syncProgress.total * 100) + '%' }"
+          ></div>
+          <div v-else class="enrich-progress-fill sync-progress-indeterminate"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- 补全进度条 -->
     <div v-if="enrichProgress" class="enrich-bar">
       <div class="enrich-bar-inner">
@@ -2226,6 +2247,8 @@ watch(scrollContainerRef, (newVal) => {
 
 // ==================== 同步 ====================
 
+const syncProgress = ref<{ phase: 'fetching' | 'writing'; current: number; total: number | null } | null>(null)
+
 async function handleSync() {
   syncing.value = true
   showMessage('正在同步专辑数据...', 'info')
@@ -2250,7 +2273,21 @@ async function handleSync() {
     showMessage('同步失败：网络错误', 'error')
   } finally {
     syncing.value = false
+    // 清除同步进度条（成功/失败统一清理，最终统计由消息提示展示）
+    syncProgress.value = null
   }
+}
+
+let removeSyncProgressListener: (() => void) | null = null
+
+function setupSyncProgressListener() {
+  removeSyncProgressListener = window.api.onSyncProgress((progress) => {
+    syncProgress.value = {
+      phase: progress.phase,
+      current: progress.current,
+      total: progress.total
+    }
+  })
 }
 
 // 处理搜索添加专辑
@@ -2503,6 +2540,7 @@ function handleLoginGuideLogin() {
 
 onMounted(async () => {
   setupProgressListener()
+  setupSyncProgressListener()
   setupCoverFillProgressListener()
   setupReleaseDateFillProgressListener()
 
@@ -2622,6 +2660,9 @@ onUnmounted(() => {
   
   if (removeProgressListener) {
     removeProgressListener()
+  }
+  if (removeSyncProgressListener) {
+    removeSyncProgressListener()
   }
   if (removeCoverFillProgressListener) {
     removeCoverFillProgressListener()
@@ -2975,6 +3016,17 @@ body {
   background: var(--primary);
   border-radius: 2px;
   transition: width 0.3s;
+}
+
+/* 同步拉取阶段的不定长进度动画（总数未知，填充块在轨道内往返平移） */
+.sync-progress-indeterminate {
+  width: 30%;
+  animation: sync-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes sync-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(433%); }
 }
 
 /* ==================== Message Bar ==================== */

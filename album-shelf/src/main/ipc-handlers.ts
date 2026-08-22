@@ -88,11 +88,15 @@ export function registerIpcHandlers(): void {
 
   /**
    * 触发同步操作
-   * 返回同步结果统计（新增/跳过/总数）
+   * 返回同步结果统计（新增/跳过/总数），同步过程中通过 sync:progress 推送进度
    */
-  ipcMain.handle('sync:start', async () => {
+  ipcMain.handle('sync:start', async (event) => {
     try {
-      const result = await syncManager.sync()
+      const result = await syncManager.sync((progress) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('sync:progress', progress)
+        }
+      })
 
       // 同步完成后，如果有新增专辑且 MB 客户端已初始化，自动触发补全
       if (result.added > 0 && isMbClientInitialized()) {

@@ -7,6 +7,20 @@ const albumShelfAPI = {
   // 同步操作
   syncStart: () => ipcRenderer.invoke('sync:start'),
 
+  // 同步进度监听（fetching 阶段 total 为 null，writing 阶段为专辑总数）
+  onSyncProgress: (
+    callback: (progress: {
+      phase: 'fetching' | 'writing'
+      current: number
+      total: number | null
+    }) => void
+  ) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress)
+    ipcRenderer.on('sync:progress', handler)
+    // 返回取消监听函数
+    return () => ipcRenderer.removeListener('sync:progress', handler)
+  },
+
   // 随机专辑
   albumRandom: () => ipcRenderer.invoke('album:random'),
 
