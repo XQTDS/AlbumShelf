@@ -26,7 +26,7 @@
 
 - [x] 更新 `openspec/specs/playback/spec.md`：新增「播放控制与状态展示」Requirement 与「音量控制」Requirement；修正「暂停中退出」场景（queueLength 判定）
 - [x] 同步 `README.md`（功能特性新增「内置播放」条目）
-- [ ] 用户手动 `npm run dev` QA：
+- [x] 用户手动 `npm run dev` QA：
   - 播放专辑 → 播放条出现，显示专辑名/歌曲名/艺术家/封面
   - 暂停/恢复：图标切换正确，暂停后进度不再前进
   - 上一首/下一首：曲目信息随切换更新；单曲播放时点下一首有边界提示
@@ -35,4 +35,4 @@
   - 播放条 ✕ → 播放停止、播放条隐藏
   - 播放中退出应用 → 音乐立即停止（既有行为不回退）
   - 暂停状态退出应用 → 音乐同样停止（本次修复的漏清理场景）
-- [ ] QA 通过后归档 change 到 `openspec/changes/archive/`
+- [x] QA 通过后归档 change 到 `openspec/changes/archive/`

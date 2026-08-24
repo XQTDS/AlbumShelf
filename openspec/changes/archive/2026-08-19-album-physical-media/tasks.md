@@ -35,10 +35,10 @@
 - [x] 更新 `openspec/specs/album-detail-expand/spec.md`：详情内容清单新增「实体收藏」区块及交互场景
 - [x] 更新 `openspec/specs/album-list-ui/spec.md`：表格列清单新增「实体」列；网格卡片新增左上角介质角标场景
 - [x] 同步 `README.md`（详情面板与列表视图功能说明）
-- [ ] 用户手动 `npm run dev` QA：
+- [x] 用户手动 `npm run dev` QA：
   - 详情面板：点分段按钮标记/取消黑胶+CD 等多值组合 → 立即生效、重进应用后保留
   - 表格视图：「实体」列徽章显示正确，无标记显示 —，列宽不挤压其他列
   - 唱片墙：左上角徽章与左下排序角标、右下播放按钮不重叠
   - 同步一次 → 已有标记不被覆盖；导出 → 导入 → 标记保留
   - 失败路径（如断开主进程）回退与错误提示
-- [ ] QA 通过后归档 change 到 `openspec/changes/archive/`
+- [x] QA 通过后归档 change 到 `openspec/changes/archive/`

@@ -280,13 +280,31 @@
             <option value="release_date-desc">发行日期 ↓</option>
             <option value="release_date-asc">发行日期 ↑</option>
           </select>
+          <span class="grid-toolbar-divider"></span>
+          <span class="grid-toolbar-label">角标：</span>
+          <div class="grid-badge-toggles">
+            <button
+              v-for="t in BADGE_TOGGLE_ITEMS"
+              :key="t.key"
+              class="grid-badge-toggle"
+              :class="{
+                active: gridBadges[t.key] || (t.sortField != null && sortBy === t.sortField),
+                locked: t.sortField != null && sortBy === t.sortField
+              }"
+              :disabled="t.sortField != null && sortBy === t.sortField"
+              :title="badgeToggleTitle(t)"
+              @click="gridBadges[t.key] = !gridBadges[t.key]"
+            >
+              {{ t.icon }} {{ t.label }}
+            </button>
+          </div>
         </div>
         <!-- 封面网格 -->
         <div class="album-grid">
           <div
             v-for="album in albums"
             :key="album.id"
-            v-memo="[album.title, album.artist, album.cover_url, album.physical_media, album.user_rating, album.mb_rating, album.release_date, album.genres, sortBy, sortOrder, selectedAlbumId, playingAlbumId, coverErrorSet.has(album.id), coverProtocolFailed.has(album.id)]"
+            v-memo="[album.title, album.artist, album.cover_url, album.physical_media, album.user_rating, album.mb_rating, album.release_date, album.genres, sortBy, sortOrder, gridBadges.media, gridBadges.userRating, gridBadges.mbRating, gridBadges.releaseDate, selectedAlbumId, playingAlbumId, coverErrorSet.has(album.id), coverProtocolFailed.has(album.id)]"
             class="album-card"
             :class="{ 'card-selected': selectedAlbumId === album.id }"
             :data-id="album.id"
@@ -309,8 +327,8 @@
               <div class="card-title">{{ album.title }}</div>
               <div class="card-artist">{{ album.artist }}</div>
             </div>
-            <!-- 实体介质角标（左上角，常驻显示） -->
-            <div v-if="parseMedia(album).length > 0" class="card-media-badges">
+            <!-- 实体介质角标（左上角，角标开关控制） -->
+            <div v-if="gridBadges.media && parseMedia(album).length > 0" class="card-media-badges">
               <span
                 v-for="m in parseMedia(album)"
                 :key="m"
@@ -320,8 +338,18 @@
                 <MediaIcon :type="m" />
               </span>
             </div>
-            <!-- 排序角标：按当前排序字段显示对应信息 -->
-            <div v-if="cardBadgeText(album)" class="card-badge">{{ cardBadgeText(album) }}</div>
+            <!-- 信息角标（左下角纵向堆叠）：角标开关控制显示，按对应字段排序时固定显示 -->
+            <div v-if="hasCardBadges(album)" class="card-badges">
+              <div v-if="showUserRatingBadge && album.user_rating != null" class="card-badge">
+                ★ {{ album.user_rating.toFixed(1) }}
+              </div>
+              <div v-if="showMbRatingBadge && album.mb_rating != null" class="card-badge">
+                ⭐ {{ album.mb_rating.toFixed(1) }}
+              </div>
+              <div v-if="showReleaseDateBadge && album.release_date" class="card-badge">
+                {{ album.release_date }}
+              </div>
+            </div>
             <!-- 悬停播放按钮（右下角）：点击播放整张专辑，不改变选中状态 -->
             <button
               class="btn-play btn-play-card"
@@ -767,6 +795,51 @@ const viewMode = ref<'table' | 'grid'>(
 watch(viewMode, (mode) => {
   try {
     localStorage.setItem('albumShelfViewMode', mode)
+  } catch {
+    // 忽略存储失败
+  }
+})
+
+// 唱片墙角标显示开关：角标显示与排序解耦，由用户在唱片墙工具栏控制
+// （默认实体图标开、其余关，与解耦前视觉一致）
+const GRID_BADGE_STORAGE_KEY = 'albumShelfGridBadges'
+
+interface GridBadgeToggles {
+  media: boolean
+  userRating: boolean
+  mbRating: boolean
+  releaseDate: boolean
+}
+
+const GRID_BADGE_DEFAULTS: GridBadgeToggles = {
+  media: true,
+  userRating: false,
+  mbRating: false,
+  releaseDate: false
+}
+
+function loadGridBadges(): GridBadgeToggles {
+  try {
+    const raw = localStorage.getItem(GRID_BADGE_STORAGE_KEY)
+    if (!raw) return { ...GRID_BADGE_DEFAULTS }
+    const parsed = JSON.parse(raw)
+    // 逐字段校验类型，缺失/非法回退默认值，避免旧数据或损坏数据导致角标失控
+    return {
+      media: typeof parsed.media === 'boolean' ? parsed.media : GRID_BADGE_DEFAULTS.media,
+      userRating: typeof parsed.userRating === 'boolean' ? parsed.userRating : GRID_BADGE_DEFAULTS.userRating,
+      mbRating: typeof parsed.mbRating === 'boolean' ? parsed.mbRating : GRID_BADGE_DEFAULTS.mbRating,
+      releaseDate: typeof parsed.releaseDate === 'boolean' ? parsed.releaseDate : GRID_BADGE_DEFAULTS.releaseDate
+    }
+  } catch {
+    return { ...GRID_BADGE_DEFAULTS }
+  }
+}
+
+const gridBadges = reactive<GridBadgeToggles>(loadGridBadges())
+
+watch(gridBadges, (toggles) => {
+  try {
+    localStorage.setItem(GRID_BADGE_STORAGE_KEY, JSON.stringify(toggles))
   } catch {
     // 忽略存储失败
   }
@@ -2149,18 +2222,36 @@ const gridSortKey = computed<string>({
   }
 })
 
-// 网格卡片角标：按当前排序字段显示对应信息（字段值为空则不显示角标）
-function cardBadgeText(album: Album): string {
-  if (sortBy.value === 'user_rating' && album.user_rating != null) {
-    return `★ ${album.user_rating.toFixed(1)}`
+// 角标开关项：工具栏按钮组与排序锁定判定共用（media 无对应排序字段，不受排序锁定）
+const BADGE_TOGGLE_ITEMS = [
+  { key: 'media', label: '实体', icon: '💿', sortField: undefined },
+  { key: 'userRating', label: '我的评分', icon: '★', sortField: 'user_rating' },
+  { key: 'mbRating', label: 'MB评分', icon: '⭐', sortField: 'mb_rating' },
+  { key: 'releaseDate', label: '发行日期', icon: '📅', sortField: 'release_date' }
+] as const
+
+type BadgeToggleItem = (typeof BADGE_TOGGLE_ITEMS)[number]
+
+/** 开关按钮提示：按对应字段排序时角标被固定显示，开关锁定不可操作 */
+function badgeToggleTitle(t: BadgeToggleItem): string {
+  if (t.sortField != null && sortBy.value === t.sortField) {
+    return `当前按「${t.label}」排序，角标固定显示`
   }
-  if (sortBy.value === 'mb_rating' && album.mb_rating != null) {
-    return `⭐ ${album.mb_rating.toFixed(1)}`
-  }
-  if (sortBy.value === 'release_date' && album.release_date) {
-    return album.release_date
-  }
-  return ''
+  return `${t.label}角标：${gridBadges[t.key] ? '点击隐藏' : '点击显示'}`
+}
+
+// 网格卡片角标显示判定：开关开启或按该字段排序时显示（字段值为空的专辑仍不显示角标）
+const showUserRatingBadge = computed(() => gridBadges.userRating || sortBy.value === 'user_rating')
+const showMbRatingBadge = computed(() => gridBadges.mbRating || sortBy.value === 'mb_rating')
+const showReleaseDateBadge = computed(() => gridBadges.releaseDate || sortBy.value === 'release_date')
+
+// 左下角是否存在任何可见的信息角标（无角标时跳过容器渲染）
+function hasCardBadges(album: Album): boolean {
+  return (
+    (showUserRatingBadge.value && album.user_rating != null) ||
+    (showMbRatingBadge.value && album.mb_rating != null) ||
+    (showReleaseDateBadge.value && album.release_date != null)
+  )
 }
 
 // ==================== 滚动进度条处理 ====================
@@ -3182,6 +3273,7 @@ body {
   z-index: 5;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 10px 16px;
   background: var(--bg);
@@ -3201,6 +3293,57 @@ body {
   color: var(--text);
   font-size: 12px;
   cursor: pointer;
+}
+
+.grid-toolbar-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.grid-badge-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.grid-badge-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.grid-badge-toggle:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.grid-badge-toggle.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.grid-badge-toggle.active:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+/* 按对应字段排序时角标被固定显示：开关呈锁定态（保持激活视觉 + 禁点） */
+.grid-badge-toggle.locked {
+  cursor: not-allowed;
 }
 
 .album-grid {
@@ -3286,26 +3429,34 @@ body {
   max-width: 100%;
 }
 
-/* 排序角标：显示当前排序字段的值，置于遮罩之上保持可见 */
-.card-badge {
+/* 信息角标容器：左下角纵向堆叠（我的评分 → MB评分 → 发行日期），置于遮罩之上保持可见 */
+.card-badges {
   position: absolute;
   bottom: 6px;
   left: 6px;
   z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  /* 右侧预留右下角播放按钮空间（28px 按钮 + 6px 边距 + 10px 间隙），避免长文本与按钮重叠 */
+  max-width: calc(100% - 44px);
+}
+
+.card-badge {
   padding: 2px 6px;
   background: rgba(0, 0, 0, 0.65);
   color: #fff;
   font-size: 11px;
   line-height: 1.4;
   border-radius: 4px;
-  /* 右侧预留右下角播放按钮空间（28px 按钮 + 6px 边距 + 10px 间隙），避免长文本与按钮重叠 */
-  max-width: calc(100% - 44px);
+  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* 实体介质角标（左上角，常驻显示，与左下排序角标/右下播放按钮互不重叠） */
+/* 实体介质角标（左上角，受角标开关控制，与左下信息角标/右下播放按钮互不重叠） */
 .card-media-badges {
   position: absolute;
   top: 6px;
@@ -3322,8 +3473,11 @@ body {
   width: 24px;
   height: 24px;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
+  /* 浅色半透明底：深色封面上与封面形成明暗对比，写实深色图标（黑胶/磁带）清晰可辨；
+     投影保证近白封面上角标底与封面分离 */
+  background: rgba(255, 255, 255, 0.92);
+  color: #333;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
 .card-media-badge svg {
