@@ -35,7 +35,19 @@
       "out/**/*",
       "node_modules/**/*",
       "!**/ffprobe-static/bin/win32/ia32{,/**/*}",
+      "!node_modules/vue{,/**/*}",
+      "!node_modules/@vue{,/**/*}",
+      "!node_modules/@babel{,/**/*}",
+      "!node_modules/@biomejs{,/**/*}",
+      "!node_modules/fluent-ffmpeg/coverage{,/**/*}",
+      "!node_modules/better-sqlite3/deps{,/**/*}",
+      "!node_modules/better-sqlite3/src{,/**/*}",
+      "!node_modules/better-sqlite3/binding.gyp",
       "package.json"
+    ],
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
     ],
     "asarUnpack": [
       "node_modules/**"

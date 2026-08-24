@@ -44,6 +44,26 @@
 - **WHEN** 构建 macOS 安装包
 - **THEN** `ncm-configure.bat` / `ncm-configure.exe`（Windows 专用遗留排查入口）SHALL NOT 被打包进 macOS 产物
 
+### Requirement: 安装包死重依赖排除与语言裁剪
+
+系统 SHALL 在打包配置中排除运行时无引用的死重依赖——vue/@vue 全家桶（渲染层已由 Vite 预打包）、@babel 编译链（仅 @vue/compiler-* 依赖）、@biomejs lint 工具（rate-limit-threshold 误声明的生产依赖，运行时零引用）、fluent-ffmpeg 覆盖率目录（npm 误发布的 jest 输出）、better-sqlite3 构建源文件（deps/src/binding.gyp，仅 node-gyp 构建时需要）——并将 Electron 语言包裁剪为 zh-CN 与 en-US，以控制安装包与安装后体积。
+
+#### Scenario: 死重依赖不随包分发
+
+- **WHEN** 任一平台构建安装包
+- **THEN** 打包产物 SHALL NOT 包含 node_modules 下的 `vue`、`@vue`、`@babel`、`@biomejs` 目录、`fluent-ffmpeg/coverage` 目录、`better-sqlite3` 的 `deps`/`src` 目录与 `binding.gyp`
+
+#### Scenario: 运行时依赖完整保留
+
+- **WHEN** 任一平台构建安装包
+- **THEN** `ffprobe-static` 与 `fluent-ffmpeg`（除 coverage 外）SHALL 完整随包分发
+- **AND** `better-sqlite3` 的 `build/Release/better_sqlite3.node`、`lib/` 与 `package.json` SHALL 保留（主进程数据库功能可用）
+
+#### Scenario: 语言包裁剪
+
+- **WHEN** 任一平台构建安装包
+- **THEN** Electron 运行时 SHALL 仅携带 zh-CN 与 en-US 语言包，其余 locales SHALL NOT 随包分发
+
 ### Requirement: Windows 构建捆绑 mpv
 
 系统 SHALL 在发布流水线的 Windows 构建中于打包前执行 `npm run fetch-mpv`（按 `build/mpv-manifest.json` 锁定的版本下载 7z 归档、SHA256 校验、解压到 `build/mpv`），并将 `build/mpv` 打入 Windows 安装包 `resources/mpv`；拉取失败 SHALL 中止 Windows 构建，SHALL NOT 产出无 mpv 的安装包。macOS 构建 SHALL NOT 捆绑 mpv（mpv 由用户经 brew 安装，fetch 脚本按平台自动跳过）。
