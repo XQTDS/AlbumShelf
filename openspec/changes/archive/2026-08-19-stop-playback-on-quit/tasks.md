@@ -9,5 +9,5 @@
 
 ## 收尾
 
-- [ ] 用户手动 `npm run dev` QA：播放曲目后关闭窗口，音乐立即停止且退出无卡顿；未播放时退出行为与之前一致
-- [ ] 归档 change 到 `openspec/changes/archive/`
+- [x] 用户手动 `npm run dev` QA：播放曲目后关闭窗口，音乐立即停止且退出无卡顿；未播放时退出行为与之前一致
+- [x] 归档 change 到 `openspec/changes/archive/`

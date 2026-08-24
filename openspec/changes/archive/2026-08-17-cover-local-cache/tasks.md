@@ -11,5 +11,5 @@
 
 ## 收尾
 
-- [ ] 用户手动 `npm run dev` QA：首次打开列表封面正常显示且 `userData/covers/` 出现缓存文件；断网重启后已缓存封面仍显示、未缓存封面回退占位；补全封面后新 URL 生成新缓存文件
-- [ ] 归档 change 到 `openspec/changes/archive/`
+- [x] 用户手动 `npm run dev` QA：首次打开列表封面正常显示且 `userData/covers/` 出现缓存文件；断网重启后已缓存封面仍显示、未缓存封面回退占位；补全封面后新 URL 生成新缓存文件
+- [x] 归档 change 到 `openspec/changes/archive/`
