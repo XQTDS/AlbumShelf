@@ -3322,8 +3322,11 @@ body {
   width: 24px;
   height: 24px;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
+  /* 浅色半透明底：深色封面上与封面形成明暗对比，写实深色图标（黑胶/磁带）清晰可辨；
+     投影保证近白封面上角标底与封面分离 */
+  background: rgba(255, 255, 255, 0.92);
+  color: #333;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
 .card-media-badge svg {
