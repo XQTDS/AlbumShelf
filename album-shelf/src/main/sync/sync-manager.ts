@@ -86,6 +86,7 @@ export class SyncManager {
             netease_original_id: album.netease_original_id ?? null,
             title: album.title,
             artist: album.artist,
+            artists: album.artists ? JSON.stringify(album.artists) : null,
             cover_url: album.cover_url ?? null,
             release_date: album.release_date ?? null,
             track_count: album.track_count ?? null,
@@ -156,6 +157,8 @@ export class SyncManager {
     netease_original_id: number
     title: string
     artist: string
+    /** 结构化艺术家列表（真源），JSON 序列化由持久化层负责 */
+    artists?: { name: string; originalId: number; id: string }[] | null
     cover_url?: string | null
     release_date?: string | null
   }): number {
@@ -167,6 +170,7 @@ export class SyncManager {
       netease_original_id: album.netease_original_id,
       title: album.title,
       artist: album.artist,
+      artists: album.artists ? JSON.stringify(album.artists) : null,
       cover_url: album.cover_url ?? null,
       release_date: album.release_date ?? null,
       track_count: null,

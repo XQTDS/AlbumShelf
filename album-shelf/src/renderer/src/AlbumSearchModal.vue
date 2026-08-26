@@ -206,6 +206,7 @@ async function handleAdd(album: SearchAlbum) {
       netease_original_id: album.originalId,
       title: album.name,
       artist: album.artists.map(a => a.name).join(' / '),
+      artists: album.artists.map(a => ({ name: a.name, originalId: a.originalId, id: a.id })),
       cover_url: album.coverImgUrl?.replace(/^http:\/\//, 'https://') || null,
       publish_time: album.publishTime || null
     })

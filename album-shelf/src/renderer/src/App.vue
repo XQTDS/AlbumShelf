@@ -20,6 +20,14 @@
           <span v-if="viewMode === 'table'">▦</span>
           <span v-else>☰</span>
         </button>
+        <button
+          class="followed-filter-btn"
+          :class="{ active: followedOnly }"
+          :title="followedOnly ? '取消只看已关注艺术家' : '只看已关注艺术家的专辑'"
+          @click="toggleFollowedOnly"
+        >
+          ★ 已关注 ({{ followedArtists.size }})
+        </button>
       </div>
       <div class="toolbar-center">
         <div class="search-box">
@@ -103,6 +111,15 @@
       </div>
     </div>
 
+    <!-- 艺术家部分匹配筛选指示条（来自关注列表/艺术家菜单的「筛选该艺术家」） -->
+    <div v-if="artistPartial" class="artist-partial-bar">
+      <span class="artist-partial-label">已按艺术家筛选：</span>
+      <span class="artist-partial-tag">
+        {{ artistPartial }}
+        <button class="artist-partial-remove" title="清除该筛选" @click="clearArtistPartial">✕</button>
+      </span>
+    </div>
+
     <!-- 同步进度条 -->
     <div v-if="syncProgress" class="enrich-bar">
       <div class="enrich-bar-inner">
@@ -154,6 +171,16 @@
       </div>
     </div>
 
+    <!-- 艺术家 ID 回填进度条 -->
+    <div v-if="artistIdFillProgress" class="enrich-bar">
+      <div class="enrich-bar-inner">
+        <span class="enrich-text">正在回填艺术家 ID {{ artistIdFillProgress.current }}/{{ artistIdFillProgress.total }}：{{ artistIdFillProgress.albumTitle }}</span>
+        <div class="enrich-progress-track">
+          <div class="enrich-progress-fill" :style="{ width: (artistIdFillProgress.current / artistIdFillProgress.total * 100) + '%' }"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- 提示信息 -->
     <div v-if="message" class="message-bar" :class="messageType">
       <span>{{ message }}</span>
@@ -189,7 +216,7 @@
         <tbody>
           <template v-for="(album, index) in albums" :key="album.id">
             <tr
-              v-memo="[index, album.title, album.artist, album.user_rating, album.physical_media, album.mb_rating, album.release_date, album.genres, selectedAlbumId, playingAlbumId, selectedGenres]"
+              v-memo="[index, album.title, album.artist, album.artists, album.user_rating, album.physical_media, album.mb_rating, album.release_date, album.genres, selectedAlbumId, playingAlbumId, selectedGenres, followedArtists]"
               class="album-row"
               :class="{ 'row-selected': selectedAlbumId === album.id }"
               @click="toggleSelect(album.id)"
@@ -209,7 +236,12 @@
                   <div class="album-title">{{ album.title }}</div>
                 </div>
               </td>
-              <td class="col-artist">{{ album.artist }}</td>
+              <td class="col-artist">
+                <!-- 表格中艺术家为纯文本（仅详情面板芯片可点击），已关注艺术家名以金色文字标识 -->
+                <template v-for="(artistInfo, ai) in albumArtists(album)" :key="ai">
+                  <span v-if="ai > 0"> / </span><span :class="{ 'artist-text-followed': isArtistFollowed(artistInfo.name) }">{{ artistInfo.name }}</span>
+                </template>
+              </td>
               <td class="col-user-rating">
                 <span v-if="album.user_rating != null" class="user-rating-display">
                   <span class="user-stars-readonly">{{ renderStars(album.user_rating) }}</span>
@@ -304,7 +336,7 @@
           <div
             v-for="album in albums"
             :key="album.id"
-            v-memo="[album.title, album.artist, album.cover_url, album.physical_media, album.user_rating, album.mb_rating, album.release_date, album.genres, sortBy, sortOrder, gridBadges.media, gridBadges.userRating, gridBadges.mbRating, gridBadges.releaseDate, selectedAlbumId, playingAlbumId, coverErrorSet.has(album.id), coverProtocolFailed.has(album.id)]"
+            v-memo="[album.title, album.artist, album.artists, album.cover_url, album.physical_media, album.user_rating, album.mb_rating, album.release_date, album.genres, sortBy, sortOrder, gridBadges.media, gridBadges.userRating, gridBadges.mbRating, gridBadges.releaseDate, selectedAlbumId, playingAlbumId, coverErrorSet.has(album.id), coverProtocolFailed.has(album.id), followedArtists]"
             class="album-card"
             :class="{ 'card-selected': selectedAlbumId === album.id }"
             :data-id="album.id"
@@ -325,8 +357,15 @@
             <!-- hover 遮罩：专辑名 + 艺术家 -->
             <div class="card-overlay">
               <div class="card-title">{{ album.title }}</div>
-              <div class="card-artist">{{ album.artist }}</div>
+              <div class="card-artist">
+                <!-- 唱片墙遮罩中艺术家为纯文本（已关注角标在右上角），已关注艺术家名以金色文字标识，点击无效，仅详情面板可交互 -->
+                <template v-for="(artistInfo, ai) in albumArtists(album)" :key="ai">
+                  <span v-if="ai > 0"> / </span><span :class="{ 'artist-text-followed': isArtistFollowed(artistInfo.name) }">{{ artistInfo.name }}</span>
+                </template>
+              </div>
             </div>
+            <!-- 已关注角标（右上角，常驻，无需 hover 即可识别已关注专辑） -->
+            <div v-if="isAlbumFollowed(album)" class="card-follow-badge" title="含已关注艺术家">★</div>
             <!-- 实体介质角标（左上角，角标开关控制） -->
             <div v-if="gridBadges.media && parseMedia(album).length > 0" class="card-media-badges">
               <span
@@ -382,7 +421,19 @@
           <div class="panel-header-info">
             <template v-if="selectedAlbum">
               <div class="panel-title">{{ selectedAlbum.title }}</div>
-              <div class="panel-artist">{{ selectedAlbum.artist }}</div>
+              <div class="panel-artist">
+                <span class="artist-chips">
+                  <span
+                    v-for="(artistInfo, ai) in albumArtists(selectedAlbum)"
+                    :key="ai"
+                    class="artist-chip"
+                    :class="{ followed: isArtistFollowed(artistInfo.name) }"
+                    @click.stop="openArtistPopover(selectedAlbum, artistInfo, $event)"
+                  >
+                    <span class="chip-star">{{ isArtistFollowed(artistInfo.name) ? '★' : '☆' }}</span>{{ artistInfo.name }}
+                  </span>
+                </span>
+              </div>
             </template>
             <div v-else class="panel-title panel-title-placeholder">专辑详情</div>
           </div>
@@ -740,6 +791,18 @@
       :visible="showAboutModal"
       @close="showAboutModal = false"
     />
+
+    <!-- 艺术家操作小菜单（表格/卡片/详情面板共用） -->
+    <ArtistActionPopover
+      :visible="artistPopover.visible"
+      :artist="artistPopover.artist"
+      :followed="artistPopover.visible && isArtistFollowed(artistPopover.artist.name)"
+      :x="artistPopover.x"
+      :y="artistPopover.y"
+      @close="closeArtistPopover"
+      @toggle-follow="handlePopoverToggleFollow"
+      @filter="handlePopoverFilter"
+    />
   </div>
 </template>
 
@@ -755,6 +818,7 @@ import GenreStatsModal from './GenreStatsModal.vue'
 import AboutModal from './AboutModal.vue'
 import PlayerBar from './PlayerBar.vue'
 import MediaIcon from './MediaIcon.vue'
+import ArtistActionPopover from './ArtistActionPopover.vue'
 
 // ==================== 状态 ====================
 
@@ -775,6 +839,8 @@ interface Album {
   track_count?: number | null
   synced_at?: string | null
   enriched_at?: string | null
+  /** 艺术家结构化 JSON [{name, originalId, id}]（真源）；NULL = 未回填。artist 文本为其派生展示 */
+  artists?: string | null
 }
 
 const albums = ref<Album[]>([])
@@ -879,7 +945,8 @@ function handleDetailKeydown(e: KeyboardEvent) {
     showLoginGuide.value ||
     showSearchModal.value ||
     showGenreStatsModal.value ||
-    showAboutModal.value
+    showAboutModal.value ||
+    artistPopover.visible
   ) {
     return
   }
@@ -1679,6 +1746,9 @@ const showGenreSuggestions = ref(false)
 const artistInput = ref('')
 const showArtistSuggestions = ref(false)
 
+// 艺术家部分匹配筛选（关注列表/艺术家菜单的「筛选该艺术家」，与精确筛选互斥）
+const artistPartial = ref('')
+
 // 排序
 const sortBy = ref<'mb_rating' | 'release_date' | 'user_rating' | undefined>(undefined)
 const sortOrder = ref<'asc' | 'desc'>('desc')
@@ -1719,6 +1789,8 @@ function buildAlbumQueryOptions() {
     search: searchQuery.value || undefined,
     artist: selectedArtist.value || undefined,
     genres: selectedGenres.value.length > 0 ? selectedGenres.value.join(',') : undefined,
+    followedOnly: followedOnly.value || undefined,
+    artistPartial: artistPartial.value || undefined,
     sortBy: sortBy.value,
     sortOrder: sortOrder.value,
     page: currentPage.value,
@@ -2094,6 +2166,7 @@ function selectArtistSuggestion(artist: string) {
   selectedArtist.value = artist
   artistInput.value = ''
   showArtistSuggestions.value = false
+  artistPartial.value = ''
   currentPage.value = 1
   fetchAlbums()
 }
@@ -2103,6 +2176,7 @@ function clearArtist() {
   const scrollTarget = selectedAlbumId.value
   selectedArtist.value = ''
   artistInput.value = ''
+  artistPartial.value = ''
   if (scrollTarget) {
     albums.value = []
     currentPage.value = 1
@@ -2124,6 +2198,253 @@ function onArtistInputBlur() {
   setTimeout(() => {
     showArtistSuggestions.value = false
   }, 200)
+}
+
+// ==================== 关注艺术家 ====================
+
+// 已关注艺术家名集合（变更时整体替换新 Set 触发响应式，仿 coverErrorSet 用法）
+const followedArtists = ref<Set<string>>(new Set())
+
+/** 只看已关注艺术家 */
+const followedOnly = ref(false)
+
+/** 关注状态广播 / 关注列表窗口筛选请求 的监听清理函数 */
+let removeFollowedChangedListener: (() => void) | null = null
+let removeArtistFilterRequestListener: (() => void) | null = null
+
+/** 艺术家操作小菜单状态 */
+const artistPopover = reactive({
+  visible: false,
+  artist: { name: '', originalId: null as number | null, encryptedId: null as string | null },
+  x: 0,
+  y: 0
+})
+
+/** 艺术家文本拆分（结构化缺失时的回退路径；与主进程 splitArtistText 同语义，勿改单边） */
+function splitArtists(artist: string): string[] {
+  return artist.split(/\s*\/\s*/).map((s) => s.trim()).filter(Boolean)
+}
+
+/** 解析专辑的结构化艺术家 JSON（含 name + ID）；NULL/空/损坏 → null（调用方回退文本拆分） */
+function parseAlbumArtists(
+  album: Album
+): { name: string; originalId: number | null; id: string | null }[] | null {
+  if (!album.artists) return null
+  try {
+    const parsed = JSON.parse(album.artists)
+    if (!Array.isArray(parsed)) return null
+    const refs = parsed
+      .filter((item): item is Record<string, unknown> => item && typeof item === 'object')
+      .map((item) => ({
+        name: typeof item.name === 'string' ? item.name.trim() : '',
+        originalId: typeof item.originalId === 'number' ? item.originalId : null,
+        id: typeof item.id === 'string' ? item.id : null
+      }))
+      .filter((item) => item.name.length > 0)
+    return refs.length > 0 ? refs : null
+  } catch {
+    return null // 损坏 JSON 回退文本拆分
+  }
+}
+
+/** 专辑的艺术家列表（名字 + 网易云 ID）：结构化 artists 优先，未回填行回退文本拆分（ID 全 null） */
+function albumArtists(album: Album): {
+  name: string
+  originalId: number | null
+  encryptedId: string | null
+}[] {
+  const structured = parseAlbumArtists(album)
+  if (structured) {
+    return structured.map((item) => ({
+      name: item.name,
+      originalId: item.originalId,
+      encryptedId: item.id
+    }))
+  }
+  return splitArtists(album.artist).map((name) => ({ name, originalId: null, encryptedId: null }))
+}
+
+function isArtistFollowed(name: string): boolean {
+  return followedArtists.value.has(name)
+}
+
+/** 专辑是否含已关注艺术家（唱片墙角标用） */
+function isAlbumFollowed(album: Album): boolean {
+  return albumArtists(album).some((a) => followedArtists.value.has(a.name))
+}
+
+/** 关注/取消关注（乐观更新 + 失败回退） */
+async function toggleFollowArtist(name: string, originalId?: number | null, encryptedId?: string | null) {
+  const wasFollowed = followedArtists.value.has(name)
+  const next = new Set(followedArtists.value)
+  if (wasFollowed) {
+    next.delete(name)
+  } else {
+    next.add(name)
+  }
+  followedArtists.value = next
+
+  try {
+    const result = wasFollowed
+      ? await window.api.artistUnfollow(name)
+      : await window.api.artistFollow(name, originalId ?? null, encryptedId ?? null)
+    if (!result.success) {
+      // 回退
+      const rollback = new Set(followedArtists.value)
+      if (wasFollowed) {
+        rollback.add(name)
+      } else {
+        rollback.delete(name)
+      }
+      followedArtists.value = rollback
+      showMessage(`${wasFollowed ? '取消关注' : '关注'}失败：${result.error}`, 'error')
+      return
+    }
+    showMessage(`${wasFollowed ? '已取消关注' : '已关注'}「${name}」`, 'success')
+    // 关注状态变更广播（followed:changed）会触发 loadFollowedArtists + 必要时的列表刷新
+  } catch (error) {
+    // 回退
+    const rollback = new Set(followedArtists.value)
+    if (wasFollowed) {
+      rollback.add(name)
+    } else {
+      rollback.delete(name)
+    }
+    followedArtists.value = rollback
+    showMessage(`${wasFollowed ? '取消关注' : '关注'}失败：未知错误`, 'error')
+  }
+}
+
+/** 打开艺术家操作小菜单（记录位置快照，滚动即关闭，不做锚定跟随） */
+function openArtistPopover(
+  album: Album,
+  artistInfo: { name: string; originalId: number | null; encryptedId: string | null },
+  event: MouseEvent
+) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  // 位置钳制：菜单宽约 180px，避免超出右/下边缘
+  const x = Math.min(rect.left, window.innerWidth - 200)
+  const y = Math.min(rect.bottom + 4, window.innerHeight - 120)
+  artistPopover.artist = { ...artistInfo }
+  artistPopover.x = Math.max(8, x)
+  artistPopover.y = Math.max(8, y)
+  artistPopover.visible = true
+}
+
+function closeArtistPopover() {
+  artistPopover.visible = false
+}
+
+async function handlePopoverToggleFollow() {
+  const { name, originalId, encryptedId } = artistPopover.artist
+  closeArtistPopover()
+  await toggleFollowArtist(name, originalId, encryptedId)
+}
+
+/** 应用艺术家部分匹配筛选（艺术家菜单/关注列表共用；与精确筛选互斥） */
+function applyArtistPartialFilter(name: string) {
+  selectedArtist.value = ''
+  artistInput.value = ''
+  artistPartial.value = name
+  currentPage.value = 1
+  fetchAlbums()
+}
+
+/** 清除艺术家部分匹配筛选 */
+function clearArtistPartial() {
+  artistPartial.value = ''
+  currentPage.value = 1
+  fetchAlbums()
+}
+
+/** 从菜单「筛选该艺术家的专辑」：按单个艺术家名部分匹配筛选 */
+function handlePopoverFilter() {
+  const name = artistPopover.artist.name
+  closeArtistPopover()
+  applyArtistPartialFilter(name)
+}
+
+/** 切换「只看已关注」筛选 */
+async function toggleFollowedOnly() {
+  followedOnly.value = !followedOnly.value
+  if (followedOnly.value && followedArtists.value.size === 0) {
+    showMessage('还没有关注任何艺术家，在专辑详情面板中点击艺术家名即可关注', 'info')
+  }
+  currentPage.value = 1
+  await fetchAlbums()
+}
+
+/** 加载已关注艺术家列表（启动时；失败静默降级，关注功能仍可手动操作） */
+async function loadFollowedArtists() {
+  try {
+    const result = await window.api.artistListFollowed()
+    if (result.success && result.data) {
+      followedArtists.value = new Set(result.data.map((item) => item.name))
+    }
+  } catch {
+    // 静默降级：无关注状态展示，但关注操作仍会尝试写库
+  }
+}
+
+// ==================== 艺术家 ID 批量回填 ====================
+
+const artistIdFillProgress = ref<{ current: number; total: number; albumTitle: string; filled: number } | null>(null)
+let removeArtistIdFillProgressListener: (() => void) | null = null
+let removeMenuArtistIdFillListener: (() => void) | null = null
+
+async function handleArtistIdFill() {
+  if (artistIdFillProgress.value) {
+    showMessage('艺术家 ID 回填正在进行中，请等待完成', 'info')
+    return
+  }
+
+  showMessage('正在回填缺失的艺术家 ID...', 'info')
+
+  try {
+    const result = await window.api.albumArtistIdFillStart()
+    if (!result.success) {
+      showMessage(`艺术家 ID 回填失败：${result.error}`, 'error')
+      return
+    }
+
+    if (result.data) {
+      const { total, filled, failed, idsMerged } = result.data
+      if (result.loginRequired) {
+        artistIdFillProgress.value = null
+        showMessage('艺术家 ID 回填已中止：需要先登录网易云', 'error')
+        return
+      }
+      const mergedTip = idsMerged > 0 ? `，已为 ${idsMerged} 位关注艺术家补齐 ID` : ''
+      if (total === 0) {
+        showMessage('所有专辑均已有艺术家 ID，无需回填', 'info')
+      } else if (failed > 0) {
+        showMessage(`艺术家 ID 回填完成！成功 ${filled} 张，失败 ${failed} 张（可重新运行回填）${mergedTip}`, 'info')
+      } else {
+        showMessage(`艺术家 ID 回填完成！成功 ${filled} 张${mergedTip}`, 'success')
+      }
+    }
+  } catch (error) {
+    showMessage('艺术家 ID 回填失败：未知错误', 'error')
+  }
+}
+
+function setupArtistIdFillProgressListener() {
+  removeArtistIdFillProgressListener = window.api.onArtistIdFillProgress((progress) => {
+    artistIdFillProgress.value = {
+      current: progress.current,
+      total: progress.total,
+      albumTitle: progress.albumTitle,
+      filled: progress.filled
+    }
+
+    // 回填完成
+    if (progress.current >= progress.total) {
+      setTimeout(async () => {
+        artistIdFillProgress.value = null
+        await fetchAlbums()
+      }, 1000)
+    }
+  })
 }
 
 // ==================== 随机选择 ====================
@@ -2151,6 +2472,7 @@ async function handleRandomPick() {
       searchQuery.value = ''
       selectedArtist.value = ''
       artistInput.value = ''
+      artistPartial.value = ''
       selectedGenres.value = []
       genreInput.value = ''
       sortBy.value = undefined
@@ -2634,6 +2956,7 @@ onMounted(async () => {
   setupSyncProgressListener()
   setupCoverFillProgressListener()
   setupReleaseDateFillProgressListener()
+  setupArtistIdFillProgressListener()
 
   // Esc 关闭详情抽屉
   document.addEventListener('keydown', handleDetailKeydown)
@@ -2674,6 +2997,26 @@ onMounted(async () => {
   // 监听菜单栏"补全缺失发行日期"事件
   removeMenuReleaseDateFillListener = window.api.onMenuReleaseDateFill(() => {
     handleReleaseDateFill()
+  })
+
+  // 监听菜单栏"回填艺术家 ID"事件
+  removeMenuArtistIdFillListener = window.api.onMenuArtistIdFill(() => {
+    handleArtistIdFill()
+  })
+
+  // 关注状态变更广播（本窗口操作或关注列表窗口操作）：刷新关注集合，必要时刷新列表
+  removeFollowedChangedListener = window.api.onFollowedChanged(async () => {
+    await loadFollowedArtists()
+    if (followedOnly.value) {
+      // 取关后刷新列表，让该艺术家的专辑从「已关注」视图中消失
+      currentPage.value = 1
+      await fetchAlbums()
+    }
+  })
+
+  // 关注列表窗口转发来的筛选请求
+  removeArtistFilterRequestListener = window.api.onArtistFilterRequest((name) => {
+    applyArtistPartialFilter(name)
   })
 
   // 监听登录要求事件
@@ -2723,7 +3066,8 @@ onMounted(async () => {
   window.api.onMenuDbImport(async () => {
     const result = await window.api.dbImport()
     if (result.success && result.data) {
-      alert(`导入成功！\n新增专辑: ${result.data.albumsAdded} 张\n更新专辑: ${result.data.albumsUpdated} 张\n曲目: ${result.data.tracksImported} 首\n风格: ${result.data.genresImported} 个`)
+      alert(`导入成功！\n新增专辑: ${result.data.albumsAdded} 张\n更新专辑: ${result.data.albumsUpdated} 张\n曲目: ${result.data.tracksImported} 首\n风格: ${result.data.genresImported} 个\n关注艺术家: ${result.data.followedArtistsImported} 位`)
+      await loadFollowedArtists()
       await fetchAlbums()
       await fetchFilters()
     } else if (result.error && result.error !== '已取消') {
@@ -2733,6 +3077,7 @@ onMounted(async () => {
 
   await fetchFilters()
   await fetchAlbums()
+  await loadFollowedArtists()
 })
 
 onUnmounted(() => {
@@ -2778,6 +3123,21 @@ onUnmounted(() => {
   }
   if (removeAuthStatusChangedListener) {
     removeAuthStatusChangedListener()
+  }
+  if (removeMenuReleaseDateFillListener) {
+    removeMenuReleaseDateFillListener()
+  }
+  if (removeArtistIdFillProgressListener) {
+    removeArtistIdFillProgressListener()
+  }
+  if (removeMenuArtistIdFillListener) {
+    removeMenuArtistIdFillListener()
+  }
+  if (removeFollowedChangedListener) {
+    removeFollowedChangedListener()
+  }
+  if (removeArtistFilterRequestListener) {
+    removeArtistFilterRequestListener()
   }
   if (removeMenuGenreStatsListener) {
     removeMenuGenreStatsListener()
@@ -2922,6 +3282,37 @@ body {
   background: var(--primary);
   border-color: var(--primary);
   color: #fff;
+}
+
+.followed-filter-btn {
+  padding: 6px 12px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.followed-filter-btn:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+/* 激活态：金色描边标识筛选生效中 */
+.followed-filter-btn.active {
+  background: #fff7e0;
+  border-color: #e8b53a;
+  color: #8a6d1a;
+}
+
+.followed-filter-btn.active:hover {
+  background: #fff0c2;
+  border-color: #d9a52c;
+  color: #7a5f12;
 }
 
 .toolbar-center {
@@ -3423,10 +3814,93 @@ body {
 .card-artist {
   color: rgba(255, 255, 255, 0.8);
   font-size: 12px;
+  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ==================== 艺术家展示（详情面板芯片；表格/唱片墙为纯文本，已关注为金色文字） ==================== */
+.artist-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
   max-width: 100%;
+}
+
+.artist-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  cursor: pointer;
+  /* 长艺术家名在芯片内换行，不做省略截断 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  transition: all 0.15s;
+}
+
+.artist-chip:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* 已关注芯片：金色调标识 */
+.artist-chip.followed {
+  border-color: #e8b53a;
+  background: #fff7e0;
+  color: #8a6d1a;
+}
+
+.artist-chip.followed:hover {
+  border-color: #d9a52c;
+  background: #fff0c2;
+  color: #7a5f12;
+}
+
+.chip-star {
+  flex-shrink: 0;
+  color: #b0b5ba;
+}
+
+.artist-chip.followed .chip-star {
+  color: #e8b53a;
+}
+
+/* 表格/唱片墙纯文本艺术家名：已关注以金色文字标识（沿用已关注芯片的金色文字色值） */
+.artist-text-followed {
+  color: #8a6d1a;
+}
+
+/* 唱片墙遮罩深色背景上用浅金色文字 */
+.card-artist .artist-text-followed {
+  color: #ffd978;
+}
+
+/* 唱片墙右上角「含已关注艺术家」角标（常驻，无需 hover） */
+.card-follow-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #e8b53a;
+  font-size: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
 }
 
 /* 信息角标容器：左下角纵向堆叠（我的评分 → MB评分 → 发行日期），置于遮罩之上保持可见 */
@@ -3530,9 +4004,6 @@ body {
 .panel-artist {
   font-size: 12px;
   color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .panel-body {
@@ -4481,6 +4952,53 @@ body {
 
 .clear-genres-btn:hover {
   background: #fde68a;
+}
+
+/* ==================== 艺术家部分匹配筛选指示条 ==================== */
+.artist-partial-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  background: #eef2ff;
+  border-bottom: 1px solid #c7d2fe;
+}
+
+.artist-partial-label {
+  font-size: 13px;
+  color: #3730a3;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.artist-partial-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 4px 10px;
+  background: var(--primary);
+  color: white;
+  border-radius: 14px;
+  font-size: 12px;
+}
+
+.artist-partial-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: rgba(255, 255, 255, 0.3);
+  color: white;
+  border-radius: 50%;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.artist-partial-remove:hover {
+  background: rgba(255, 255, 255, 0.5);
 }
 
 /* ==================== Empty State ==================== */

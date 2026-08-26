@@ -100,7 +100,13 @@ export class NcmCliSyncService implements SyncService {
       netease_album_id: record.id,
       netease_original_id: record.originalId,
       title: record.name,
-      artist: record.artists.map((artist) => artist.name).join('/'),
+      artist: record.artists.map((artist) => artist.name).join(' / '),
+      // 结构化真源与展示文本同源派生（相邻两行，不会漂移）；JSON 序列化交给持久化层
+      artists: record.artists.map((artist) => ({
+        name: artist.name,
+        originalId: artist.originalId,
+        id: artist.id
+      })),
       cover_url: record.coverImgUrl ?? undefined,
       release_date: record.publishTime
         ? publishTimeToReleaseDate(record.publishTime)

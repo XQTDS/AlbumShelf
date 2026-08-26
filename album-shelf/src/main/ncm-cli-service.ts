@@ -543,6 +543,21 @@ export class NcmCliService {
     ])
   }
 
+  // ==================== 艺术家（预留） ====================
+  //
+  // ncm-cli 0.1.6 探测结论（2026-08-26，见 openspec/changes/2026-08-26-artist-follow/design.md）：
+  // - `ncm-cli artist songs --artistId <加密ID> --startTime --endTime --limit --offset`
+  //   获取指定发布时间内的艺人歌曲列表，--artistId 要求**加密**艺人 ID（32 位 hex）
+  // - `ncm-cli search all --keyword <词>` 综合搜索，返回 artists 数组
+  //   （{ originalId, id, name, coverImgUrl }，明文 + 加密 ID 都有）
+  // - 无 `search artist` 子命令；artist 族目前仅 `songs` 一个子命令
+  //
+  // 后续「关注艺术家的新专辑」功能在此新增封装，如：
+  //   getArtistSongs(encryptedArtistId, startTime?, endTime?) → execute(['artist', 'songs', ...])
+  //   searchAll(keyword) → execute(['search', 'all', '--keyword', keyword])
+  // 均走既有 execute<T>（自动附加 --output json 并解析 { code, data }）。
+  // 关注数据侧已同时落库明文 original_id 与加密 encrypted_id（followed_artist 表）。
+
   // ==================== 播放控制 ====================
 
   /**

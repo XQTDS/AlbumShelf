@@ -94,7 +94,7 @@
 #### Scenario: 字段映射
 
 - **WHEN** 将 ncm-cli 返回的收藏专辑记录写入数据库
-- **THEN** 系统 SHALL 映射加密 ID 为 netease_album_id、明文 ID 为 netease_original_id、艺术家数组以 `/` 连接为 artist、publishTime 时间戳按北京时间（UTC+8）换算为 release_date、coverImgUrl 为 cover_url
+- **THEN** 系统 SHALL 映射加密 ID 为 netease_album_id、明文 ID 为 netease_original_id、艺术家数组序列化为结构化 artists（JSON `[{name, originalId, id}]`）并以 `' / '` 连接名字派生 artist 展示文本、publishTime 时间戳按北京时间（UTC+8）换算为 release_date、coverImgUrl 为 cover_url
 
 ### Requirement: SyncService 接口
 
@@ -109,6 +109,7 @@
 
 - **WHEN** 调用 SyncService.checkLoginStatus()
 - **THEN** 系统 SHALL 通过 ncm-cli login --check 返回当前登录状态
+- **AND** 自 ncm-cli 0.1.7 起 `login --check` 支持主动续期：token 过期但 refreshToken 有效时返回已登录（无需用户重新扫码）
 
 ### Requirement: 同步失败处理
 
@@ -185,3 +186,61 @@
 
 - **WHEN** 回填正在进行中再次触发
 - **THEN** 系统 SHALL 拒绝本次触发并提示正在执行中
+
+### Requirement: 同步保留结构化艺术家数据
+
+同步与在线添加链路 SHALL 将网易云返回的艺术家数组以结构化 JSON（`[{name, originalId, id}]`）落库到 `album.artists`，并将名字以 `' / '` 连接派生 `artist` 展示文本（两者同源产出、天然对齐），替代旧的 artist_ids 下标对齐方案（艺术家名含 `/` 时会错位）。
+
+#### Scenario: 同步新增写入
+
+- **WHEN** 同步新增一张专辑
+- **THEN** 系统 SHALL 将 `record.artists.map(a => ({ name: a.name, originalId: a.originalId, id: a.id }))` 序列化写入 artists，并以同一数组 join(' / ') 生成 artist 文本
+
+#### Scenario: 已存在专辑不覆盖
+
+- **WHEN** 同步发现某张专辑已存在（按 netease_album_id 匹配）
+- **THEN** 系统 SHALL 仅跳过，不写 artists（沿用「已存在专辑不改动」不变量）
+
+#### Scenario: 在线添加写入
+
+- **WHEN** 用户通过在线搜索添加一张专辑
+- **THEN** 系统 SHALL 将搜索结果的结构化艺术家数组写入 artists（与 ' / ' 分隔的艺术家文本同源派生）
+
+#### Scenario: 存量惰性回填
+
+- **WHEN** 老库专辑的 artists 为 NULL
+- **THEN** 系统 SHALL 提供菜单「数据 → 回填艺术家 ID」批量回填（详见 artist-follow spec），同步流程 SHALL NOT 主动改写存量专辑
+
+### Requirement: 批量回填缺失结构化艺术家数据
+
+系统 SHALL 提供菜单入口「回填艺术家 ID」，通过 `ncm-cli album get` 的 artists 字段为 `artists` 为 NULL 的专辑批量回填结构化艺术家数据。
+
+#### Scenario: 回填范围
+
+- **WHEN** 用户触发艺术家 ID 回填
+- **THEN** 系统 SHALL 仅处理 artists 为空且 netease_album_id 非空的专辑，已有值不被覆盖
+
+#### Scenario: 回填执行
+
+- **WHEN** 逐张处理缺失结构化艺术家数据的专辑
+- **THEN** 系统 SHALL 调用 `ncm-cli album get --albumId <id>` 取 detail.artists，将含 name 的结构化数组序列化写入 artists，并以同一数组 join(' / ') 重写 artist 展示文本（修复存量文本被旧 join('/') 或文本拆分误伤的问题），在 UI 推送进度（当前/总数/专辑名/成功数），每次调用间隔 300ms
+
+#### Scenario: 详情无艺术家
+
+- **WHEN** 网易云返回的专辑详情不含 artists
+- **THEN** 系统 SHALL 计入失败数量，不写入 artists
+
+#### Scenario: 登录前置检查与中途失效
+
+- **WHEN** 触发回填时未登录，或回填过程中登录失效
+- **THEN** 系统 SHALL 弹登录窗并中止回填，返回已处理统计
+
+#### Scenario: 防重入
+
+- **WHEN** 回填正在进行中再次触发
+- **THEN** 系统 SHALL 拒绝本次触发并提示正在执行中
+
+#### Scenario: 回填完成后补齐关注记录 ID
+
+- **WHEN** 艺术家数据回填完成（含登录失效中止前已回填的部分）
+- **THEN** 系统 SHALL 按名字匹配为缺失 ID 的关注记录补齐网易云艺术家 ID（详见 artist-follow spec），补齐条数计入回填结果

@@ -1,7 +1,9 @@
 import { ipcMain, BrowserWindow, dialog } from 'electron'
 import { readFileSync, writeFileSync } from 'fs'
+import { getMainWindow } from './window-ref'
 import { exportDatabase, importDatabase, type ExportData } from './database'
 import { AlbumService, AlbumQueryOptions, type Album } from './album-service'
+import { FollowedArtistService } from './followed-artist-service'
 import { TrackService, type Track } from './track-service'
 import { NcmCliService, publishTimeToReleaseDate } from './ncm-cli-service'
 import { ensureBuiltinCredentials } from './ncm-credentials'
@@ -31,12 +33,16 @@ let ncmCliService: NcmCliService
 let trackSyncService: TrackSyncService
 let syncManager: SyncManager
 let enrichService: EnrichService
+let followedArtistService: FollowedArtistService
 
 // 封面批量补全进行中标志（防重入）
 let coverFillRunning = false
 
 // 发行日期批量回填进行中标志（防重入）
 let releaseDateFillRunning = false
+
+// 艺术家 ID 批量回填进行中标志（防重入）
+let artistIdFillRunning = false
 
 // 播放会话代际：新一轮 player:playAlbum / player:stop 使上一轮未完成的
 // 后台补队列任务失效（代际不匹配即中止），避免旧任务污染新队列
@@ -66,6 +72,7 @@ function initServices(): void {
   syncManager = new SyncManager(syncService, albumService)
 
   enrichService = new EnrichService(albumService)
+  followedArtistService = new FollowedArtistService()
 
   // 初始化 MusicBrainz 客户端（搜索和 lookup 不需要认证）
   const credentials = loadCredentials()
@@ -101,7 +108,7 @@ export function registerIpcHandlers(): void {
       // 同步完成后，如果有新增专辑且 MB 客户端已初始化，自动触发补全
       if (result.added > 0 && isMbClientInitialized()) {
         // 异步触发，不阻塞同步返回
-        const mainWindow = BrowserWindow.getAllWindows()[0]
+        const mainWindow = getMainWindow()
         enrichAll(mainWindow).catch((err) =>
           console.error('自动补全失败:', err)
         )
@@ -1108,6 +1115,7 @@ export function registerIpcHandlers(): void {
     netease_original_id: number
     title: string
     artist: string
+    artists?: { name: string; originalId: number; id: string }[] | null
     cover_url?: string | null
     publish_time?: number | null
   }) => {
@@ -1118,6 +1126,7 @@ export function registerIpcHandlers(): void {
         netease_original_id: album.netease_original_id,
         title: album.title,
         artist: album.artist,
+        artists: album.artists,
         cover_url: album.cover_url,
         release_date: album.publish_time
           ? publishTimeToReleaseDate(album.publish_time)
@@ -1157,11 +1166,185 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  // ==================== 关注艺术家 ====================
+
+  /** 关注状态变更后广播给所有窗口（主窗口星标/角标与关注列表窗口同步刷新） */
+  function broadcastFollowedChanged(): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('followed:changed')
+      }
+    }
+  }
+
+  /**
+   * 关注艺术家（name 为拆分后的单个艺术家名）
+   * originalId/encryptedId 可空；已存在时仅补充缺失的 ID 字段
+   */
+  ipcMain.handle(
+    'artist:follow',
+    async (_event, name: string, originalId?: number | null, encryptedId?: string | null) => {
+      try {
+        if (typeof name !== 'string' || !name.trim()) {
+          return { success: false, error: '艺术家名不能为空' }
+        }
+        const added = followedArtistService.follow(name, originalId, encryptedId)
+        broadcastFollowedChanged()
+        return { success: true, data: { added } }
+      } catch (error) {
+        return { success: false, error: (error as Error).message }
+      }
+    }
+  )
+
+  /** 取消关注艺术家 */
+  ipcMain.handle('artist:unfollow', async (_event, name: string) => {
+    try {
+      if (typeof name !== 'string' || !name.trim()) {
+        return { success: false, error: '艺术家名不能为空' }
+      }
+      followedArtistService.unfollow(name)
+      broadcastFollowedChanged()
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /** 获取关注列表（含专辑数） */
+  ipcMain.handle('artist:listFollowed', async () => {
+    try {
+      const list = followedArtistService.list()
+      return { success: true, data: list }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /** 关注列表窗口：请求主窗口按艺术家筛选 */
+  ipcMain.on('followed:filterArtist', (_event, name: string) => {
+    if (typeof name !== 'string' || !name.trim()) return
+    const mainWindow = getMainWindow()
+    if (mainWindow) {
+      mainWindow.webContents.send('followed:filterArtist', name.trim())
+    }
+  })
+
+  /** 关注列表窗口：关闭自身（Esc 快捷键） */
+  ipcMain.on('followed:closeWindow', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close()
+  })
+
+  // ==================== 艺术家 ID 批量回填 ====================
+
+  ipcMain.handle('album:artistIdFillStatus', async () => {
+    try {
+      const pending = albumService.getAlbumsWithoutArtists().length
+      return { success: true, data: { pending, running: artistIdFillRunning } }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 批量回填缺失结构化艺术家数据的专辑
+   * 逐个调用 getAlbumDetail 获取 artists 数组并持久化，通过 event 推送进度
+   * 仅填充 artists 为空的专辑；回填同时用同一数据重写派生 artist 展示文本（' / ' 连接），
+   * 修复存量专辑被旧 join('/') / 文本拆分误伤的展示文本
+   * 失败不重试：重跑时仅处理仍缺数据的专辑，天然增量收敛
+   */
+  ipcMain.handle('album:artistIdFillStart', async (event) => {
+    if (artistIdFillRunning) {
+      return { success: false, error: '艺术家 ID 回填正在进行中，请稍后再试' }
+    }
+    artistIdFillRunning = true
+
+    try {
+      const albums = albumService.getAlbumsWithoutArtists()
+      const total = albums.length
+
+      if (total === 0) {
+        return { success: true, data: { total: 0, filled: 0, failed: 0, idsMerged: 0 } }
+      }
+
+      // 登录前置检查：未登录直接弹登录窗，避免批量无效调用
+      const loginStatus = await ncmCliService.getLoginStatus()
+      if (!loginStatus.isLoggedIn) {
+        authService.triggerLoginPopup()
+        return { success: true, data: { total, filled: 0, failed: 0, idsMerged: 0 }, loginRequired: true }
+      }
+
+      const sender = event.sender
+      let filled = 0
+      let failed = 0
+
+      for (let i = 0; i < albums.length; i++) {
+        const album = albums[i]
+
+        // 推送进度
+        sender.send('album:artistIdFillProgress', {
+          current: i + 1,
+          total,
+          albumTitle: album.title,
+          filled
+        })
+
+        try {
+          const detail = await ncmCliService.getAlbumDetail(album.netease_album_id)
+
+          if (detail.artists && detail.artists.length > 0) {
+            // 同一 detail.artists 数组派生结构化 artists（含 name）与展示文本（' / ' 连接）
+            albumService.updateAlbum(album.id, {
+              artists: JSON.stringify(
+                detail.artists.map((artist) => ({
+                  name: artist.name,
+                  originalId: artist.originalId,
+                  id: artist.id
+                }))
+              ),
+              artist: detail.artists.map((artist) => artist.name).join(' / ')
+            })
+            filled++
+          } else {
+            // 网易云也没有艺术家信息，无法回填
+            failed++
+          }
+        } catch (err) {
+          // 登录失效：弹登录窗并中止
+          if (authService.handleLoginRequiredError(err)) {
+            // 已回填部分专辑，顺手为缺 ID 的关注记录补齐
+            const idsMerged = followedArtistService.fillMissingIdsFromAlbums()
+            return {
+              success: true,
+              data: { total, filled, failed, idsMerged },
+              loginRequired: true
+            }
+          }
+          console.error(`批量回填艺术家 ID 失败 (albumId: ${album.id}, title: ${album.title}):`, err)
+          failed++
+        }
+
+        // 限流：每次调用间隔 300ms
+        if (i < albums.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 300))
+        }
+      }
+
+      // 回填完成后，为关注记录按名字匹配补齐缺失的 ID（老库专辑回填前关注时 ID 为 NULL）
+      const idsMerged = followedArtistService.fillMissingIdsFromAlbums()
+      return { success: true, data: { total, filled, failed, idsMerged } }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    } finally {
+      artistIdFillRunning = false
+    }
+  })
+
   // ==================== 数据导出/导入 ====================
 
   ipcMain.handle('db:export', async () => {
     try {
-      const mainWindow = BrowserWindow.getAllWindows()[0]
+      const mainWindow = getMainWindow()
       if (!mainWindow) return { success: false, error: '无可用窗口' }
 
       const now = new Date()
@@ -1190,7 +1373,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('db:import', async () => {
     try {
-      const mainWindow = BrowserWindow.getAllWindows()[0]
+      const mainWindow = getMainWindow()
       if (!mainWindow) return { success: false, error: '无可用窗口' }
 
       const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {

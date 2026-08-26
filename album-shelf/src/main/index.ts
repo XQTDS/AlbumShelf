@@ -5,6 +5,7 @@ import { registerIpcHandlers, stopPlaybackOnQuit } from './ipc-handlers'
 import { initAuthOnStartup, setMenuBuilder, getLoginStatus, logout } from './auth-service'
 import type { NcmLoginStatus } from './auth-service'
 import { loadWindowState, saveWindowState, isValidBounds } from './window-state'
+import { setMainWindow, getMainWindow } from './window-ref'
 // cover-cache 模块顶层注册 cover:// scheme（需在 app ready 前），保持顶层 import 即可
 import { registerCoverProtocol } from './cover-cache'
 
@@ -12,6 +13,9 @@ const DEFAULT_WIDTH = 1200
 const DEFAULT_HEIGHT = 800
 const MIN_WIDTH = 900
 const MIN_HEIGHT = 600
+
+/** 关注列表独立窗口（单实例，关闭后置空） */
+let followedWindow: BrowserWindow | null = null
 
 function createWindow(): void {
   const savedState = loadWindowState()
@@ -38,6 +42,12 @@ function createWindow(): void {
   }
 
   const mainWindow = new BrowserWindow(windowOptions)
+
+  // 登记主窗口引用（多窗口场景下事件转发/对话框挂载用，不依赖 getAllWindows 顺序）
+  setMainWindow(mainWindow)
+  mainWindow.on('closed', () => {
+    setMainWindow(null)
+  })
 
   // 恢复最大化状态（show: false 时先最大化再显示，避免闪烁）
   if (savedState?.isMaximized) {
@@ -87,6 +97,52 @@ function createWindow(): void {
 }
 
 /**
+ * 打开独立的「关注列表」窗口（单实例：已打开则聚焦）。
+ * CSP 与封面协议等由共享的默认 session / 协议层提供，无需重复注册。
+ */
+function createFollowedWindow(): void {
+  if (followedWindow && !followedWindow.isDestroyed()) {
+    followedWindow.focus()
+    return
+  }
+
+  followedWindow = new BrowserWindow({
+    width: 460,
+    height: 560,
+    minWidth: 360,
+    minHeight: 440,
+    show: false,
+    title: '关注列表',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false
+    }
+  })
+
+  // 独立窗口不显示应用菜单栏（Windows/Linux；macOS 为全局应用菜单，无需处理）
+  followedWindow.setMenuBarVisibility(false)
+
+  followedWindow.on('ready-to-show', () => {
+    followedWindow?.show()
+  })
+  followedWindow.on('closed', () => {
+    followedWindow = null
+  })
+
+  followedWindow.webContents.setWindowOpenHandler((details) => {
+    shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+
+  // Dev server URL or production file
+  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+    followedWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] + '/followed.html')
+  } else {
+    followedWindow.loadFile(join(__dirname, '../renderer/followed.html'))
+  }
+}
+
+/**
  * 构建应用菜单栏
  * @param loginStatus 当前登录状态，用于动态显示账户菜单
  */
@@ -97,7 +153,7 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
 
   // 向渲染进程发送「关于」弹窗事件（菜单项共用）
   const openAbout = (): void => {
-    const mainWindow = BrowserWindow.getAllWindows()[0]
+    const mainWindow = getMainWindow()
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('menu:openAbout')
     }
@@ -143,7 +199,7 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
             {
               label: '登录',
               click: (): void => {
-                const mainWindow = BrowserWindow.getAllWindows()[0]
+                const mainWindow = getMainWindow()
                 if (mainWindow && !mainWindow.isDestroyed()) {
                   mainWindow.webContents.send('menu:openLogin')
                 }
@@ -158,7 +214,7 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
         {
           label: '同步专辑列表',
           click: (): void => {
-            const mainWindow = BrowserWindow.getAllWindows()[0]
+            const mainWindow = getMainWindow()
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('menu:syncAlbums')
             }
@@ -167,7 +223,7 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
         {
           label: '补全缺失封面',
           click: (): void => {
-            const mainWindow = BrowserWindow.getAllWindows()[0]
+            const mainWindow = getMainWindow()
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('menu:coverFill')
             }
@@ -176,9 +232,18 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
         {
           label: '补全缺失发行日期',
           click: (): void => {
-            const mainWindow = BrowserWindow.getAllWindows()[0]
+            const mainWindow = getMainWindow()
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('menu:releaseDateFill')
+            }
+          }
+        },
+        {
+          label: '回填艺术家 ID',
+          click: (): void => {
+            const mainWindow = getMainWindow()
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('menu:artistIdFill')
             }
           }
         },
@@ -186,7 +251,7 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
         {
           label: '补全缺失MB数据的专辑',
           click: (): void => {
-            const mainWindow = BrowserWindow.getAllWindows()[0]
+            const mainWindow = getMainWindow()
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('menu:enrichAlbumsWithoutMbData')
             }
@@ -195,7 +260,7 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
         {
           label: '重新补全所有专辑',
           click: (): void => {
-            const mainWindow = BrowserWindow.getAllWindows()[0]
+            const mainWindow = getMainWindow()
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('menu:reEnrichAll')
             }
@@ -205,7 +270,7 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
         {
           label: '导出数据...',
           click: (): void => {
-            const mainWindow = BrowserWindow.getAllWindows()[0]
+            const mainWindow = getMainWindow()
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('menu:dbExport')
             }
@@ -214,7 +279,7 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
         {
           label: '导入数据...',
           click: (): void => {
-            const mainWindow = BrowserWindow.getAllWindows()[0]
+            const mainWindow = getMainWindow()
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('menu:dbImport')
             }
@@ -227,9 +292,15 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
       label: '工具',
       submenu: [
         {
+          label: '关注列表',
+          click: (): void => {
+            createFollowedWindow()
+          }
+        },
+        {
           label: '风格统计',
           click: (): void => {
-            const mainWindow = BrowserWindow.getAllWindows()[0]
+            const mainWindow = getMainWindow()
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('menu:genreStats')
             }
@@ -244,7 +315,7 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
         {
           label: '应用设置...',
           click: (): void => {
-            const mainWindow = BrowserWindow.getAllWindows()[0]
+            const mainWindow = getMainWindow()
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('menu:openSettings')
             }

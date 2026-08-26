@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS album (
   musicbrainz_id TEXT,
   title TEXT NOT NULL,
   artist TEXT NOT NULL,
+  artists TEXT,
   cover_url TEXT,
   release_date TEXT,
   mb_rating REAL,
@@ -56,6 +57,17 @@ CREATE TABLE IF NOT EXISTS album_genre (
 );
 `
 
+// 关注艺术家（关注粒度 = 拆分后的单个艺术家名；ID 字段可空，供后续按 artistId 查询网易云数据）
+const CREATE_FOLLOWED_ARTIST_TABLE = `
+CREATE TABLE IF NOT EXISTS followed_artist (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  original_id INTEGER,
+  encrypted_id TEXT,
+  followed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`
+
 export function initDatabase(): Database.Database {
   if (db) {
     return db
@@ -75,6 +87,7 @@ export function initDatabase(): Database.Database {
   db.exec(CREATE_TRACK_TABLE)
   db.exec(CREATE_GENRE_TABLE)
   db.exec(CREATE_ALBUM_GENRE_TABLE)
+  db.exec(CREATE_FOLLOWED_ARTIST_TABLE)
 
   // Migration: album table
   const albumColumns = db
@@ -95,6 +108,18 @@ export function initDatabase(): Database.Database {
   // Add physical_media if missing (实体介质标记：vinyl/cd/cassette，逗号分隔，可空)
   if (!albumColumns.some((c) => c.name === 'physical_media')) {
     db.exec('ALTER TABLE album ADD COLUMN physical_media TEXT')
+  }
+  // Add artists if missing (结构化艺术家 JSON [{name, originalId, id}]，NULL = 未回填；真源，artist 文本为其派生展示)
+  if (!albumColumns.some((c) => c.name === 'artists')) {
+    db.exec('ALTER TABLE album ADD COLUMN artists TEXT')
+  }
+  // Drop artist_ids if present (从未随版本发布的冗余列；best-effort，失败仅告警，保留无害)
+  if (albumColumns.some((c) => c.name === 'artist_ids')) {
+    try {
+      db.exec('ALTER TABLE album DROP COLUMN artist_ids')
+    } catch (error) {
+      console.warn('[Database] 删除冗余列 artist_ids 失败（保留无害）:', error)
+    }
   }
 
   // Migration: track table
@@ -128,26 +153,28 @@ export function closeDatabase(): void {
 }
 
 export interface ExportData {
-  version: 1
+  version: 2
   exportedAt: string
   data: {
     albums: Record<string, unknown>[]
     tracks: Record<string, unknown>[]
     genres: Record<string, unknown>[]
     albumGenres: Record<string, unknown>[]
+    followedArtists: Record<string, unknown>[]
   }
 }
 
 export function exportDatabase(): ExportData {
   const database = getDatabase()
   return {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     data: {
       albums: database.prepare('SELECT * FROM album').all() as Record<string, unknown>[],
       tracks: database.prepare('SELECT * FROM track').all() as Record<string, unknown>[],
       genres: database.prepare('SELECT * FROM genre').all() as Record<string, unknown>[],
-      albumGenres: database.prepare('SELECT * FROM album_genre').all() as Record<string, unknown>[]
+      albumGenres: database.prepare('SELECT * FROM album_genre').all() as Record<string, unknown>[],
+      followedArtists: database.prepare('SELECT * FROM followed_artist').all() as Record<string, unknown>[]
     }
   }
 }
@@ -157,16 +184,20 @@ export interface ImportResult {
   albumsUpdated: number
   tracksImported: number
   genresImported: number
+  followedArtistsImported: number
 }
 
-export function importDatabase(data: ExportData): ImportResult {
+/** 导入文件可接受的版本（v2 = 当前格式；v1 = 无 followedArtists 与 artists 结构化字段的历史格式） */
+export type ImportData = Omit<ExportData, 'version'> & { version: 1 | 2 }
+
+export function importDatabase(data: ImportData): ImportResult {
   const database = getDatabase()
 
-  if (data.version !== 1) {
+  if (data.version !== 1 && data.version !== 2) {
     throw new Error(`不支持的导出版本: ${data.version}`)
   }
 
-  const result: ImportResult = { albumsAdded: 0, albumsUpdated: 0, tracksImported: 0, genresImported: 0 }
+  const result: ImportResult = { albumsAdded: 0, albumsUpdated: 0, tracksImported: 0, genresImported: 0, followedArtistsImported: 0 }
 
   const importTx = database.transaction(() => {
     // 1. Import genres (upsert by name)
@@ -196,13 +227,14 @@ export function importDatabase(data: ExportData): ImportResult {
             title = ?, artist = ?, cover_url = ?, release_date = ?,
             musicbrainz_id = ?, mb_rating = ?, mb_rating_count = ?,
             track_count = ?, enriched_at = ?, user_rating = ?,
-            netease_original_id = ?, physical_media = ?
+            netease_original_id = ?, physical_media = ?, artists = ?
           WHERE id = ?
         `).run(
           album.title, album.artist, album.cover_url, album.release_date,
           album.musicbrainz_id, album.mb_rating, album.mb_rating_count,
           album.track_count, album.enriched_at, album.user_rating,
-          album.netease_original_id, album.physical_media, existing.id
+          album.netease_original_id, album.physical_media,
+          album.artists ?? null, existing.id
         )
         albumIdMap.set(album.id as number, existing.id)
         result.albumsUpdated++
@@ -210,14 +242,14 @@ export function importDatabase(data: ExportData): ImportResult {
         const info = database.prepare(`
           INSERT INTO album (netease_album_id, netease_original_id, musicbrainz_id, title, artist,
             cover_url, release_date, mb_rating, mb_rating_count, track_count, synced_at, enriched_at, user_rating,
-            physical_media)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            physical_media, artists)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           album.netease_album_id, album.netease_original_id, album.musicbrainz_id,
           album.title, album.artist, album.cover_url, album.release_date,
           album.mb_rating, album.mb_rating_count, album.track_count,
           album.synced_at || new Date().toISOString(), album.enriched_at, album.user_rating,
-          album.physical_media
+          album.physical_media, album.artists ?? null
         )
         albumIdMap.set(album.id as number, info.lastInsertRowid as number)
         result.albumsAdded++
@@ -262,6 +294,20 @@ export function importDatabase(data: ExportData): ImportResult {
       }
       insertAlbumGenre.run(newAlbumId, newGenreId)
     }
+
+    // 5. Import followed artists (v2 起；按 name upsert，已存在时仅填补缺失的 ID 字段)
+    const followedArtists = data.data.followedArtists ?? []
+    const mergeFollowedArtist = database.prepare(`
+      INSERT INTO followed_artist (name, original_id, encrypted_id)
+      VALUES (?, ?, ?)
+      ON CONFLICT(name) DO UPDATE SET
+        original_id = COALESCE(followed_artist.original_id, excluded.original_id),
+        encrypted_id = COALESCE(followed_artist.encrypted_id, excluded.encrypted_id)
+    `)
+    for (const fa of followedArtists) {
+      mergeFollowedArtist.run(fa.name, fa.original_id ?? null, fa.encrypted_id ?? null)
+    }
+    result.followedArtistsImported = followedArtists.length
   })
 
   importTx()
