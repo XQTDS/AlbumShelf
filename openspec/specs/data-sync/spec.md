@@ -109,6 +109,7 @@
 
 - **WHEN** 调用 SyncService.checkLoginStatus()
 - **THEN** 系统 SHALL 通过 ncm-cli login --check 返回当前登录状态
+- **AND** 自 ncm-cli 0.1.7 起 `login --check` 支持主动续期：token 过期但 refreshToken 有效时返回已登录（无需用户重新扫码）
 
 ### Requirement: 同步失败处理
 

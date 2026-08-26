@@ -153,9 +153,29 @@
 - **WHEN** 应用处于未登录状态（无 tokens.enc.json）时自动写入凭证
 - **THEN** 配置操作 SHALL 正常完成；数据命令在登录前仍按既有行为报登录所需错误（manifest 门控）
 
+### Requirement: 登录态自动续期（ncm-cli 0.1.7）
+
+系统 SHALL 内置 ncm-cli 0.1.7 及以上版本，依赖其 token 过期自动刷新能力维持登录态：数据命令遇 accessToken 过期时由 ncm-cli 使用本地 tokens.enc.json 中的 refreshToken 自动刷新恢复，应用启动的 `login --check` 检查 SHALL 具备主动续期语义。
+
+#### Scenario: 数据命令遇 token 过期自动恢复
+
+- **WHEN** ncm-cli 数据命令执行时 accessToken 已过期，但本地 tokens.enc.json 存有有效 refreshToken
+- **THEN** ncm-cli SHALL 自动刷新恢复登录态并正常返回命令结果
+- **AND** 系统 SHALL NOT 因此抛出 NcmLoginRequiredError 或弹出登录窗
+
+#### Scenario: 启动检查主动续期
+
+- **WHEN** 应用启动调用 `login --check`，token 已过期但 refreshToken 有效
+- **THEN** ncm-cli SHALL 主动续期并返回已登录（success: true），用户无需重新扫码
+
+#### Scenario: refreshToken 失效仍需扫码
+
+- **WHEN** accessToken 与 refreshToken 均已失效（长期未使用超出网易云刷新凭证有效期）
+- **THEN** `login --check` SHALL 返回未登录，系统按既有行为弹出登录窗引导扫码登录
+
 ### Requirement: 艺术家命令族（预留）
 
-系统 SHALL 在 NcmCliService 中预留艺术家命令封装区，记录 ncm-cli 0.1.6 艺术家命令族的探测结论，供后续「关注艺术家的新专辑」等能力使用；当前版本的回填功能 SHALL 复用 `album get` 的 artists 字段，不依赖 artist 命令族。
+系统 SHALL 在 NcmCliService 中预留艺术家命令封装区，记录 ncm-cli 艺术家命令族的探测结论（0.1.6 探测，0.1.7 沿用：0.1.7 仅新增 token 自动刷新，命令族行为未变），供后续「关注艺术家的新专辑」等能力使用；当前版本的回填功能 SHALL 复用 `album get` 的 artists 字段，不依赖 artist 命令族。
 
 #### Scenario: 探测结论
 
