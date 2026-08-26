@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { getDatabase } from './database'
-import { FollowedArtistService, splitArtistText } from './followed-artist-service'
+import { FollowedArtistService } from './followed-artist-service'
+import { albumArtistRefs } from './album-artist'
 
 // ==================== Types ====================
 
@@ -17,8 +18,8 @@ export interface Album {
   mb_rating_count: number | null
   user_rating: number | null
   physical_media: string | null
-  /** 艺术家网易云 ID JSON 数组 [{originalId, id}]，下标与 artist 拆分后名字顺序对齐；NULL = 未知 */
-  artist_ids: string | null
+  /** 艺术家结构化 JSON [{name, originalId, id}]（真源）；NULL = 未回填。artist 文本为其派生展示 */
+  artists: string | null
   track_count: number | null
   synced_at: string
   enriched_at: string | null
@@ -33,7 +34,7 @@ export interface AlbumInsert {
   artist: string
   cover_url?: string | null
   release_date?: string | null
-  artist_ids?: string | null
+  artists?: string | null
   track_count?: number | null
   synced_at: string
 }
@@ -48,7 +49,7 @@ export interface AlbumUpdate {
   mb_rating_count?: number | null
   user_rating?: number | null
   physical_media?: string | null
-  artist_ids?: string | null
+  artists?: string | null
   track_count?: number | null
   enriched_at?: string | null
 }
@@ -101,8 +102,8 @@ export class AlbumService {
 
     const result = this.db
       .prepare(
-        `INSERT INTO album (netease_album_id, netease_original_id, title, artist, cover_url, release_date, artist_ids, track_count, synced_at)
-         VALUES (@netease_album_id, @netease_original_id, @title, @artist, @cover_url, @release_date, @artist_ids, @track_count, @synced_at)`
+        `INSERT INTO album (netease_album_id, netease_original_id, title, artist, cover_url, release_date, artists, track_count, synced_at)
+         VALUES (@netease_album_id, @netease_original_id, @title, @artist, @cover_url, @release_date, @artists, @track_count, @synced_at)`
       )
       .run({
         netease_album_id: album.netease_album_id,
@@ -111,7 +112,7 @@ export class AlbumService {
         artist: album.artist,
         cover_url: album.cover_url ?? null,
         release_date: album.release_date ?? null,
-        artist_ids: album.artist_ids ?? null,
+        artists: album.artists ?? null,
         track_count: album.track_count ?? null,
         synced_at: album.synced_at
       })
@@ -260,13 +261,14 @@ export class AlbumService {
     }
 
     // 已关注艺术家筛选 / 艺术家筛选（精确名或部分匹配）：JS 预计算命中专辑 id 集合 → id IN (...)。
-    // 艺术家文本按 "/" 拆分后逐个匹配，保证 "A / B" 合作专辑能被 A 或 B 任一名字命中；
+    // 结构化 artists 优先、未回填行回退文本拆分（albumArtistRefs），逐个名字匹配，
+    // 保证 "A / B" 合作专辑能被 A 或 B 任一名字命中；
     // 各条件独立计算后取交集（组合筛选保持 AND 语义），单次全表扫描。
     // 库规模千级时全表扫描 + 拆分匹配为微秒级；若未来库增长到万级，可演进为 LIKE-OR 或 album_artist 正规化表。
     if (followedOnly || artist || artistPartial) {
       const rows = this.db
-        .prepare('SELECT id, artist FROM album')
-        .all() as { id: number; artist: string }[]
+        .prepare('SELECT id, artist, artists FROM album')
+        .all() as { id: number; artist: string; artists: string | null }[]
       let matchedIds: number[] | null = null
       const intersect = (ids: number[]): void => {
         const idSet = new Set(ids)
@@ -278,14 +280,18 @@ export class AlbumService {
           followedNames.size === 0
             ? [] // 没有关注任何艺术家 → 空结果
             : rows
-                .filter((r) => splitArtistText(r.artist).some((name) => followedNames.has(name)))
+                .filter((r) => albumArtistRefs(r).some((a) => followedNames.has(a.name)))
                 .map((r) => r.id)
         )
       }
       // artist（下拉选择）与 artistPartial（关注窗口/艺术家菜单筛选）UI 互斥、语义一致：拆分后单名匹配
       const singleArtistName = (artist || artistPartial || '').trim()
       if (singleArtistName) {
-        intersect(rows.filter((r) => splitArtistText(r.artist).includes(singleArtistName)).map((r) => r.id))
+        intersect(
+          rows
+            .filter((r) => albumArtistRefs(r).some((a) => a.name === singleArtistName))
+            .map((r) => r.id)
+        )
       }
       const finalIds = matchedIds ?? []
       if (finalIds.length === 0) {
@@ -369,14 +375,14 @@ export class AlbumService {
 
   /**
    * Get all distinct artists from the database.
-   * 多艺术家字段（如 "A / B"）按 "/" 拆分为单个艺术家名后去重返回，
+   * 多艺术家专辑（如 "A / B"）拆分为单个艺术家名后去重返回（结构化 artists 优先），
    * 避免筛选建议列表出现 "A / B" 这类组合串选项。
    */
   getAllArtists(): string[] {
     const rows = this.db
-      .prepare('SELECT DISTINCT artist FROM album')
-      .all() as { artist: string }[]
-    return [...new Set(rows.flatMap((r) => splitArtistText(r.artist)))].sort()
+      .prepare('SELECT DISTINCT artist, artists FROM album')
+      .all() as { artist: string; artists: string | null }[]
+    return [...new Set(rows.flatMap((r) => albumArtistRefs(r).map((a) => a.name)))].sort()
   }
 
   /**
@@ -436,15 +442,15 @@ export class AlbumService {
   }
 
   /**
-   * Get albums without artist IDs (艺术家 ID 缺失的专辑).
-   * 这些专辑 artist_ids 为空，需要通过 ncm-cli album get 的 artists 数组批量回填。
+   * Get albums without structured artists (结构化艺术家数据缺失的专辑).
+   * 这些专辑 artists 为空，需要通过 ncm-cli album get 的 artists 数组批量回填。
    * 按 id 倒序排列，最新收藏的在前面。
    */
-  getAlbumsWithoutArtistIds(): Album[] {
+  getAlbumsWithoutArtists(): Album[] {
     const rows = this.db
       .prepare(`
         SELECT * FROM album
-        WHERE (artist_ids IS NULL OR artist_ids = '')
+        WHERE (artists IS NULL OR artists = '')
           AND netease_album_id IS NOT NULL
           AND netease_album_id != ''
         ORDER BY id DESC

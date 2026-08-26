@@ -8,10 +8,10 @@ export interface NeteaseAlbum {
   netease_original_id?: number
   /** 专辑名称 */
   title: string
-  /** 艺术家名称（多艺术家用 '/' 拼接，与 artist_ids 下标对齐） */
+  /** 艺术家派生展示文本（多艺术家用 ' / ' 连接，与 artists 同源派生） */
   artist: string
-  /** 艺术家网易云 ID（明文 + 加密），下标与 artist 拆分后名字顺序对齐 */
-  artist_ids?: { originalId: number; id: string }[]
+  /** 结构化艺术家列表（真源），artist 文本由其派生 */
+  artists?: { name: string; originalId: number; id: string }[]
   /** 封面图片 URL */
   cover_url?: string
   /** 发行日期 (ISO 格式，如 "2020-01-01") */

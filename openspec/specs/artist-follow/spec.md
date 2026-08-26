@@ -41,7 +41,7 @@
 
 #### Scenario: 唱片墙卡片角标
 
-- **WHEN** 一张专辑的艺术家文本中至少一个拆分名已关注
+- **WHEN** 一张专辑的艺术家列表中（结构化 artists 优先，未回填行回退文本拆分）至少一个已关注
 - **THEN** 卡片右上角 SHALL 显示常驻 ★ 角标（无需悬停），点击 SHALL NOT 干扰卡片选中行为
 
 #### Scenario: 加载失败降级
@@ -115,7 +115,7 @@
 #### Scenario: 部分匹配筛选
 
 - **WHEN** 用户通过艺术家菜单或关注列表应用「筛选该艺术家的专辑」
-- **THEN** 系统 SHALL 仅显示艺术家文本包含该名字（按 `/\s*\/\s*/` 拆分后匹配）的专辑，多艺术家专辑 "A/B" SHALL 可被 A 命中
+- **THEN** 系统 SHALL 仅显示艺术家列表包含该名字（结构化 artists 优先，未回填行回退按 `/\s*\/\s*/` 拆分）的专辑，多艺术家专辑 "A/B" SHALL 可被 A 命中
 - **AND** 系统 SHALL 在筛选条下方显示「已按艺术家筛选：<名字>」指示条，可一键清除
 
 #### Scenario: 与精确筛选互斥
@@ -128,24 +128,24 @@
 - **WHEN** 「已关注」开关激活期间用户取消关注某艺术家
 - **THEN** 系统 SHALL 重置分页并刷新列表，让该艺术家的专辑从「已关注」视图中消失
 
-### Requirement: 艺术家 ID 持久化与回填
+### Requirement: 艺术家结构化持久化与回填
 
-系统 SHALL 在同步与在线添加时保留网易云艺术家 ID（`album.artist_ids` JSON，明文 `originalId` + 加密 `id`），并提供批量回填任务为存量专辑补齐。
+系统 SHALL 在同步与在线添加时以结构化 JSON 保留网易云艺术家数据（`album.artists`：`{name, originalId, id}` 数组，真源），并提供批量回填任务为存量专辑补齐（回填同时以 `' / '` 重写派生 artist 展示文本）。
 
 #### Scenario: 同步写入
 
 - **WHEN** 同步新增一张专辑
-- **THEN** 系统 SHALL 将网易云返回的艺术家 ID 数组写入 `artist_ids`，下标与 `artist` 文本拆分后的名字顺序对齐；已存在专辑 SHALL NOT 被改动（沿用同步不变量）
+- **THEN** 系统 SHALL 将网易云返回的艺术家数组（含 name）写入 `artists`，并以同一数组 join(' / ') 派生 `artist` 文本；已存在专辑 SHALL NOT 被改动（沿用同步不变量）
 
 #### Scenario: 在线添加写入
 
 - **WHEN** 用户通过在线搜索添加一张专辑
-- **THEN** 系统 SHALL 一并写入 `artist_ids`（与 `' / '` 分隔的艺术家文本拆分对齐）
+- **THEN** 系统 SHALL 一并写入 `artists`（含 name，与 ' / ' 分隔的艺术家文本同源派生）
 
 #### Scenario: 批量回填
 
 - **WHEN** 用户通过菜单「数据 → 回填艺术家 ID」触发回填
-- **THEN** 系统 SHALL 仅处理 `artist_ids` 为 NULL 的专辑，逐张调用 `ncm-cli album get` 取详情写入 ID，推送进度事件，300ms 限流，不覆盖已有值
+- **THEN** 系统 SHALL 仅处理 `artists` 为 NULL 的专辑，逐张调用 `ncm-cli album get` 取详情写入结构化艺术家数据并以 join(' / ') 重写 artist 文本，推送进度事件，300ms 限流，不覆盖已有值
 - **AND** 回填 SHALL 有登录前置检查与防重入保护，登录中途失效 SHALL 中止并弹登录窗
 
 #### Scenario: 关注时补充 ID
@@ -155,5 +155,5 @@
 
 #### Scenario: 回填完成后补齐关注记录 ID
 
-- **WHEN** 艺术家 ID 批量回填完成（含登录失效中止前已回填的部分）
-- **THEN** 系统 SHALL 对缺失 ID 的关注记录按名字匹配 `album.artist_ids` 补齐 ID（COALESCE 只补缺失字段，不覆盖已有值），并在回填结果中返回补齐条数
+- **WHEN** 艺术家数据批量回填完成（含登录失效中止前已回填的部分）
+- **THEN** 系统 SHALL 对缺失 ID 的关注记录按名字匹配 `album.artists` 补齐 ID（COALESCE 只补缺失字段，不覆盖已有值），并在回填结果中返回补齐条数

@@ -216,7 +216,7 @@
         <tbody>
           <template v-for="(album, index) in albums" :key="album.id">
             <tr
-              v-memo="[index, album.title, album.artist, album.artist_ids, album.user_rating, album.physical_media, album.mb_rating, album.release_date, album.genres, selectedAlbumId, playingAlbumId, selectedGenres, followedArtists]"
+              v-memo="[index, album.title, album.artist, album.artists, album.user_rating, album.physical_media, album.mb_rating, album.release_date, album.genres, selectedAlbumId, playingAlbumId, selectedGenres, followedArtists]"
               class="album-row"
               :class="{ 'row-selected': selectedAlbumId === album.id }"
               @click="toggleSelect(album.id)"
@@ -238,7 +238,7 @@
               </td>
               <td class="col-artist">
                 <!-- 表格中艺术家为纯文本（仅详情面板芯片可点击），已关注艺术家名以金色文字标识 -->
-                <template v-for="(artistInfo, ai) in albumArtistsWithIds(album)" :key="ai">
+                <template v-for="(artistInfo, ai) in albumArtists(album)" :key="ai">
                   <span v-if="ai > 0"> / </span><span :class="{ 'artist-text-followed': isArtistFollowed(artistInfo.name) }">{{ artistInfo.name }}</span>
                 </template>
               </td>
@@ -336,7 +336,7 @@
           <div
             v-for="album in albums"
             :key="album.id"
-            v-memo="[album.title, album.artist, album.artist_ids, album.cover_url, album.physical_media, album.user_rating, album.mb_rating, album.release_date, album.genres, sortBy, sortOrder, gridBadges.media, gridBadges.userRating, gridBadges.mbRating, gridBadges.releaseDate, selectedAlbumId, playingAlbumId, coverErrorSet.has(album.id), coverProtocolFailed.has(album.id), followedArtists]"
+            v-memo="[album.title, album.artist, album.artists, album.cover_url, album.physical_media, album.user_rating, album.mb_rating, album.release_date, album.genres, sortBy, sortOrder, gridBadges.media, gridBadges.userRating, gridBadges.mbRating, gridBadges.releaseDate, selectedAlbumId, playingAlbumId, coverErrorSet.has(album.id), coverProtocolFailed.has(album.id), followedArtists]"
             class="album-card"
             :class="{ 'card-selected': selectedAlbumId === album.id }"
             :data-id="album.id"
@@ -359,7 +359,7 @@
               <div class="card-title">{{ album.title }}</div>
               <div class="card-artist">
                 <!-- 唱片墙遮罩中艺术家为纯文本（已关注角标在右上角），已关注艺术家名以金色文字标识，点击无效，仅详情面板可交互 -->
-                <template v-for="(artistInfo, ai) in albumArtistsWithIds(album)" :key="ai">
+                <template v-for="(artistInfo, ai) in albumArtists(album)" :key="ai">
                   <span v-if="ai > 0"> / </span><span :class="{ 'artist-text-followed': isArtistFollowed(artistInfo.name) }">{{ artistInfo.name }}</span>
                 </template>
               </div>
@@ -424,7 +424,7 @@
               <div class="panel-artist">
                 <span class="artist-chips">
                   <span
-                    v-for="(artistInfo, ai) in albumArtistsWithIds(selectedAlbum)"
+                    v-for="(artistInfo, ai) in albumArtists(selectedAlbum)"
                     :key="ai"
                     class="artist-chip"
                     :class="{ followed: isArtistFollowed(artistInfo.name) }"
@@ -839,8 +839,8 @@ interface Album {
   track_count?: number | null
   synced_at?: string | null
   enriched_at?: string | null
-  /** 艺术家网易云 ID JSON 数组 [{originalId, id}]，下标与 artist 拆分后名字顺序对齐；NULL = 未知 */
-  artist_ids?: string | null
+  /** 艺术家结构化 JSON [{name, originalId, id}]（真源）；NULL = 未回填。artist 文本为其派生展示 */
+  artists?: string | null
 }
 
 const albums = ref<Album[]>([])
@@ -2220,41 +2220,48 @@ const artistPopover = reactive({
   y: 0
 })
 
-/** 艺术家文本拆分（与主进程 splitArtistText 同语义，勿改单边） */
+/** 艺术家文本拆分（结构化缺失时的回退路径；与主进程 splitArtistText 同语义，勿改单边） */
 function splitArtists(artist: string): string[] {
   return artist.split(/\s*\/\s*/).map((s) => s.trim()).filter(Boolean)
 }
 
-/** 解析专辑的艺术家 ID JSON（与拆分名字下标对齐） */
-function parseArtistIds(album: Album): { originalId: number; id: string }[] {
-  if (!album.artist_ids) return []
+/** 解析专辑的结构化艺术家 JSON（含 name + ID）；NULL/空/损坏 → null（调用方回退文本拆分） */
+function parseAlbumArtists(
+  album: Album
+): { name: string; originalId: number | null; id: string | null }[] | null {
+  if (!album.artists) return null
   try {
-    const parsed = JSON.parse(album.artist_ids)
-    if (Array.isArray(parsed)) {
-      return parsed.filter(
-        (item): item is { originalId: number; id: string } =>
-          item && typeof item.originalId === 'number' && typeof item.id === 'string'
-      )
-    }
+    const parsed = JSON.parse(album.artists)
+    if (!Array.isArray(parsed)) return null
+    const refs = parsed
+      .filter((item): item is Record<string, unknown> => item && typeof item === 'object')
+      .map((item) => ({
+        name: typeof item.name === 'string' ? item.name.trim() : '',
+        originalId: typeof item.originalId === 'number' ? item.originalId : null,
+        id: typeof item.id === 'string' ? item.id : null
+      }))
+      .filter((item) => item.name.length > 0)
+    return refs.length > 0 ? refs : null
   } catch {
-    // 损坏数据按无 ID 处理
+    return null // 损坏 JSON 回退文本拆分
   }
-  return []
 }
 
-/** 专辑的艺术家列表（名字 + 网易云 ID，按拆分顺序对齐） */
-function albumArtistsWithIds(album: Album): {
+/** 专辑的艺术家列表（名字 + 网易云 ID）：结构化 artists 优先，未回填行回退文本拆分（ID 全 null） */
+function albumArtists(album: Album): {
   name: string
   originalId: number | null
   encryptedId: string | null
 }[] {
-  const names = splitArtists(album.artist)
-  const ids = parseArtistIds(album)
-  return names.map((name, i) => ({
-    name,
-    originalId: ids[i]?.originalId ?? null,
-    encryptedId: ids[i]?.id ?? null
-  }))
+  const structured = parseAlbumArtists(album)
+  if (structured) {
+    return structured.map((item) => ({
+      name: item.name,
+      originalId: item.originalId,
+      encryptedId: item.id
+    }))
+  }
+  return splitArtists(album.artist).map((name) => ({ name, originalId: null, encryptedId: null }))
 }
 
 function isArtistFollowed(name: string): boolean {
@@ -2263,7 +2270,7 @@ function isArtistFollowed(name: string): boolean {
 
 /** 专辑是否含已关注艺术家（唱片墙角标用） */
 function isAlbumFollowed(album: Album): boolean {
-  return splitArtists(album.artist).some((name) => followedArtists.value.has(name))
+  return albumArtists(album).some((a) => followedArtists.value.has(a.name))
 }
 
 /** 关注/取消关注（乐观更新 + 失败回退） */

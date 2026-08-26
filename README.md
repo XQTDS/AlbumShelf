@@ -93,7 +93,7 @@ ncm-cli 已作为依赖内置，**无需全局安装 Node 与 ncm-cli**。网易
 
 应用数据保存在 Electron `userData` 目录（SQLite 数据库），包括：
 
-- 专辑、曲目表及评分、风格等元数据（含专辑的网易云艺术家 ID `artist_ids` 与关注艺术家表 `followed_artist`）
+- 专辑、曲目表及评分、风格等元数据（含专辑的结构化艺术家数据 `artists`（JSON `{name, originalId, id}`，随导出文件保留）与关注艺术家表 `followed_artist`）
 - 封面本地缓存
 - `settings.json`（应用设置，如 MusicBrainz 匹配策略开关）
 - `mb-credentials.json`（MusicBrainz 凭据，使用系统加密存储）

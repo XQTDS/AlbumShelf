@@ -26,8 +26,8 @@ interface Album {
   mb_rating_count: number | null
   user_rating: number | null
   physical_media: string | null
-  /** 艺术家网易云 ID JSON 数组 [{originalId, id}]，下标与 artist 拆分后名字顺序对齐；NULL = 未知 */
-  artist_ids: string | null
+  /** 艺术家结构化 JSON [{name, originalId, id}]（真源）；NULL = 未回填。artist 文本为其派生展示 */
+  artists: string | null
   track_count: number | null
   synced_at: string
   enriched_at: string | null
@@ -210,8 +210,8 @@ interface AddAlbumRequest {
   netease_original_id: number
   title: string
   artist: string
-  /** 艺术家网易云 ID 数组（与 artist 拆分顺序对齐） */
-  artist_ids?: { originalId: number; id: string }[] | null
+  /** 结构化艺术家列表（真源，与 artist 展示文本同源派生） */
+  artists?: { name: string; originalId: number; id: string }[] | null
   cover_url?: string | null
   /** 搜索结果的 publishTime（北京时间零点时间戳），用于写入发行日期 */
   publish_time?: number | null

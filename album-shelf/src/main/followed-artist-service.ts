@@ -1,5 +1,9 @@
 import Database from 'better-sqlite3'
 import { getDatabase } from './database'
+import { albumArtistRefs } from './album-artist'
+
+// 拆分语义定义在 album-artist.ts（结构化解析唯一真源）；此处 re-export 兼容旧导入方
+export { splitArtistText } from './album-artist'
 
 // ==================== Types ====================
 
@@ -15,11 +19,6 @@ export interface FollowedArtist {
 }
 
 // ==================== FollowedArtistService ====================
-
-/** 艺术家文本拆分（与渲染层 App.vue 的 splitArtists 同语义，勿改单边） */
-export function splitArtistText(artist: string): string[] {
-  return artist.split(/\s*\/\s*/).map((s) => s.trim()).filter(Boolean)
-}
 
 export class FollowedArtistService {
   private db: Database.Database
@@ -71,11 +70,13 @@ export class FollowedArtistService {
       .prepare('SELECT * FROM followed_artist ORDER BY followed_at DESC, id DESC')
       .all() as Omit<FollowedArtist, 'album_count'>[]
 
-    const albumRows = this.db.prepare('SELECT artist FROM album').all() as { artist: string }[]
+    const albumRows = this.db
+      .prepare('SELECT artist, artists FROM album')
+      .all() as { artist: string; artists: string | null }[]
     const counts = new Map<string, number>()
-    for (const { artist } of albumRows) {
-      for (const name of splitArtistText(artist)) {
-        counts.set(name, (counts.get(name) ?? 0) + 1)
+    for (const row of albumRows) {
+      for (const ref of albumArtistRefs(row)) {
+        counts.set(ref.name, (counts.get(ref.name) ?? 0) + 1)
       }
     }
 
@@ -83,7 +84,7 @@ export class FollowedArtistService {
   }
 
   /**
-   * 为缺失 ID 的关注记录按名字匹配补齐网易云 ID（来自 album.artist_ids 已回填的数据）。
+   * 为缺失 ID 的关注记录按名字匹配补齐网易云 ID（来自 album.artists 已回填的结构化数据）。
    * 回填任务完成后调用；只补缺失字段（COALESCE），不覆盖已有值。返回补全的记录数。
    */
   fillMissingIdsFromAlbums(): number {
@@ -94,33 +95,27 @@ export class FollowedArtistService {
       .all() as { id: number; name: string }[]
     if (missing.length === 0) return 0
 
-    // 一次全表扫描收集「拆分艺术家名 → 下标 → ID」信息（artist_ids 与 artist 文本同源对齐）
+    // 一次全表扫描收集「艺术家名 → 网易云 ID」信息（结构化 album.artists 为真源，按 name 匹配，
+    // 不再依赖文本下标对齐——顺带修复艺术家名含 '/' 时下标错位的隐藏 bug）
     const albumRows = this.db
-      .prepare("SELECT artist, artist_ids FROM album WHERE artist_ids IS NOT NULL AND artist_ids != ''")
-      .all() as { artist: string; artist_ids: string }[]
+      .prepare("SELECT artist, artists FROM album WHERE artists IS NOT NULL AND artists != ''")
+      .all() as { artist: string; artists: string | null }[]
 
     let filled = 0
     for (const row of missing) {
       for (const album of albumRows) {
-        const idx = splitArtistText(album.artist).indexOf(row.name)
-        if (idx < 0) continue
-        try {
-          const ids = JSON.parse(album.artist_ids) as { originalId?: number; id?: string }[]
-          const match = ids[idx]
-          if (!match || (match.originalId == null && match.id == null)) continue
-          this.db
-            .prepare(
-              `UPDATE followed_artist
-               SET original_id = COALESCE(followed_artist.original_id, ?),
-                   encrypted_id = COALESCE(followed_artist.encrypted_id, ?)
-               WHERE id = ?`
-            )
-            .run(match.originalId ?? null, match.id ?? null, row.id)
-          filled++
-          break
-        } catch {
-          // 损坏 JSON 跳过该专辑
-        }
+        const match = albumArtistRefs(album).find((ref) => ref.name === row.name)
+        if (!match || (match.originalId == null && match.id == null)) continue
+        this.db
+          .prepare(
+            `UPDATE followed_artist
+             SET original_id = COALESCE(followed_artist.original_id, ?),
+                 encrypted_id = COALESCE(followed_artist.encrypted_id, ?)
+             WHERE id = ?`
+          )
+          .run(match.originalId, match.id, row.id)
+        filled++
+        break
       }
     }
     return filled

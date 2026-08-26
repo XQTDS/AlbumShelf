@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS album (
   musicbrainz_id TEXT,
   title TEXT NOT NULL,
   artist TEXT NOT NULL,
+  artists TEXT,
   cover_url TEXT,
   release_date TEXT,
   mb_rating REAL,
@@ -108,9 +109,17 @@ export function initDatabase(): Database.Database {
   if (!albumColumns.some((c) => c.name === 'physical_media')) {
     db.exec('ALTER TABLE album ADD COLUMN physical_media TEXT')
   }
-  // Add artist_ids if missing (艺术家网易云 ID JSON 数组，与 artist 字段拆分顺序对齐，可空)
-  if (!albumColumns.some((c) => c.name === 'artist_ids')) {
-    db.exec('ALTER TABLE album ADD COLUMN artist_ids TEXT')
+  // Add artists if missing (结构化艺术家 JSON [{name, originalId, id}]，NULL = 未回填；真源，artist 文本为其派生展示)
+  if (!albumColumns.some((c) => c.name === 'artists')) {
+    db.exec('ALTER TABLE album ADD COLUMN artists TEXT')
+  }
+  // Drop artist_ids if present (从未随版本发布的冗余列；best-effort，失败仅告警，保留无害)
+  if (albumColumns.some((c) => c.name === 'artist_ids')) {
+    try {
+      db.exec('ALTER TABLE album DROP COLUMN artist_ids')
+    } catch (error) {
+      console.warn('[Database] 删除冗余列 artist_ids 失败（保留无害）:', error)
+    }
   }
 
   // Migration: track table
@@ -178,7 +187,7 @@ export interface ImportResult {
   followedArtistsImported: number
 }
 
-/** 导入文件可接受的版本（v2 = 当前格式；v1 = 无 followedArtists 与 artist_ids 的历史格式） */
+/** 导入文件可接受的版本（v2 = 当前格式；v1 = 无 followedArtists 与 artists 结构化字段的历史格式） */
 export type ImportData = Omit<ExportData, 'version'> & { version: 1 | 2 }
 
 export function importDatabase(data: ImportData): ImportResult {
@@ -218,14 +227,14 @@ export function importDatabase(data: ImportData): ImportResult {
             title = ?, artist = ?, cover_url = ?, release_date = ?,
             musicbrainz_id = ?, mb_rating = ?, mb_rating_count = ?,
             track_count = ?, enriched_at = ?, user_rating = ?,
-            netease_original_id = ?, physical_media = ?, artist_ids = ?
+            netease_original_id = ?, physical_media = ?, artists = ?
           WHERE id = ?
         `).run(
           album.title, album.artist, album.cover_url, album.release_date,
           album.musicbrainz_id, album.mb_rating, album.mb_rating_count,
           album.track_count, album.enriched_at, album.user_rating,
           album.netease_original_id, album.physical_media,
-          album.artist_ids ?? null, existing.id
+          album.artists ?? null, existing.id
         )
         albumIdMap.set(album.id as number, existing.id)
         result.albumsUpdated++
@@ -233,14 +242,14 @@ export function importDatabase(data: ImportData): ImportResult {
         const info = database.prepare(`
           INSERT INTO album (netease_album_id, netease_original_id, musicbrainz_id, title, artist,
             cover_url, release_date, mb_rating, mb_rating_count, track_count, synced_at, enriched_at, user_rating,
-            physical_media, artist_ids)
+            physical_media, artists)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           album.netease_album_id, album.netease_original_id, album.musicbrainz_id,
           album.title, album.artist, album.cover_url, album.release_date,
           album.mb_rating, album.mb_rating_count, album.track_count,
           album.synced_at || new Date().toISOString(), album.enriched_at, album.user_rating,
-          album.physical_media, album.artist_ids ?? null
+          album.physical_media, album.artists ?? null
         )
         albumIdMap.set(album.id as number, info.lastInsertRowid as number)
         result.albumsAdded++

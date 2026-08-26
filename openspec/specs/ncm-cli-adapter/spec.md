@@ -60,7 +60,7 @@
 #### Scenario: 返回结构解析
 
 - **WHEN** 命令返回 code 200 的 JSON
-- **THEN** 系统 SHALL 解析每条记录中的 `id`（加密 ID）、`originalId`（明文 ID）、`name`、`artists`、`coverImgUrl`、`publishTime` 等字段
+- **THEN** 系统 SHALL 解析每条记录中的 `id`（加密 ID）、`originalId`（明文 ID）、`name`、`artists`（结构化艺术家数组 `{name, originalId, id}`，艺术家数据真源）、`coverImgUrl`、`publishTime` 等字段
 
 #### Scenario: 需要登录
 
@@ -74,7 +74,7 @@
 #### Scenario: 成功获取专辑详情
 
 - **WHEN** 调用 `getAlbumDetail(albumId)` 且命令返回 code 200 的 JSON
-- **THEN** 系统 SHALL 解析返回的 `originalId`、`id`、`name`、`artists`、`coverImgUrl`、`publishTime` 等字段
+- **THEN** 系统 SHALL 解析返回的 `originalId`、`id`、`name`、`artists`（结构化艺术家数组 `{name, originalId, id}`，艺术家数据真源）、`coverImgUrl`、`publishTime` 等字段
 
 #### Scenario: 发行日期换算
 

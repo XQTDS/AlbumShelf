@@ -1115,7 +1115,7 @@ export function registerIpcHandlers(): void {
     netease_original_id: number
     title: string
     artist: string
-    artist_ids?: { originalId: number; id: string }[] | null
+    artists?: { name: string; originalId: number; id: string }[] | null
     cover_url?: string | null
     publish_time?: number | null
   }) => {
@@ -1126,7 +1126,7 @@ export function registerIpcHandlers(): void {
         netease_original_id: album.netease_original_id,
         title: album.title,
         artist: album.artist,
-        artist_ids: album.artist_ids,
+        artists: album.artists,
         cover_url: album.cover_url,
         release_date: album.publish_time
           ? publishTimeToReleaseDate(album.publish_time)
@@ -1239,7 +1239,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('album:artistIdFillStatus', async () => {
     try {
-      const pending = albumService.getAlbumsWithoutArtistIds().length
+      const pending = albumService.getAlbumsWithoutArtists().length
       return { success: true, data: { pending, running: artistIdFillRunning } }
     } catch (error) {
       return { success: false, error: (error as Error).message }
@@ -1247,10 +1247,11 @@ export function registerIpcHandlers(): void {
   })
 
   /**
-   * 批量回填缺失艺术家 ID 的专辑
+   * 批量回填缺失结构化艺术家数据的专辑
    * 逐个调用 getAlbumDetail 获取 artists 数组并持久化，通过 event 推送进度
-   * 仅填充 artist_ids 为空的专辑（回填只填 ID 不碰 artist 文本）
-   * 失败不重试：重跑时仅处理仍缺 ID 的专辑，天然增量收敛
+   * 仅填充 artists 为空的专辑；回填同时用同一数据重写派生 artist 展示文本（' / ' 连接），
+   * 修复存量专辑被旧 join('/') / 文本拆分误伤的展示文本
+   * 失败不重试：重跑时仅处理仍缺数据的专辑，天然增量收敛
    */
   ipcMain.handle('album:artistIdFillStart', async (event) => {
     if (artistIdFillRunning) {
@@ -1259,7 +1260,7 @@ export function registerIpcHandlers(): void {
     artistIdFillRunning = true
 
     try {
-      const albums = albumService.getAlbumsWithoutArtistIds()
+      const albums = albumService.getAlbumsWithoutArtists()
       const total = albums.length
 
       if (total === 0) {
@@ -1292,12 +1293,16 @@ export function registerIpcHandlers(): void {
           const detail = await ncmCliService.getAlbumDetail(album.netease_album_id)
 
           if (detail.artists && detail.artists.length > 0) {
-            const artistIds = detail.artists.map((artist) => ({
-              originalId: artist.originalId,
-              id: artist.id
-            }))
+            // 同一 detail.artists 数组派生结构化 artists（含 name）与展示文本（' / ' 连接）
             albumService.updateAlbum(album.id, {
-              artist_ids: JSON.stringify(artistIds)
+              artists: JSON.stringify(
+                detail.artists.map((artist) => ({
+                  name: artist.name,
+                  originalId: artist.originalId,
+                  id: artist.id
+                }))
+              ),
+              artist: detail.artists.map((artist) => artist.name).join(' / ')
             })
             filled++
           } else {
