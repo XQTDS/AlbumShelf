@@ -1,6 +1,6 @@
 {
   "name": "album-shelf",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "description": "网易云音乐专辑收藏管理工具，支持 MusicBrainz 数据补全",
   "main": "./out/main/index.js",
   "scripts": {
