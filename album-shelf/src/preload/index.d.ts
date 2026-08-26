@@ -4,6 +4,8 @@ interface AlbumQueryOptions {
   search?: string
   artist?: string
   genres?: string
+  followedOnly?: boolean
+  artistPartial?: string
   sortBy?: 'mb_rating' | 'release_date' | 'user_rating'
   sortOrder?: 'asc' | 'desc'
   page?: number
@@ -24,11 +26,24 @@ interface Album {
   mb_rating_count: number | null
   user_rating: number | null
   physical_media: string | null
+  /** 艺术家网易云 ID JSON 数组 [{originalId, id}]，下标与 artist 拆分后名字顺序对齐；NULL = 未知 */
+  artist_ids: string | null
   track_count: number | null
   synced_at: string
   enriched_at: string | null
   created_at: string
   genres?: string[]
+}
+
+/** 已关注的艺术家 */
+interface FollowedArtist {
+  id: number
+  name: string
+  original_id: number | null
+  encrypted_id: string | null
+  followed_at: string
+  /** 该艺术家在库中的专辑数 */
+  album_count: number
 }
 
 interface AlbumQueryResult {
@@ -195,6 +210,8 @@ interface AddAlbumRequest {
   netease_original_id: number
   title: string
   artist: string
+  /** 艺术家网易云 ID 数组（与 artist 拆分顺序对齐） */
+  artist_ids?: { originalId: number; id: string }[] | null
   cover_url?: string | null
   /** 搜索结果的 publishTime（北京时间零点时间戳），用于写入发行日期 */
   publish_time?: number | null
@@ -230,11 +247,29 @@ interface ReleaseDateFillResult {
   failed: number
 }
 
+/** 艺术家 ID 回填进度 */
+interface ArtistIdFillProgress {
+  current: number
+  total: number
+  albumTitle: string
+  filled: number
+}
+
+/** 艺术家 ID 回填结果 */
+interface ArtistIdFillResult {
+  total: number
+  filled: number
+  failed: number
+  /** 回填完成后为缺失 ID 的关注记录补齐的条数 */
+  idsMerged: number
+}
+
 interface ImportResult {
   albumsAdded: number
   albumsUpdated: number
   tracksImported: number
   genresImported: number
+  followedArtistsImported: number
 }
 
 interface ExportResult {
@@ -334,6 +369,7 @@ interface AlbumShelfAPI {
   onMenuSyncAlbums: (callback: () => void) => () => void
   onMenuCoverFill: (callback: () => void) => () => void
   onMenuReleaseDateFill: (callback: () => void) => () => void
+  onMenuArtistIdFill: (callback: () => void) => () => void
   onMenuGenreStats: (callback: () => void) => () => void
   onMenuOpenAbout: (callback: () => void) => () => void
 
@@ -341,6 +377,24 @@ interface AlbumShelfAPI {
   albumSearchOnline: (keyword: string) => Promise<IpcResult<NcmSearchAlbum[]>>
   albumAddToCollection: (album: AddAlbumRequest) => Promise<IpcResult<{ albumId: number }>>
   albumGetCollectedNeteaseIds: () => Promise<IpcResult<{ originalIds: number[], albumIds: string[] }>>
+
+  // 关注艺术家
+  artistFollow: (name: string, originalId?: number | null, encryptedId?: string | null) => Promise<IpcResult<{ added: boolean }>>
+  artistUnfollow: (name: string) => Promise<IpcResult>
+  artistListFollowed: () => Promise<IpcResult<FollowedArtist[]>>
+  /** 关注状态变更广播（关注/取关后各窗口同步刷新） */
+  onFollowedChanged: (callback: () => void) => () => void
+  /** 关注列表窗口：请求主窗口按艺术家筛选 */
+  artistRequestFilter: (name: string) => void
+  /** 主窗口：接收关注列表窗口转发的筛选请求 */
+  onArtistFilterRequest: (callback: (name: string) => void) => () => void
+  /** 关注列表窗口：关闭自身 */
+  followedWindowClose: () => void
+
+  // 艺术家 ID 批量回填
+  albumArtistIdFillStatus: () => Promise<IpcResult<{ pending: number; running: boolean }>>
+  albumArtistIdFillStart: () => Promise<IpcResult<ArtistIdFillResult>>
+  onArtistIdFillProgress: (callback: (progress: ArtistIdFillProgress) => void) => () => void
 
   // 数据导出/导入
   dbExport: () => Promise<IpcResult<ExportResult>>

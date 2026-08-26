@@ -25,6 +25,15 @@ export default defineConfig({
       }
     },
     plugins: [vue()],
+    // 多页面：主界面 index.html + 独立的关注列表窗口 followed.html
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/renderer/index.html'),
+          followed: resolve('src/renderer/followed.html')
+        }
+      }
+    },
     server: {
       // 开发模式下允许加载外部图片（网易云封面）
       headers: {

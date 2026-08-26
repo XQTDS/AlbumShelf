@@ -269,6 +269,13 @@ const albumShelfAPI = {
     return () => ipcRenderer.removeListener('menu:releaseDateFill', handler)
   },
 
+  // 监听菜单栏回填艺术家 ID 事件
+  onMenuArtistIdFill: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:artistIdFill', handler)
+    return () => ipcRenderer.removeListener('menu:artistIdFill', handler)
+  },
+
   // 监听菜单栏风格统计事件
   onMenuGenreStats: (callback: () => void) => {
     const handler = () => callback()
@@ -301,6 +308,56 @@ const albumShelfAPI = {
   // 获取已收藏专辑的网易云 ID 列表（用于重复检测）
   albumGetCollectedNeteaseIds: () =>
     ipcRenderer.invoke('album:getCollectedNeteaseIds'),
+
+  // ==================== 关注艺术家 ====================
+
+  artistFollow: (name: string, originalId?: number | null, encryptedId?: string | null) =>
+    ipcRenderer.invoke('artist:follow', name, originalId, encryptedId),
+
+  artistUnfollow: (name: string) => ipcRenderer.invoke('artist:unfollow', name),
+
+  artistListFollowed: () => ipcRenderer.invoke('artist:listFollowed'),
+
+  // 关注状态变更广播（主窗口与关注列表窗口互相同步）
+  onFollowedChanged: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('followed:changed', handler)
+    return () => ipcRenderer.removeListener('followed:changed', handler)
+  },
+
+  // 关注列表窗口：请求主窗口按艺术家筛选
+  artistRequestFilter: (name: string) => ipcRenderer.send('followed:filterArtist', name),
+
+  // 主窗口：接收关注列表窗口转发的筛选请求
+  onArtistFilterRequest: (callback: (name: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, name: string) => callback(name)
+    ipcRenderer.on('followed:filterArtist', handler)
+    return () => ipcRenderer.removeListener('followed:filterArtist', handler)
+  },
+
+  // 关注列表窗口：关闭自身（Esc 快捷键）
+  followedWindowClose: () => ipcRenderer.send('followed:closeWindow'),
+
+  // ==================== 艺术家 ID 批量回填 ====================
+
+  albumArtistIdFillStatus: () => ipcRenderer.invoke('album:artistIdFillStatus'),
+
+  albumArtistIdFillStart: () => ipcRenderer.invoke('album:artistIdFillStart'),
+
+  // 艺术家 ID 回填进度监听
+  onArtistIdFillProgress: (
+    callback: (progress: {
+      current: number
+      total: number
+      albumTitle: string
+      filled: number
+    }) => void
+  ) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress)
+    ipcRenderer.on('album:artistIdFillProgress', handler)
+    // 返回取消监听函数
+    return () => ipcRenderer.removeListener('album:artistIdFillProgress', handler)
+  },
 
   // ==================== 数据导出/导入 ====================
 

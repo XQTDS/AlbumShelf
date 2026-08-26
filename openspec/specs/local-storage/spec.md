@@ -33,6 +33,11 @@
 - **WHEN** 应用启动且 album 表尚无 physical_media 列
 - **THEN** 系统 SHALL 通过 ALTER TABLE 添加 `physical_media TEXT` 列，默认值为 NULL
 
+#### Scenario: artist_ids 字段迁移
+
+- **WHEN** 应用启动且 album 表尚无 artist_ids 列
+- **THEN** 系统 SHALL 通过 ALTER TABLE 添加 `artist_ids TEXT` 列（JSON 数组 `[{originalId, id}]`，下标与 artist 文本拆分后名字顺序对齐），默认值为 NULL（NULL = 未知）
+
 ### Requirement: Track 表结构
 
 系统 SHALL 维护 Track 表，存储曲目信息并关联到专辑。
@@ -55,6 +60,24 @@
 
 - **WHEN** album_genre 关联表被创建
 - **THEN** 表 SHALL 包含 album_id（外键关联 Album.id）和 genre_id（外键关联 Genre.id），联合唯一约束
+
+### Requirement: followed_artist 表结构
+
+系统 SHALL 维护 followed_artist 表，存储用户关注的艺术家（关注粒度 = 拆分后的单个艺术家名）。
+
+#### Scenario: followed_artist 表字段
+
+- **WHEN** followed_artist 表被创建
+- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、name（艺术家名，唯一）、original_id（网易云明文艺术家 ID，可空）、encrypted_id（网易云加密艺术家 ID，可空）、followed_at（关注时间，默认 UTC 当前时间）
+
+#### Scenario: 导出导入包含关注数据
+
+- **WHEN** 用户导出数据
+- **THEN** 导出 JSON SHALL 为 version 2 格式，包含 followedArtists 数组（完整字段）
+- **WHEN** 导入 v2 数据
+- **THEN** 系统 SHALL 按 name 去重 upsert 关注记录，已存在记录 SHALL 仅补缺失的 ID 字段，并在导入结果中返回导入的关注数
+- **WHEN** 导入 v1 数据（无 followedArtists 字段）
+- **THEN** 系统 SHALL 按空数组处理，导入 SHALL 正常完成
 
 ### Requirement: 数据库存储位置
 

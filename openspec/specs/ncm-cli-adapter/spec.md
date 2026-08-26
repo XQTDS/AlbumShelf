@@ -152,3 +152,13 @@
 
 - **WHEN** 应用处于未登录状态（无 tokens.enc.json）时自动写入凭证
 - **THEN** 配置操作 SHALL 正常完成；数据命令在登录前仍按既有行为报登录所需错误（manifest 门控）
+
+### Requirement: 艺术家命令族（预留）
+
+系统 SHALL 在 NcmCliService 中预留艺术家命令封装区，记录 ncm-cli 0.1.6 艺术家命令族的探测结论，供后续「关注艺术家的新专辑」等能力使用；当前版本的回填功能 SHALL 复用 `album get` 的 artists 字段，不依赖 artist 命令族。
+
+#### Scenario: 探测结论
+
+- **WHEN** 开发者查阅预留区注释
+- **THEN** 注释 SHALL 记录：`artist songs --artistId <加密ID> --startTime --endTime --limit --offset` 为艺人歌曲列表且参数要求加密艺术家 ID；`search all --keyword` 综合搜索返回含 originalId/id 的 artists 数组；无 `search artist` 子命令
+- **AND** 结论 SHALL 与数据模型一致：followed_artist 同时保存 original_id 与 encrypted_id，供未来按加密 ID 调用 artist songs

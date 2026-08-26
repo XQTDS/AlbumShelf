@@ -185,3 +185,61 @@
 
 - **WHEN** 回填正在进行中再次触发
 - **THEN** 系统 SHALL 拒绝本次触发并提示正在执行中
+
+### Requirement: 同步保留艺术家 ID
+
+同步与在线添加链路 SHALL 将网易云返回的艺术家 ID（明文 originalId + 加密 id）随专辑一并落库到 `album.artist_ids`（JSON 数组，下标与 `artist` 文本按 `/\s*\/\s*/` 拆分后的名字顺序对齐），为后续按 artistId 查询网易云数据（如关注艺术家的新专辑）铺路。
+
+#### Scenario: 同步新增写入
+
+- **WHEN** 同步新增一张专辑
+- **THEN** 系统 SHALL 将 `record.artists.map(a => ({ originalId: a.originalId, id: a.id }))` 序列化写入 artist_ids，与同步生成的 artist 文本同源产出、天然对齐
+
+#### Scenario: 已存在专辑不覆盖
+
+- **WHEN** 同步发现某张专辑已存在（按 netease_album_id 匹配）
+- **THEN** 系统 SHALL 仅跳过，不写 artist_ids（沿用「已存在专辑不改动」不变量）
+
+#### Scenario: 在线添加写入
+
+- **WHEN** 用户通过在线搜索添加一张专辑
+- **THEN** 系统 SHALL 将搜索结果的艺术家 ID 数组写入 artist_ids（与 `' / '` 分隔的艺术家文本对齐）
+
+#### Scenario: 存量惰性回填
+
+- **WHEN** 老库专辑的 artist_ids 为 NULL
+- **THEN** 系统 SHALL 提供菜单「数据 → 回填艺术家 ID」批量回填（详见 artist-follow spec），同步流程 SHALL NOT 主动改写存量专辑
+
+### Requirement: 批量回填缺失艺术家 ID
+
+系统 SHALL 提供菜单入口「回填艺术家 ID」，通过 `ncm-cli album get` 的 artists 字段为 `artist_ids` 为 NULL 的专辑批量回填网易云艺术家 ID。
+
+#### Scenario: 回填范围
+
+- **WHEN** 用户触发艺术家 ID 回填
+- **THEN** 系统 SHALL 仅处理 artist_ids 为空且 netease_album_id 非空的专辑，已有值不被覆盖
+
+#### Scenario: 回填执行
+
+- **WHEN** 逐张处理缺失艺术家 ID 的专辑
+- **THEN** 系统 SHALL 调用 `ncm-cli album get --albumId <id>` 取 detail.artists，将 ID 数组序列化写入 artist_ids，并在 UI 推送进度（当前/总数/专辑名/成功数），每次调用间隔 300ms
+
+#### Scenario: 详情无艺术家
+
+- **WHEN** 网易云返回的专辑详情不含 artists
+- **THEN** 系统 SHALL 计入失败数量，不写入 artist_ids
+
+#### Scenario: 登录前置检查与中途失效
+
+- **WHEN** 触发回填时未登录，或回填过程中登录失效
+- **THEN** 系统 SHALL 弹登录窗并中止回填，返回已处理统计
+
+#### Scenario: 防重入
+
+- **WHEN** 回填正在进行中再次触发
+- **THEN** 系统 SHALL 拒绝本次触发并提示正在执行中
+
+#### Scenario: 回填完成后补齐关注记录 ID
+
+- **WHEN** 艺术家 ID 回填完成（含登录失效中止前已回填的部分）
+- **THEN** 系统 SHALL 按名字匹配为缺失 ID 的关注记录补齐网易云艺术家 ID（详见 artist-follow spec），补齐条数计入回填结果
