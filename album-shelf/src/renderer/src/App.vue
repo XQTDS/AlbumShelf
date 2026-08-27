@@ -336,7 +336,7 @@
           <div
             v-for="album in albums"
             :key="album.id"
-            v-memo="[album.title, album.artist, album.artists, album.cover_url, album.physical_media, album.user_rating, album.mb_rating, album.release_date, album.genres, sortBy, sortOrder, gridBadges.media, gridBadges.userRating, gridBadges.mbRating, gridBadges.releaseDate, selectedAlbumId, playingAlbumId, coverErrorSet.has(album.id), coverProtocolFailed.has(album.id), followedArtists]"
+            v-memo="[album.title, album.artist, album.artists, album.cover_url, album.physical_media, album.user_rating, album.mb_rating, album.release_date, album.genres, sortBy, sortOrder, gridBadges.media, gridBadges.userRating, gridBadges.mbRating, gridBadges.releaseDate, gridBadges.followed, selectedAlbumId, playingAlbumId, coverErrorSet.has(album.id), coverProtocolFailed.has(album.id), followedArtists]"
             class="album-card"
             :class="{ 'card-selected': selectedAlbumId === album.id }"
             :data-id="album.id"
@@ -364,8 +364,8 @@
                 </template>
               </div>
             </div>
-            <!-- 已关注角标（右上角，常驻，无需 hover 即可识别已关注专辑） -->
-            <div v-if="isAlbumFollowed(album)" class="card-follow-badge" title="含已关注艺术家">★</div>
+            <!-- 已关注角标（右上角，受「已关注」角标开关控制，默认显示，无需 hover 即可识别已关注专辑） -->
+            <div v-if="gridBadges.followed && isAlbumFollowed(album)" class="card-follow-badge" title="含已关注艺术家">★</div>
             <!-- 实体介质角标（左上角，角标开关控制） -->
             <div v-if="gridBadges.media && parseMedia(album).length > 0" class="card-media-badges">
               <span
@@ -867,7 +867,7 @@ watch(viewMode, (mode) => {
 })
 
 // 唱片墙角标显示开关：角标显示与排序解耦，由用户在唱片墙工具栏控制
-// （默认实体图标开、其余关，与解耦前视觉一致）
+// （默认实体图标与已关注开、其余关，与现状视觉一致）
 const GRID_BADGE_STORAGE_KEY = 'albumShelfGridBadges'
 
 interface GridBadgeToggles {
@@ -875,13 +875,15 @@ interface GridBadgeToggles {
   userRating: boolean
   mbRating: boolean
   releaseDate: boolean
+  followed: boolean
 }
 
 const GRID_BADGE_DEFAULTS: GridBadgeToggles = {
   media: true,
   userRating: false,
   mbRating: false,
-  releaseDate: false
+  releaseDate: false,
+  followed: true
 }
 
 function loadGridBadges(): GridBadgeToggles {
@@ -894,7 +896,8 @@ function loadGridBadges(): GridBadgeToggles {
       media: typeof parsed.media === 'boolean' ? parsed.media : GRID_BADGE_DEFAULTS.media,
       userRating: typeof parsed.userRating === 'boolean' ? parsed.userRating : GRID_BADGE_DEFAULTS.userRating,
       mbRating: typeof parsed.mbRating === 'boolean' ? parsed.mbRating : GRID_BADGE_DEFAULTS.mbRating,
-      releaseDate: typeof parsed.releaseDate === 'boolean' ? parsed.releaseDate : GRID_BADGE_DEFAULTS.releaseDate
+      releaseDate: typeof parsed.releaseDate === 'boolean' ? parsed.releaseDate : GRID_BADGE_DEFAULTS.releaseDate,
+      followed: typeof parsed.followed === 'boolean' ? parsed.followed : GRID_BADGE_DEFAULTS.followed
     }
   } catch {
     return { ...GRID_BADGE_DEFAULTS }
@@ -2544,12 +2547,13 @@ const gridSortKey = computed<string>({
   }
 })
 
-// 角标开关项：工具栏按钮组与排序锁定判定共用（media 无对应排序字段，不受排序锁定）
+// 角标开关项：工具栏按钮组与排序锁定判定共用（media/followed 无对应排序字段，不受排序锁定）
 const BADGE_TOGGLE_ITEMS = [
   { key: 'media', label: '实体', icon: '💿', sortField: undefined },
   { key: 'userRating', label: '我的评分', icon: '★', sortField: 'user_rating' },
   { key: 'mbRating', label: 'MB评分', icon: '⭐', sortField: 'mb_rating' },
-  { key: 'releaseDate', label: '发行日期', icon: '📅', sortField: 'release_date' }
+  { key: 'releaseDate', label: '发行日期', icon: '📅', sortField: 'release_date' },
+  { key: 'followed', label: '已关注', icon: '★', sortField: undefined }
 ] as const
 
 type BadgeToggleItem = (typeof BADGE_TOGGLE_ITEMS)[number]
