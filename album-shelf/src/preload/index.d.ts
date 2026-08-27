@@ -42,8 +42,65 @@ interface FollowedArtist {
   original_id: number | null
   encrypted_id: string | null
   followed_at: string
+  /** 新专辑动态检查的增量水位线；null = 从未检查过 */
+  last_checked_at: string | null
   /** 该艺术家在库中的专辑数 */
   album_count: number
+}
+
+/**
+ * 动态条目分类
+ *
+ * `own` = 本人名下发行（注意不等于「新作品」：精选集、Remastered、单曲重新上架同样落此类）；
+ * `participation` = 参与作品（合辑 / OST / 群星 / 多人合作）。
+ */
+type ArtistUpdateCategory = 'own' | 'participation'
+
+/** 一条关注艺术家的新专辑动态 */
+interface ArtistUpdate {
+  id: number
+  artist_name: string
+  /** 加密专辑 ID，与 album.netease_album_id 同域 */
+  album_id: string
+  /** 明文专辑 ID，供网易云网页跳转 */
+  original_id: number | null
+  title: string
+  publish_time: number | null
+  release_date: string | null
+  cover_url: string | null
+  category: ArtistUpdateCategory
+  /** 曲目数；null = 尚未取到（老数据或 album tracks 失败），UI 需容忍 */
+  track_count: number | null
+  /** 总时长（毫秒）；null 同上 */
+  duration_ms: number | null
+  found_at: string
+  /** null = 未读 */
+  seen_at: string | null
+}
+
+/** 动态列表查询结果 */
+interface ArtistUpdateListResult {
+  items: ArtistUpdate[]
+  unreadCount: number
+  /** 最近一次成功检查的时间；null = 从未检查过 */
+  lastCheckedAt: string | null
+  running: boolean
+}
+
+/** 检查完成统计 */
+interface ArtistUpdateCheckResult {
+  /** 关注艺人总数 */
+  total: number
+  /** 新增的「本人名下发行」条目数 */
+  own: number
+  /** 新增的「参与作品」条目数 */
+  participation: number
+  /** 因已在专辑库中而跳过的专辑数 */
+  alreadyOwned: number
+  /** 因缺加密艺人 ID 而无法检查的艺人数 */
+  skippedNoId: number
+  /** 检查失败（水位线未推进，下次重跑补齐）的艺人数 */
+  failed: number
 }
 
 interface AlbumQueryResult {
@@ -390,6 +447,24 @@ interface AlbumShelfAPI {
   onArtistFilterRequest: (callback: (name: string) => void) => () => void
   /** 关注列表窗口：关闭自身 */
   followedWindowClose: () => void
+  /** 检查关注艺术家的新专辑（严格手动触发；单飞防重入）
+   *  @param lookbackDays 回溯天数（30/90/180/365，默认 90）。实际扫描窗口取
+   *  `min(now - lookbackDays, 该艺人水位线)`，即至少扫这个范围，水位线更早则扫到水位线 */
+  artistUpdatesCheck: (
+    lookbackDays?: number
+  ) => Promise<IpcResult<ArtistUpdateCheckResult> & { loginRequired?: boolean }>
+  /** 动态列表（未读优先 → 本人名下优先 → 发行日期倒序） */
+  artistUpdatesList: (unreadOnly?: boolean) => Promise<IpcResult<ArtistUpdateListResult>>
+  /** 标记单条动态已读 */
+  artistUpdatesMarkRead: (id: number) => Promise<IpcResult<{ changed: boolean }>>
+  /** 全部标记已读 */
+  artistUpdatesMarkAllRead: () => Promise<IpcResult<{ count: number }>>
+  /** 检查进度（当前/总数/艺人名） */
+  onArtistUpdatesProgress: (
+    callback: (progress: { current: number; total: number; title: string }) => void
+  ) => () => void
+  /** 动态变更广播（检查完成 / 标记已读 / 取关级联清理后各窗口同步刷新） */
+  onArtistUpdatesChanged: (callback: () => void) => () => void
 
   // 艺术家 ID 批量回填
   albumArtistIdFillStatus: () => Promise<IpcResult<{ pending: number; running: boolean }>>

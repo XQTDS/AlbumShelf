@@ -14,8 +14,18 @@ export interface FollowedArtist {
   original_id: number | null
   encrypted_id: string | null
   followed_at: string
+  /** 新专辑动态检查的增量水位线；NULL = 从未检查过 */
+  last_checked_at: string | null
   /** 该艺术家在库中的专辑数（按拆分后名字匹配统计，展示用） */
   album_count: number
+}
+
+/** 参与新专辑动态检查的关注艺术家（只取检查需要的字段） */
+export interface FollowedArtistCheckTarget {
+  name: string
+  /** artist songs 要求加密 ID；为空的艺人无法检查，由调用方跳过并计数 */
+  encrypted_id: string | null
+  last_checked_at: string | null
 }
 
 // ==================== FollowedArtistService ====================
@@ -46,10 +56,53 @@ export class FollowedArtistService {
     return !existed
   }
 
-  /** 取关艺术家。返回是否真的删除了行。 */
+  /**
+   * 取关艺术家。返回是否真的删除了行。
+   *
+   * 同时级联清理该艺人的新专辑动态条目——否则取关后动态流里会留下孤儿条目，
+   * 且再次关注时旧条目会带着过期的已读状态复活。两步放在同一事务里保证原子性。
+   */
   unfollow(name: string): boolean {
-    const result = this.db.prepare('DELETE FROM followed_artist WHERE name = ?').run(name.trim())
-    return result.changes > 0
+    const trimmed = name.trim()
+    const run = this.db.transaction((artistName: string) => {
+      this.db.prepare('DELETE FROM artist_update WHERE artist_name = ?').run(artistName)
+      return this.db.prepare('DELETE FROM followed_artist WHERE name = ?').run(artistName)
+    })
+    return run(trimmed).changes > 0
+  }
+
+  /**
+   * 参与新专辑动态检查的关注艺术家列表。
+   *
+   * 返回全部关注记录（含 encrypted_id 为空的）——缺 ID 的艺人由调用方跳过并计入
+   * 完成报告，而不是在这里静默过滤掉，否则用户永远不知道有艺人没被检查。
+   */
+  listCheckTargets(): FollowedArtistCheckTarget[] {
+    return this.db
+      .prepare(
+        'SELECT name, encrypted_id, last_checked_at FROM followed_artist ORDER BY name'
+      )
+      .all() as FollowedArtistCheckTarget[]
+  }
+
+  /**
+   * 推进某艺人的检查水位线。
+   *
+   * **只在该艺人检查成功时调用。** 失败也推进会让这段时间窗被永久漏检，
+   * 且没有任何提示——失败不推进，下次重跑会自动从旧水位线补齐。
+   */
+  updateLastChecked(name: string, checkedAt: string): void {
+    this.db
+      .prepare('UPDATE followed_artist SET last_checked_at = ? WHERE name = ?')
+      .run(checkedAt, name.trim())
+  }
+
+  /** 最近一次成功检查的时间（全体关注艺人取最大值）；从未检查过时为 null */
+  getLastCheckedAt(): string | null {
+    const row = this.db
+      .prepare('SELECT MAX(last_checked_at) AS t FROM followed_artist')
+      .get() as { t: string | null }
+    return row?.t ?? null
   }
 
   isFollowed(name: string): boolean {

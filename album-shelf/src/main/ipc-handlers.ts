@@ -4,8 +4,12 @@ import { getMainWindow } from './window-ref'
 import { exportDatabase, importDatabase, type ExportData } from './database'
 import { AlbumService, AlbumQueryOptions, type Album } from './album-service'
 import { FollowedArtistService } from './followed-artist-service'
+import {
+  ArtistUpdateService,
+  type ArtistUpdateCategory
+} from './artist-update-service'
 import { TrackService, type Track } from './track-service'
-import { NcmCliService, publishTimeToReleaseDate } from './ncm-cli-service'
+import { NcmCliService, publishTimeToReleaseDate, type NcmCliAlbumDetail } from './ncm-cli-service'
 import { ensureBuiltinCredentials } from './ncm-credentials'
 import { TrackSyncService } from './track-sync-service'
 import { SyncManager } from './sync/sync-manager'
@@ -34,6 +38,7 @@ let trackSyncService: TrackSyncService
 let syncManager: SyncManager
 let enrichService: EnrichService
 let followedArtistService: FollowedArtistService
+let artistUpdateService: ArtistUpdateService
 
 // 封面批量补全进行中标志（防重入）
 let coverFillRunning = false
@@ -43,6 +48,9 @@ let releaseDateFillRunning = false
 
 // 艺术家 ID 批量回填进行中标志（防重入）
 let artistIdFillRunning = false
+
+// 关注艺术家新专辑检查进行中标志（防重入）
+let artistUpdateCheckRunning = false
 
 // 播放会话代际：新一轮 player:playAlbum / player:stop 使上一轮未完成的
 // 后台补队列任务失效（代际不匹配即中止），避免旧任务污染新队列
@@ -73,6 +81,7 @@ function initServices(): void {
 
   enrichService = new EnrichService(albumService)
   followedArtistService = new FollowedArtistService()
+  artistUpdateService = new ArtistUpdateService()
 
   // 初始化 MusicBrainz 客户端（搜索和 lookup 不需要认证）
   const credentials = loadCredentials()
@@ -1197,7 +1206,7 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  /** 取消关注艺术家 */
+  /** 取消关注艺术家（同时级联清理其新专辑动态条目） */
   ipcMain.handle('artist:unfollow', async (_event, name: string) => {
     try {
       if (typeof name !== 'string' || !name.trim()) {
@@ -1205,6 +1214,8 @@ export function registerIpcHandlers(): void {
       }
       followedArtistService.unfollow(name)
       broadcastFollowedChanged()
+      // 级联删除了该艺人的动态条目，动态 Tab 与未读数需同步刷新
+      broadcastArtistUpdatesChanged()
       return { success: true }
     } catch (error) {
       return { success: false, error: (error as Error).message }
@@ -1233,6 +1244,328 @@ export function registerIpcHandlers(): void {
   /** 关注列表窗口：关闭自身（Esc 快捷键） */
   ipcMain.on('followed:closeWindow', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close()
+  })
+
+  // ==================== 关注艺术家新专辑动态 ====================
+
+  /** 可选的回溯窗口（天）。与关注窗口下拉选项一致，非法值回落默认 */
+  const ARTIST_UPDATE_LOOKBACK_CHOICES = [30, 90, 180, 365]
+
+  /** 默认回溯窗口：90 天。够长到首开不空，够短到不至于涌出几年历史 */
+  const ARTIST_UPDATE_DEFAULT_LOOKBACK_DAYS = 90
+
+  /** 网易云「群星」实体的明文 ID，出现即说明是合辑 */
+  const VARIOUS_ARTISTS_ORIGINAL_ID = 122455
+
+  /** 动态变更后广播给所有窗口（关注列表窗口的动态 Tab 与未读数同步刷新） */
+  function broadcastArtistUpdatesChanged(): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('artist-updates:changed')
+      }
+    }
+  }
+
+  /**
+   * 判断一张专辑对该关注艺人而言是「本人名下发行」还是「参与作品」
+   *
+   * 这是一个**启发式**，不是精确判定，实现阶段以真实数据调优过一轮后仍会有误判：
+   * - 无法区分新作与精选集 / Remastered / 单曲重新上架（它们确实都是本人名下发行，
+   *   bypubtime 接口的语义如此）——因此 UI 文案用「本人名下发行」而非「新作品」
+   * - 合辑 / OST / 综艺占实测样本的相当比例，靠群星实体与艺术家数量兜底
+   */
+  function classifyArtistUpdate(
+    detail: NcmCliAlbumDetail,
+    artistName: string
+  ): ArtistUpdateCategory {
+    const artists = detail.artists || []
+    // 没有艺术家信息时保守归为参与作品，避免把合辑误报成本人新专辑
+    if (artists.length === 0) {
+      return 'participation'
+    }
+    if (artists.some((a) => a.originalId === VARIOUS_ARTISTS_ORIGINAL_ID)) {
+      return 'participation'
+    }
+    const target = artistName.trim()
+    // 本人独占，或本人领衔的双人合作（超过两人基本是合辑/群像企划）
+    if (artists[0]?.name?.trim() === target && artists.length <= 2) {
+      return 'own'
+    }
+    return 'participation'
+  }
+
+  /**
+   * 拉取专辑的曲目数与总时长。
+   *
+   * 只能走 `album tracks`：`album get` 的返回里没有这两个字段（实测全字段确认），
+   * 而按 `artist songs` 的结果聚合会**少算**——那只是该艺人在这张专辑里的歌。
+   * 拿不到时返回 null 由调用方降级，不让一条动态因此丢失。
+   */
+  async function fetchTrackInfo(
+    albumId: string
+  ): Promise<{ trackCount: number; durationMs: number } | null> {
+    try {
+      const tracks = await ncmCliService.getAlbumTracks(albumId)
+      if (!Array.isArray(tracks) || tracks.length === 0) return null
+      return {
+        trackCount: tracks.length,
+        durationMs: tracks.reduce((sum, t) => sum + (t.duration || 0), 0)
+      }
+    } catch (err) {
+      if (err instanceof NcmLoginRequiredError) throw err
+      console.error(`[ArtistUpdates] 获取专辑曲目失败 (albumId: ${albumId}):`, err)
+      return null
+    }
+  }
+
+  /**
+   * 检查关注艺术家的新专辑
+   *
+   * 逐艺人按发布时间窗增量抓取歌曲流 → 按专辑聚合去重 → 补 album get 拿发行日期与
+   * 艺术家列表 → 分类落库。严格手动触发，与「同步仅手动触发」同一产品哲学。
+   *
+   * 扫描窗口 = `min(now - lookbackDays, 该艺人水位线)`，即**至少**扫用户选中的范围，
+   * 水位线更早时扫到水位线。这样「昨天刚查过但想往回翻一年」与「半年没查过、只选了
+   * 30 天也不能漏掉空档期」两种情况都成立——换成 max 或直接覆盖都会各错一种。
+   *
+   * 三条不变量：
+   * 1. **水位线只在该艺人完全成功时推进**——部分失败不推进，下次重跑补齐；
+   *    重跑代价可控，因为已收录且完整的条目在任何调用之前就被 entryStatus 挡掉了。
+   * 2. **空 album 守卫**——歌曲的 album 字段可能缺失，缺 id 的直接丢弃。
+   * 3. **首次检查的基线批次落库即已读**——未读数的语义是「上次检查后的新发现」，
+   *    首开顶着上百未读是噪音不是信息。往回翻更久所发现的历史条目算新发现，标未读。
+   *
+   * @param lookbackDays 回溯天数，取值须在 ARTIST_UPDATE_LOOKBACK_CHOICES 内，否则回落默认
+   */
+  ipcMain.handle('artistUpdates:check', async (event, lookbackDays?: number) => {
+    if (artistUpdateCheckRunning) {
+      return { success: false, error: '新专辑检查正在进行中，请稍后再试' }
+    }
+    artistUpdateCheckRunning = true
+
+    const stats = {
+      total: 0,
+      own: 0,
+      participation: 0,
+      alreadyOwned: 0,
+      skippedNoId: 0,
+      failed: 0
+    }
+
+    try {
+      const targets = followedArtistService.listCheckTargets()
+      stats.total = targets.length
+
+      if (stats.total === 0) {
+        return { success: true, data: stats }
+      }
+
+      // 登录前置检查：未登录直接弹登录窗，避免几十次无效子进程调用
+      const loginStatus = await ncmCliService.getLoginStatus()
+      if (!loginStatus.isLoggedIn) {
+        authService.triggerLoginPopup()
+        return { success: true, data: stats, loginRequired: true }
+      }
+
+      const sender = event.sender
+      // 已入库专辑（加密 ID 与 artist_update.album_id 同域），命中即不打扰
+      const ownedAlbumIds = new Set(albumService.getCollectedNeteaseIds().albumIds)
+      const endTime = Date.now()
+      const checkedAt = new Date(endTime).toISOString()
+      // 白名单校验：渲染层传什么都不能直接拿去算时间窗
+      const lookback = ARTIST_UPDATE_LOOKBACK_CHOICES.includes(lookbackDays as number)
+        ? (lookbackDays as number)
+        : ARTIST_UPDATE_DEFAULT_LOOKBACK_DAYS
+      const lookbackStart = endTime - lookback * 24 * 60 * 60 * 1000
+
+      for (let i = 0; i < targets.length; i++) {
+        const target = targets[i]
+
+        sender.send('artistUpdates:progress', {
+          current: i + 1,
+          total: stats.total,
+          title: target.name
+        })
+
+        // artist songs 只接受加密艺人 ID；缺 ID 的艺人跳过并计数，
+        // 由完成报告告知用户，而不是静默漏掉
+        if (!target.encrypted_id) {
+          stats.skippedNoId++
+          continue
+        }
+
+        // 首次检查（无水位线）的批次落库即已读；水位线损坏时按首次处理
+        const isBaseline = !target.last_checked_at
+        const watermark = target.last_checked_at
+          ? new Date(target.last_checked_at).getTime()
+          : NaN
+        // 至少扫用户选中的范围，水位线更早则扫到水位线（见上方 JSDoc 的取舍说明）
+        const startTime = Number.isFinite(watermark)
+          ? Math.min(lookbackStart, watermark)
+          : lookbackStart
+
+        let artistFullySucceeded = true
+
+        try {
+          const songs = await ncmCliService.getArtistSongsInWindow(
+            target.encrypted_id,
+            startTime,
+            endTime
+          )
+
+          // 歌曲流 → 专辑级去重。空 album / 缺 id 的记录无法聚合，直接丢弃
+          const candidateAlbumIds = new Set<string>()
+          for (const song of songs) {
+            const albumId = song.album?.id
+            if (albumId) {
+              candidateAlbumIds.add(albumId)
+            }
+          }
+
+          for (const albumId of candidateAlbumIds) {
+            if (ownedAlbumIds.has(albumId)) {
+              stats.alreadyOwned++
+              continue
+            }
+
+            const status = artistUpdateService.entryStatus(target.name, albumId)
+            // 已收录且信息完整：零调用跳过（也让失败重跑代价可控）
+            if (status === 'complete') {
+              continue
+            }
+
+            // 限流：每次 ncm-cli 调用间隔 300ms（与既有批量任务同一约定）
+            await new Promise((resolve) => setTimeout(resolve, 300))
+
+            try {
+              // 自愈路径：已收录但缺曲目信息（老数据 / 上次 tracks 失败）时
+              // 只补拉 tracks，省掉一次 album get
+              if (status === 'incomplete') {
+                const info = await fetchTrackInfo(albumId)
+                if (info) {
+                  artistUpdateService.fillTrackInfo(
+                    target.name,
+                    albumId,
+                    info.trackCount,
+                    info.durationMs
+                  )
+                } else {
+                  artistFullySucceeded = false
+                }
+                continue
+              }
+
+              const detail = await ncmCliService.getAlbumDetail(albumId)
+              const category = classifyArtistUpdate(detail, target.name)
+
+              // 曲目数与总时长只能来自 album tracks：album get 不含这两个字段，
+              // 而按 artist songs 聚合会**少算**——那只是该艺人在这张专辑里的歌，
+              // 合辑里参与 2 首就会显示「2 首」，正好把合辑误认成单曲
+              await new Promise((resolve) => setTimeout(resolve, 300))
+              const info = await fetchTrackInfo(albumId)
+              if (!info) {
+                // 曲目信息拿不到不丢条目，落库留空，靠 incomplete 自愈路径下次补
+                artistFullySucceeded = false
+              }
+
+              const inserted = artistUpdateService.insert({
+                artist_name: target.name,
+                album_id: albumId,
+                original_id: detail.originalId ?? null,
+                title: detail.name,
+                publish_time: detail.publishTime ?? null,
+                release_date: detail.publishTime
+                  ? publishTimeToReleaseDate(detail.publishTime)
+                  : null,
+                cover_url: detail.coverImgUrl ?? null,
+                category,
+                track_count: info?.trackCount ?? null,
+                duration_ms: info?.durationMs ?? null,
+                seen: isBaseline
+              })
+              if (inserted) {
+                if (category === 'own') stats.own++
+                else stats.participation++
+              }
+            } catch (err) {
+              if (err instanceof NcmLoginRequiredError) throw err
+              console.error(
+                `[ArtistUpdates] 获取专辑详情失败 (artist: ${target.name}, albumId: ${albumId}):`,
+                err
+              )
+              // 单张专辑失败：不推进该艺人水位线，下次重跑只补这一张
+              artistFullySucceeded = false
+            }
+          }
+        } catch (err) {
+          // 登录中途失效：弹登录窗并中止整轮（继续跑只会连续失败）
+          if (authService.handleLoginRequiredError(err)) {
+            broadcastArtistUpdatesChanged()
+            return { success: true, data: stats, loginRequired: true }
+          }
+          console.error(`[ArtistUpdates] 检查艺人失败 (${target.name}):`, err)
+          artistFullySucceeded = false
+        }
+
+        // 只有完全成功才推进水位线；失败不推进 → 下次重跑自动补齐这段窗口
+        if (artistFullySucceeded) {
+          followedArtistService.updateLastChecked(target.name, checkedAt)
+        } else {
+          stats.failed++
+        }
+
+        // 艺人之间同样限流
+        if (i < targets.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 300))
+        }
+      }
+
+      broadcastArtistUpdatesChanged()
+      return { success: true, data: stats }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    } finally {
+      artistUpdateCheckRunning = false
+    }
+  })
+
+  /** 动态列表（未读优先 → 本人名下优先 → 发行日期倒序） */
+  ipcMain.handle('artistUpdates:list', async (_event, unreadOnly?: boolean) => {
+    try {
+      return {
+        success: true,
+        data: {
+          items: artistUpdateService.list(!!unreadOnly),
+          unreadCount: artistUpdateService.unreadCount(),
+          lastCheckedAt: followedArtistService.getLastCheckedAt(),
+          running: artistUpdateCheckRunning
+        }
+      }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /** 标记单条已读 */
+  ipcMain.handle('artistUpdates:markRead', async (_event, id: number) => {
+    try {
+      const changed = artistUpdateService.markRead(id)
+      if (changed) broadcastArtistUpdatesChanged()
+      return { success: true, data: { changed } }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /** 全部标记已读 */
+  ipcMain.handle('artistUpdates:markAllRead', async () => {
+    try {
+      const count = artistUpdateService.markAllRead()
+      if (count > 0) broadcastArtistUpdatesChanged()
+      return { success: true, data: { count } }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
   })
 
   // ==================== 艺术家 ID 批量回填 ====================

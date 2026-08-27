@@ -338,6 +338,37 @@ const albumShelfAPI = {
   // 关注列表窗口：关闭自身（Esc 快捷键）
   followedWindowClose: () => ipcRenderer.send('followed:closeWindow'),
 
+  // ==================== 关注艺术家新专辑动态 ====================
+
+  artistUpdatesCheck: (lookbackDays?: number) =>
+    ipcRenderer.invoke('artistUpdates:check', lookbackDays),
+
+  artistUpdatesList: (unreadOnly?: boolean) =>
+    ipcRenderer.invoke('artistUpdates:list', unreadOnly),
+
+  artistUpdatesMarkRead: (id: number) => ipcRenderer.invoke('artistUpdates:markRead', id),
+
+  artistUpdatesMarkAllRead: () => ipcRenderer.invoke('artistUpdates:markAllRead'),
+
+  // 检查进度（当前/总数/艺人名）
+  onArtistUpdatesProgress: (
+    callback: (progress: { current: number; total: number; title: string }) => void
+  ) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      progress: { current: number; total: number; title: string }
+    ) => callback(progress)
+    ipcRenderer.on('artistUpdates:progress', handler)
+    return () => ipcRenderer.removeListener('artistUpdates:progress', handler)
+  },
+
+  // 动态变更广播（检查完成、标记已读、取关级联清理后刷新）
+  onArtistUpdatesChanged: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('artist-updates:changed', handler)
+    return () => ipcRenderer.removeListener('artist-updates:changed', handler)
+  },
+
   // ==================== 艺术家 ID 批量回填 ====================
 
   albumArtistIdFillStatus: () => ipcRenderer.invoke('album:artistIdFillStatus'),

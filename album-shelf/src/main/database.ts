@@ -68,6 +68,38 @@ CREATE TABLE IF NOT EXISTS followed_artist (
 );
 `
 
+// 关注艺术家的新专辑动态条目。
+//
+// 独立于 album 表：手动同步会删除「不在网易云收藏列表」的本地专辑
+// （sync-manager.ts），动态条目若写进 album 会被下次同步整片删掉。
+// 因此动态流自成一张表，未入库条目封面走远程直链（不进 cover:// 缓存）。
+//
+// album_id 是加密专辑 ID，与 album.netease_album_id 同域，可直接比对判断「已入库」；
+// original_id 是明文 ID，仅供网易云网页跳转（来自 album get，几乎不会为空）。
+const CREATE_ARTIST_UPDATE_TABLE = `
+CREATE TABLE IF NOT EXISTS artist_update (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  artist_name TEXT NOT NULL,
+  album_id TEXT NOT NULL,
+  original_id INTEGER,
+  title TEXT NOT NULL,
+  publish_time INTEGER,
+  release_date TEXT,
+  cover_url TEXT,
+  category TEXT NOT NULL,
+  track_count INTEGER,
+  duration_ms INTEGER,
+  found_at TEXT NOT NULL DEFAULT (datetime('now')),
+  seen_at TEXT,
+  UNIQUE (artist_name, album_id)
+);
+`
+
+const CREATE_ARTIST_UPDATE_INDEXES = `
+CREATE INDEX IF NOT EXISTS idx_artist_update_seen ON artist_update(seen_at);
+CREATE INDEX IF NOT EXISTS idx_artist_update_found ON artist_update(found_at DESC);
+`
+
 export function initDatabase(): Database.Database {
   if (db) {
     return db
@@ -88,6 +120,8 @@ export function initDatabase(): Database.Database {
   db.exec(CREATE_GENRE_TABLE)
   db.exec(CREATE_ALBUM_GENRE_TABLE)
   db.exec(CREATE_FOLLOWED_ARTIST_TABLE)
+  db.exec(CREATE_ARTIST_UPDATE_TABLE)
+  db.exec(CREATE_ARTIST_UPDATE_INDEXES)
 
   // Migration: album table
   const albumColumns = db
@@ -133,6 +167,29 @@ export function initDatabase(): Database.Database {
   // Add netease_original_id if missing
   if (!trackColumns.some((c) => c.name === 'netease_original_id')) {
     db.exec('ALTER TABLE track ADD COLUMN netease_original_id INTEGER')
+  }
+
+  // Migration: followed_artist table
+  const followedArtistColumns = db
+    .prepare("PRAGMA table_info('followed_artist')")
+    .all() as { name: string }[]
+  // Add last_checked_at if missing（新专辑动态检查的增量水位线；NULL = 从未检查过，
+  // 首次检查回溯 90 天基线。仅在该艺人检查成功时推进，失败不推进以免永久漏检）
+  if (!followedArtistColumns.some((c) => c.name === 'last_checked_at')) {
+    db.exec('ALTER TABLE followed_artist ADD COLUMN last_checked_at TEXT')
+  }
+
+  // Migration: artist_update table
+  const artistUpdateColumns = db
+    .prepare("PRAGMA table_info('artist_update')")
+    .all() as { name: string }[]
+  // Add track_count / duration_ms if missing（曲目数与总时长，用于区分单曲与正式专辑）。
+  // 已有行为 NULL，下次检查时由「补拉 tracks 并 UPDATE」的自愈路径填上，无需手动清库
+  if (!artistUpdateColumns.some((c) => c.name === 'track_count')) {
+    db.exec('ALTER TABLE artist_update ADD COLUMN track_count INTEGER')
+  }
+  if (!artistUpdateColumns.some((c) => c.name === 'duration_ms')) {
+    db.exec('ALTER TABLE artist_update ADD COLUMN duration_ms INTEGER')
   }
 
   return db
