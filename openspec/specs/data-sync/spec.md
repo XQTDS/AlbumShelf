@@ -17,7 +17,7 @@
 #### Scenario: 已存在专辑不改动
 
 - **WHEN** 同步过程中发现某张专辑已存在于数据库（按 netease_album_id 匹配）
-- **THEN** 系统 SHALL 仅计数跳过，不修改该专辑在数据库中的任何字段
+- **THEN** 系统 SHALL 仅计数跳过，不修改该专辑在数据库中的任何字段（唯一例外见「同步顺带补全网易云跳转 ID」requirement）
 
 ### Requirement: 清理已取消收藏的专辑
 
@@ -187,7 +187,31 @@
 - **WHEN** 回填正在进行中再次触发
 - **THEN** 系统 SHALL 拒绝本次触发并提示正在执行中
 
-### Requirement: 同步保留结构化艺术家数据
+### Requirement: 同步顺带补全网易云跳转 ID
+
+同步 SHALL 利用 `album collected` 记录中的明文 ID（originalId）为已存在但 `netease_original_id` 为 NULL 的专辑顺带补写该列，修复详情面板网易云跳转链接缺失（详情面板跳转链接以 `netease_original_id` 为显示条件）。这是「已存在专辑不改动」不变量唯一例外。
+
+#### Scenario: 补全空值
+
+- **WHEN** 同步中发现某张已存在专辑的 `netease_original_id` 为 NULL，且本次拉取的记录带明文 `originalId`
+- **THEN** 系统 SHALL 将该明文 ID 写入该专辑的 `netease_original_id`（详情面板跳转链接随同步完成刷新可见）
+
+#### Scenario: 不覆盖已有值
+
+- **WHEN** 已存在专辑的 `netease_original_id` 非空，或本次拉取的记录缺明文 ID
+- **THEN** 系统 SHALL 不对该字段做任何写入
+
+#### Scenario: 统计与提示
+
+- **WHEN** 同步结束
+- **THEN** 系统 SHALL 在同步结果中返回 `backfilled`（本次补全跳转 ID 的专辑数，为 skipped 子集，不改变 added + skipped == total 的口径），并在 UI 仅当 `backfilled > 0` 时在完成提示中追加「补全 X 张网易云跳转 ID」
+
+#### Scenario: 增量收敛
+
+- **WHEN** 后续再次同步
+- **THEN** 系统 SHALL 仅对仍为 NULL 的行执行补全，二次同步的补全数量自然收敛趋零
+
+
 
 同步与在线添加链路 SHALL 将网易云返回的艺术家数组以结构化 JSON（`[{name, originalId, id}]`）落库到 `album.artists`，并将名字以 `' / '` 连接派生 `artist` 展示文本（两者同源产出、天然对齐），替代旧的 artist_ids 下标对齐方案（艺术家名含 `/` 时会错位）。
 
@@ -209,7 +233,7 @@
 #### Scenario: 存量惰性回填
 
 - **WHEN** 老库专辑的 artists 为 NULL
-- **THEN** 系统 SHALL 提供菜单「数据 → 回填艺术家 ID」批量回填（详见 artist-follow spec），同步流程 SHALL NOT 主动改写存量专辑
+- **THEN** 系统 SHALL 提供菜单「数据 → 回填艺术家 ID」批量回填（详见 artist-follow spec），同步流程 SHALL NOT 主动改写存量专辑的 artists 与其他字段（`netease_original_id` 空值补全为本 spec「同步顺带补全网易云跳转 ID」的明确例外）
 
 ### Requirement: 批量回填缺失结构化艺术家数据
 
