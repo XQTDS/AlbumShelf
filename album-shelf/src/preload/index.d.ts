@@ -146,6 +146,8 @@ interface AlbumCommentsResult {
 interface SyncResult {
   added: number
   skipped: number
+  /** 已存在专辑中被顺带补全缺失网易云跳转 ID 的数量（skipped 的子集） */
+  backfilled: number
   deleted: number
   total: number
 }

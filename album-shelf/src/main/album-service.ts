@@ -52,6 +52,8 @@ export interface AlbumUpdate {
   artists?: string | null
   track_count?: number | null
   enriched_at?: string | null
+  /** 明文专辑 ID（网易云网页跳转用） */
+  netease_original_id?: number | null
 }
 
 export interface AlbumQueryOptions {
@@ -132,6 +134,27 @@ export class AlbumService {
     })
     insertMany(albums)
     return ids
+  }
+
+  /**
+   * 批量补全已有专辑的明文网易云 ID（同步顺带补全跳转链接用）。
+   * 仅更新原值为 NULL 的行（SQL 层 `IS NULL` 双保险），已有值不覆盖。
+   * @returns 实际补全的行数
+   */
+  backfillOriginalIds(rows: { id: number; netease_original_id: number }[]): number {
+    if (rows.length === 0) return 0
+
+    const update = this.db.prepare(
+      'UPDATE album SET netease_original_id = ? WHERE id = ? AND netease_original_id IS NULL'
+    )
+    const backfillMany = this.db.transaction((items: { id: number; netease_original_id: number }[]) => {
+      let count = 0
+      for (const row of items) {
+        count += update.run(row.netease_original_id, row.id).changes
+      }
+      return count
+    })
+    return backfillMany(rows)
   }
 
   /**

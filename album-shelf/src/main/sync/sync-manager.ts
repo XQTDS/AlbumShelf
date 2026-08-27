@@ -6,6 +6,8 @@ export interface SyncResult {
   added: number
   /** 本次同步跳过（已存在）的专辑数量 */
   skipped: number
+  /** 已存在专辑中因缺少明文网易云 ID 被本次顺带补全的数量（skipped 的子集，added + skipped == total 不变量不受影响） */
+  backfilled: number
   /** 本次同步删除（本地有但网易云收藏列表中已没有）的专辑数量 */
   deleted: number
   /** 同步源返回的专辑总数 */
@@ -28,7 +30,8 @@ const WRITE_PROGRESS_STEP = 50
  * SyncManager - 同步管理器
  *
  * 负责调用 SyncService 获取收藏专辑列表，通过 netease_album_id 增量去重写入数据库。
- * - 已存在于数据库的专辑仅计数跳过，不修改任何字段
+ * - 已存在于数据库的专辑仅计数跳过，不修改任何字段；
+ *   唯一例外是同步顺带把缺失的明文网易云 ID（netease_original_id）补全为空值，已有值不覆盖
  * - 本地有但收藏列表中已没有的专辑会被删除（含曲目/风格级联清理）
  */
 export class SyncManager {
@@ -69,6 +72,8 @@ export class SyncManager {
 
       // 2. 逐个检查并写入数据库（通过 netease_album_id 去重，已存在的不修改）
       const albumsToInsert: AlbumInsert[] = []
+      // 已存在但缺明文网易云 ID 的行，收集后批量补全（详见解 3.5；不影响「已存在不改动」其他字段）
+      const originalIdBackfills: { id: number; netease_original_id: number }[] = []
 
       // 拉取完成，进度条切换为定长模式（收藏为空时不推送，避免进度条闪现 0/0）
       if (total > 0) {
@@ -80,6 +85,13 @@ export class SyncManager {
         const existing = this.albumService.getAlbumByNeteaseAlbumId(album.netease_album_id)
         if (existing) {
           skipped++
+          // 顺带补全：本地缺明文 ID 且本次拉取到明文 ID 时收集，写库阶段批量落库
+          if (existing.netease_original_id == null && album.netease_original_id != null) {
+            originalIdBackfills.push({
+              id: existing.id,
+              netease_original_id: album.netease_original_id
+            })
+          }
         } else {
           albumsToInsert.push({
             netease_album_id: album.netease_album_id,
@@ -110,6 +122,15 @@ export class SyncManager {
         this.albumService.insertAlbums(albumsToInsert)
       }
 
+      // 3.5 顺带补全已存在专辑缺失的明文网易云 ID（单个事务，仅补空值）
+      const backfilled =
+        originalIdBackfills.length > 0
+          ? this.albumService.backfillOriginalIds(originalIdBackfills)
+          : 0
+      if (backfilled > 0) {
+        console.log(`[SyncManager] 同步顺带补全 ${backfilled} 张专辑缺失的网易云跳转 ID`)
+      }
+
       // 4. 删除本地有但收藏列表中已没有的专辑（先增后删：新增失败则不会误删）
       const onlineIds = new Set(neteaseAlbums.map((album) => album.netease_album_id))
       const { albumIds: dbAlbumIds } = this.albumService.getCollectedNeteaseIds()
@@ -124,6 +145,7 @@ export class SyncManager {
       return {
         added,
         skipped,
+        backfilled,
         deleted,
         total: neteaseAlbums.length
       }

@@ -2673,9 +2673,10 @@ async function handleSync() {
   try {
     const result = await window.api.syncStart()
     if (result.success && result.data) {
-      const { added, skipped, deleted, total } = result.data
-      if (added > 0 || deleted > 0) {
-        showMessage(`同步完成！新增 ${added} 张，删除 ${deleted} 张，跳过 ${skipped} 张已存在`, 'success')
+      const { added, skipped, backfilled, deleted, total } = result.data
+      if (added > 0 || deleted > 0 || backfilled > 0) {
+        const backfillMsg = backfilled > 0 ? `，补全 ${backfilled} 张网易云跳转 ID` : ''
+        showMessage(`同步完成！新增 ${added} 张，删除 ${deleted} 张，跳过 ${skipped} 张已存在${backfillMsg}`, 'success')
       } else {
         showMessage(`同步完成，没有新增专辑（${total} 张均已存在）`, 'info')
       }
