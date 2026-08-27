@@ -173,12 +173,72 @@
 - **WHEN** accessToken 与 refreshToken 均已失效（长期未使用超出网易云刷新凭证有效期）
 - **THEN** `login --check` SHALL 返回未登录，系统按既有行为弹出登录窗引导扫码登录
 
-### Requirement: 艺术家命令族（预留）
+### Requirement: 获取艺人指定发布时间窗内的歌曲
 
-系统 SHALL 在 NcmCliService 中预留艺术家命令封装区，记录 ncm-cli 艺术家命令族的探测结论（0.1.6 探测，0.1.7 沿用：0.1.7 仅新增 token 自动刷新，命令族行为未变），供后续「关注艺术家的新专辑」等能力使用；当前版本的回填功能 SHALL 复用 `album get` 的 artists 字段，不依赖 artist 命令族。
+系统 SHALL 通过 `ncm-cli artist songs --artistId <加密艺人ID> --startTime <ms> --endTime <ms> --limit <n> --offset <n>` 获取艺人在指定发布时间窗内的歌曲列表，用于「关注艺术家新专辑」检查。
+
+#### Scenario: 参数要求加密艺人 ID
+
+- **WHEN** 调用 `getArtistSongsPage(encryptedArtistId, startTime, endTime, limit, offset)`
+- **THEN** `--artistId` SHALL 传入加密艺人 ID（32 位 hex，followed_artist.encrypted_id），明文 original_id SHALL NOT 被接受
+
+#### Scenario: 返回结构解析
+
+- **WHEN** 命令返回 code 200
+- **THEN** `data` SHALL 被按**歌曲数组**解析——该命令的返回体不是 `album collected` / `search album` 那种 `{ recordCount, records }` 包装结构
+- **AND** 系统 SHALL 解析每首歌的 `originalId`、`id`、`name`、`duration`、`artists`（歌曲级参与者）、`album`（`{ id, originalId, name }`）、`coverImgUrl`（歌曲级封面）
+- **AND** 非数组返回 SHALL 降级为空数组
+
+#### Scenario: 返回体不含发行时间
+
+- **WHEN** 需要候选专辑的发行日期或专辑级艺术家列表
+- **THEN** 系统 SHALL 另行调用 `album get`——`artist songs` 的返回体不含 publishTime，即使查询本身按发布时间窗过滤
+
+#### Scenario: 内嵌 album 空守卫
+
+- **WHEN** 某首歌的 `album` 字段缺失或缺少 `id`
+- **THEN** 系统 SHALL 丢弃该歌曲，不参与按专辑聚合
+
+#### Scenario: 分页上限
+
+- **WHEN** 传入 `--limit` 超过 100
+- **THEN** ncm-cli SHALL 返回 code 400（「获取指定发布时间内艺人下的歌曲列表数据过多，请检查是否超限」）；系统 SHALL 固定使用单页 100
+
+#### Scenario: 翻页终止条件
+
+- **WHEN** 自动翻页拉取整个时间窗
+- **THEN** 系统 SHALL 以**返回空数组**作为终止条件，且 offset SHALL 按 limit 递增
+- **AND** 系统 SHALL NOT 以「返回条数少于 limit」作为终止条件——实测存在首页 79 条、次页满 100 条的情况（推测为先按 offset 取原始页再过滤/去重），按条数递增或短页即停会导致重复抓取或漏页
+- **AND** 系统 SHALL 设置翻页安全上限并在触顶时告警
+
+### Requirement: 获取专辑曲目列表
+
+系统 SHALL 通过 `ncm-cli album tracks --albumId <albumId>` 获取专辑的完整曲目列表。
+
+#### Scenario: 返回结构解析
+
+- **WHEN** 命令返回 code 200
+- **THEN** `data` SHALL 被按歌曲数组解析，每首歌含 `duration`（毫秒）等字段
+
+#### Scenario: 作为曲目数与总时长的唯一来源
+
+- **WHEN** 需要某专辑的曲目数与总时长
+- **THEN** 系统 SHALL 由本命令的返回数组取长度与 `duration` 求和
+- **AND** 系统 SHALL NOT 期望 `album get` 提供这两个字段（其返回体不含）
+- **AND** 系统 SHALL NOT 由 `artist songs` 的聚合结果推算（那仅是该艺人在专辑中的歌曲，会将合辑误算为单曲）
+
+### Requirement: 艺术家命令族探测结论
+
+系统 SHALL 在 NcmCliService 的艺术家命令区记录 ncm-cli 艺术家命令族的探测结论，供后续能力扩展参考。
 
 #### Scenario: 探测结论
 
-- **WHEN** 开发者查阅预留区注释
-- **THEN** 注释 SHALL 记录：`artist songs --artistId <加密ID> --startTime --endTime --limit --offset` 为艺人歌曲列表且参数要求加密艺术家 ID；`search all --keyword` 综合搜索返回含 originalId/id 的 artists 数组；无 `search artist` 子命令
-- **AND** 结论 SHALL 与数据模型一致：followed_artist 同时保存 original_id 与 encrypted_id，供未来按加密 ID 调用 artist songs
+- **WHEN** 开发者查阅艺术家命令区注释
+- **THEN** 注释 SHALL 记录：`artist` 族仅有 `songs` 一个子命令；`search all --keyword` 综合搜索返回含 originalId/id 的 artists 数组；无 `search artist` 子命令
+- **AND** 结论 SHALL 与数据模型一致：followed_artist 同时保存 original_id 与 encrypted_id，`artist songs` 按加密 ID 调用
+
+#### Scenario: 加密 ID 覆盖的机制盲区
+
+- **WHEN** 某关注艺术家名下没有任何专辑在本地库中
+- **THEN** 既有的按名字匹配回填路径 SHALL NOT 能为其补齐加密 ID（`artist songs` 入参本身就是加密 ID，构成循环依赖）
+- **AND** 注释 SHALL 记录 `search all` / `search album` 结果内嵌的 artists 为可能的反查兜底路径（当前未实现）

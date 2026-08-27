@@ -107,10 +107,11 @@ function createFollowedWindow(): void {
   }
 
   followedWindow = new BrowserWindow({
-    width: 460,
-    height: 560,
-    minWidth: 360,
-    minHeight: 440,
+    // 双 Tab（关注 / 动态）后动态信息流需要更多横向与纵向空间
+    width: 560,
+    height: 640,
+    minWidth: 420,
+    minHeight: 480,
     show: false,
     title: '关注列表',
     webPreferences: {

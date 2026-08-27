@@ -69,6 +69,39 @@ export interface NcmCliAlbumDetail {
   publishTime: number
 }
 
+/**
+ * ncm-cli artist songs 返回的歌曲内嵌专辑信息
+ *
+ * 实测（2026-08-27，真实登录态）只有这三个字段——**没有封面、没有发行时间**。
+ * album 整体可能缺失，调用方必须用 `song.album?.id` 做空守卫：缺 id 的歌曲
+ * 无法参与按专辑聚合，直接丢弃。
+ */
+export interface NcmCliSongAlbum {
+  /** 加密专辑 ID（32 位 hex），与 album.netease_album_id 同域 */
+  id: string
+  /** 明文专辑 ID，供网易云网页跳转 */
+  originalId: number
+  name: string
+}
+
+/**
+ * ncm-cli artist songs 返回的单首歌曲（仅声明本功能用到的字段）
+ *
+ * 实测要点：
+ * - **不含 publishTime**——即使按发布时间窗查询，返回体也不回传发行日期，
+ *   因此需要发行日期与专辑级艺术家列表时必须补一次 album get
+ * - `coverImgUrl` 是歌曲级封面（实际就是专辑封面），album 对象内反而没有封面
+ * - `artists` 是**歌曲级**参与者，与专辑级 artists 不一定一致，分类不以它为准
+ */
+export interface NcmCliArtistSong {
+  originalId: number
+  id: string
+  name: string
+  album?: NcmCliSongAlbum | null
+  artists?: NcmCliArtist[]
+  coverImgUrl?: string | null
+}
+
 /** ncm-cli search album 返回的搜索结果 */
 export interface NcmCliAlbumSearchResult {
   originalId: number
@@ -219,6 +252,17 @@ interface NcmLoginResult {
 // ==================== NcmCliService ====================
 
 const NCM_CLI_TIMEOUT = 15_000 // 15 seconds
+
+/** artist songs 单页数量（实测 limit=200 直接返回 code 400「数据过多，请检查是否超限」） */
+const ARTIST_SONGS_PAGE_SIZE = 100
+
+/**
+ * artist songs 翻页安全上限
+ *
+ * 单艺人在一个增量时间窗内极少超过一两页；设 10 页（约 1000 首）纯粹是
+ * 防御死循环，触顶会告警。与 NcmCliSyncService 的 MAX_PAGES 同一思路。
+ */
+const ARTIST_SONGS_MAX_PAGES = 10
 
 /** executePlayerCmd 业务失败错误信息前缀（next/prev 边界提示复用其文案） */
 const NCM_PLAYER_FAIL_PREFIX = 'ncm-cli 播放控制失败: '
@@ -543,20 +587,100 @@ export class NcmCliService {
     ])
   }
 
-  // ==================== 艺术家（预留） ====================
+  // ==================== 艺术家 ====================
   //
-  // ncm-cli 0.1.6 探测结论（2026-08-26，见 openspec/changes/2026-08-26-artist-follow/design.md）：
+  // ncm-cli 探测结论（2026-08-26 首次探测，2026-08-27 扩展为新专辑动态）：
   // - `ncm-cli artist songs --artistId <加密ID> --startTime --endTime --limit --offset`
   //   获取指定发布时间内的艺人歌曲列表，--artistId 要求**加密**艺人 ID（32 位 hex）
   // - `ncm-cli search all --keyword <词>` 综合搜索，返回 artists 数组
   //   （{ originalId, id, name, coverImgUrl }，明文 + 加密 ID 都有）
+  //   —— 尚未封装；未来若要为「名下无专辑在库」的关注艺人反查加密 ID，从这里入手
   // - 无 `search artist` 子命令；artist 族目前仅 `songs` 一个子命令
-  //
-  // 后续「关注艺术家的新专辑」功能在此新增封装，如：
-  //   getArtistSongs(encryptedArtistId, startTime?, endTime?) → execute(['artist', 'songs', ...])
-  //   searchAll(keyword) → execute(['search', 'all', '--keyword', keyword])
-  // 均走既有 execute<T>（自动附加 --output json 并解析 { code, data }）。
-  // 关注数据侧已同时落库明文 original_id 与加密 encrypted_id（followed_artist 表）。
+
+  /**
+   * 获取艺人在指定发布时间窗内的歌曲列表（单页）
+   *
+   * 注意三点实测语义（2026-08-27 真实登录态验证）：
+   * 1. 返回的是**歌曲**不是专辑，专辑信息内嵌在每首歌的 `album` 字段；
+   *    调用方需按 `album.id` 聚合去重，才能得到「专辑级」的新发行列表。
+   * 2. 返回体**不含 publishTime**——即使按发布时间窗查询也不回传发行日期，
+   *    因此拿到候选专辑后必须补一次 `getAlbumDetail` 才能取到发行日期与完整艺术家列表。
+   * 3. `data` **直接就是歌曲数组**，不是其它列表命令那种 `{ recordCount, records }`
+   *    包装结构——照抄 `response.records` 会永远得到空数组且不报错。
+   *
+   * @param encryptedArtistId 加密艺人 ID（32 位 hex，followed_artist.encrypted_id）
+   * @param startTime 起始发布时间（毫秒时间戳，闭区间）
+   * @param endTime 结束发布时间（毫秒时间戳，闭区间）
+   * @param limit 每页数量（上限 100）
+   * @param offset 偏移量
+   */
+  async getArtistSongsPage(
+    encryptedArtistId: string,
+    startTime: number,
+    endTime: number,
+    limit: number = ARTIST_SONGS_PAGE_SIZE,
+    offset: number = 0
+  ): Promise<NcmCliArtistSong[]> {
+    const response = await this.execute<NcmCliArtistSong[]>([
+      'artist',
+      'songs',
+      '--artistId',
+      encryptedArtistId,
+      '--startTime',
+      String(startTime),
+      '--endTime',
+      String(endTime),
+      '--limit',
+      String(limit),
+      '--offset',
+      String(offset)
+    ])
+    return Array.isArray(response) ? response : []
+  }
+
+  /**
+   * 获取艺人在时间窗内的全部歌曲（自动翻页）
+   *
+   * 翻页终止条件：返回空数组即停（实测无发行的时间窗直接返回 `data: []`）。
+   * 不依赖 recordCount——该命令的返回体根本没有这层包装。
+   *
+   * **短页不代表结束，不要"优化"成 `records.length < limit` 即停。**
+   * 实测某艺人 6 年窗口：offset=0 → 79 首、offset=100 → 100 首、offset=200 → 6 首、
+   * offset≥300 → 0 首。首页就短于 limit，但后面还有满页——推测是先按 offset 取原始页
+   * 再做过滤/去重（样本里确实存在同名不同 id 的重复曲目）。因此 offset 必须按 **limit**
+   * 递增而不是按返回条数递增，否则会重复抓取甚至死循环。
+   *
+   * @returns 时间窗内的全部歌曲；单艺人单窗口极少超过一两页
+   */
+  async getArtistSongsInWindow(
+    encryptedArtistId: string,
+    startTime: number,
+    endTime: number
+  ): Promise<NcmCliArtistSong[]> {
+    const songs: NcmCliArtistSong[] = []
+    let offset = 0
+
+    for (let page = 0; page < ARTIST_SONGS_MAX_PAGES; page++) {
+      const records = await this.getArtistSongsPage(
+        encryptedArtistId,
+        startTime,
+        endTime,
+        ARTIST_SONGS_PAGE_SIZE,
+        offset
+      )
+      if (records.length === 0) {
+        return songs
+      }
+      songs.push(...records)
+      offset += ARTIST_SONGS_PAGE_SIZE
+    }
+
+    console.warn(
+      `[ncm-cli] 艺人 ${encryptedArtistId} 时间窗内歌曲翻页超过安全上限 ` +
+        `${ARTIST_SONGS_MAX_PAGES} 页，停止拉取（已获取 ${songs.length} 首）`
+    )
+    return songs
+  }
 
   // ==================== 播放控制 ====================
 

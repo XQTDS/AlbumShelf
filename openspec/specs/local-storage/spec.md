@@ -77,6 +77,11 @@
 - **WHEN** followed_artist 表被创建
 - **THEN** 表 SHALL 包含以下字段：id（主键，自增）、name（艺术家名，唯一）、original_id（网易云明文艺术家 ID，可空）、encrypted_id（网易云加密艺术家 ID，可空）、followed_at（关注时间，默认 UTC 当前时间）
 
+#### Scenario: last_checked_at 字段迁移
+
+- **WHEN** 应用启动且 followed_artist 表缺少 last_checked_at 列
+- **THEN** 系统 SHALL 通过守卫式 ALTER 添加该列（TEXT，可空），NULL 表示该艺术家从未执行过新专辑检查
+
 #### Scenario: 导出导入包含关注数据
 
 - **WHEN** 用户导出数据
@@ -85,6 +90,32 @@
 - **THEN** 系统 SHALL 按 name 去重 upsert 关注记录，已存在记录 SHALL 仅补缺失的 ID 字段，并在导入结果中返回导入的关注数
 - **WHEN** 导入 v1 数据（无 followedArtists 字段）
 - **THEN** 系统 SHALL 按空数组处理，导入 SHALL 正常完成
+
+### Requirement: artist_update 表结构
+
+系统 SHALL 维护 artist_update 表，存储关注艺术家的新专辑动态条目。该表 SHALL 独立于 album 表——手动同步会删除不在网易云收藏列表中的本地专辑，动态条目若写入 album 会被同步整片删除。
+
+#### Scenario: artist_update 表字段
+
+- **WHEN** artist_update 表被创建
+- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、artist_name（关注粒度，对齐 followed_artist.name）、album_id（加密专辑 ID，与 album.netease_album_id 同域）、original_id（明文专辑 ID，可空，供网易云跳转）、title、publish_time（原始毫秒时间戳，可空）、release_date（按北京时间换算，可空）、cover_url（远程直链，可空）、category（own / participation）、track_count（可空）、duration_ms（可空）、found_at（默认 UTC 当前时间）、seen_at（可空，NULL = 未读）
+- **AND** 表 SHALL 建立唯一约束 `UNIQUE(artist_name, album_id)`
+- **AND** 表 SHALL 建立索引 `idx_artist_update_seen(seen_at)` 与 `idx_artist_update_found(found_at DESC)`
+
+#### Scenario: track_count / duration_ms 字段迁移
+
+- **WHEN** 应用启动且 artist_update 表缺少 track_count 或 duration_ms 列
+- **THEN** 系统 SHALL 通过守卫式 ALTER 添加缺失列（INTEGER，可空），已有行保持 NULL 并由后续检查的自愈路径补齐
+
+#### Scenario: 不进入导出导入
+
+- **WHEN** 用户导出数据
+- **THEN** 导出 JSON SHALL NOT 包含 artist_update 数据（动态条目为可重新拉取的派生数据，不纳入版本化导出）
+
+#### Scenario: 未入库条目的封面不落本地缓存
+
+- **WHEN** 动态条目对应的专辑尚未进入 album 表
+- **THEN** 其封面 SHALL 使用远程 https 直链渲染，SHALL NOT 写入 `cover://` 本地缓存（缓存强依赖 album 行的数字 id）
 
 ### Requirement: 数据库存储位置
 
