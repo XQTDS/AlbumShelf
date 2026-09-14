@@ -56,6 +56,21 @@ export interface AlbumUpdate {
   netease_original_id?: number | null
 }
 
+/** 风格库条目（MusicBrainz 风格库同步用） */
+export interface GenreLibraryEntry {
+  name: string
+  /** MusicBrainz 风格 UUID */
+  mbGenreId: string
+}
+
+/** 风格库写入结果（仅统计，用于同步进度与完成提示） */
+export interface GenreLibraryWriteResult {
+  /** 本次新增的风格行数 */
+  added: number
+  /** 本地已存在、仅补写 / 跳过 mb_genre_id 的风格数 */
+  existing: number
+}
+
 export interface AlbumQueryOptions {
   search?: string
   artist?: string
@@ -409,11 +424,28 @@ export class AlbumService {
   }
 
   /**
-   * Get all genre names from the database.
+   * Get all genre names from the database (全量风格库，供手动分配风格时的候选)。
+   * 含尚未被任何专辑使用的风格（如 MusicBrainz 风格库同步写入的行）。
    */
   getAllGenres(): string[] {
     const rows = this.db
       .prepare('SELECT name FROM genre ORDER BY name')
+      .all() as { name: string }[]
+    return rows.map((r) => r.name)
+  }
+
+  /**
+   * Get genre names that are actually attached to at least one album (在用风格)。
+   * 供工具栏风格筛选建议使用：全量风格库里绝大多数尚未被使用，
+   * 列进筛选建议只会筛出空结果。同步风格库之前，本方法与 getAllGenres 结果一致。
+   */
+  getUsedGenres(): string[] {
+    const rows = this.db
+      .prepare(`
+        SELECT DISTINCT g.name FROM genre g
+        INNER JOIN album_genre ag ON g.id = ag.genre_id
+        ORDER BY g.name
+      `)
       .all() as { name: string }[]
     return rows.map((r) => r.name)
   }
@@ -555,6 +587,58 @@ export class AlbumService {
     if (this.getGenresForAlbum(albumId).length > 0) return false
     this.setAlbumGenres(albumId, genreNames)
     return true
+  }
+
+  /**
+   * 把 MusicBrainz 风格库条目并入本地风格库（仅增量写入）。
+   *
+   * **只增不改不删**：绝不 DELETE genre / album_genre，绝不 UPDATE genre.name ——
+   * 已有专辑↔风格的映射（album_genre 引用 genre.id）零风险。已有行只在
+   * mb_genre_id 为空时补写该列（WHERE ... IS NULL 双保险）。
+   *
+   * 名称去重用 JS 的 toLowerCase()（非 SQL 的 lower()：SQLite 内建实现只处理
+   * ASCII，会漏掉 "afoxé"、"cải lương" 这类名称）。逐页调用，每页重建一次索引
+   * （2201 行规模下开销可忽略），从而自动看到上一页写入的新行。
+   */
+  mergeGenreLibrary(entries: GenreLibraryEntry[]): GenreLibraryWriteResult {
+    if (entries.length === 0) return { added: 0, existing: 0 }
+
+    const index = new Map<string, number>()
+    const rows = this.db.prepare('SELECT id, name FROM genre').all() as {
+      id: number
+      name: string
+    }[]
+    for (const row of rows) index.set(row.name.toLowerCase(), row.id)
+
+    const insertGenre = this.db.prepare(
+      'INSERT INTO genre (name, mb_genre_id) VALUES (?, ?)'
+    )
+    const fillMbGenreId = this.db.prepare(
+      'UPDATE genre SET mb_genre_id = ? WHERE id = ? AND mb_genre_id IS NULL'
+    )
+
+    let added = 0
+    let existing = 0
+
+    const merge = this.db.transaction((items: GenreLibraryEntry[]) => {
+      for (const entry of items) {
+        const key = entry.name.toLowerCase()
+        const knownId = index.get(key)
+
+        if (knownId !== undefined) {
+          fillMbGenreId.run(entry.mbGenreId, knownId)
+          existing++
+        } else {
+          const info = insertGenre.run(entry.name, entry.mbGenreId)
+          // 回填索引：同批次（同页）内出现重名时不重复插入
+          index.set(key, info.lastInsertRowid as number)
+          added++
+        }
+      }
+    })
+
+    merge(entries)
+    return { added, existing }
   }
 
   /**

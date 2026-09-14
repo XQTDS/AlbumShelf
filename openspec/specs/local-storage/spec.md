@@ -61,12 +61,32 @@
 #### Scenario: Genre 表字段
 
 - **WHEN** Genre 表被创建
-- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、name（风格名称，唯一）
+- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、name（风格名称，唯一）、mb_genre_id（MusicBrainz 风格 UUID，可空）
+
+#### Scenario: mb_genre_id 字段迁移
+
+- **WHEN** 应用启动且 genre 表尚无 mb_genre_id 列
+- **THEN** 系统 SHALL 通过 ALTER TABLE 添加 `mb_genre_id TEXT` 列，默认值为 NULL
+
+#### Scenario: mb_genre_id 语义
+
+- **WHEN** 某风格行的 mb_genre_id 为 NULL
+- **THEN** 表示该风格非 MB 风格库同步而来（历史手动标签或补全流程自动建档）
+- **AND** 该列仅作为来源标记，不参与专辑↔风格映射；风格库同步只补写空值，不改 name 与 id
 
 #### Scenario: album_genre 关联
 
 - **WHEN** album_genre 关联表被创建
 - **THEN** 表 SHALL 包含 album_id（外键关联 Album.id）和 genre_id（外键关联 Genre.id），联合唯一约束
+
+#### Scenario: 风格的导出导入
+
+- **WHEN** 用户导出数据
+- **THEN** 导出 JSON SHALL 包含 genres 数组，每条含 name 与 mb_genre_id
+- **WHEN** 导入数据
+- **THEN** 系统 SHALL 按 name upsert 风格记录，已存在时 SHALL 仅用导入值补写空着的 mb_genre_id（`COALESCE` 语义），SHALL NOT 修改已存在的 name 与 id，以免破坏库中既有的 album_genre 映射
+- **WHEN** 导入旧版导出（genres 元素无 mb_genre_id 字段）
+- **THEN** 系统 SHALL 按 NULL 处理，导入 SHALL 正常完成
 
 ### Requirement: followed_artist 表结构
 

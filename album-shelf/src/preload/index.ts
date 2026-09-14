@@ -104,6 +104,12 @@ const albumShelfAPI = {
   setAlbumGenres: (albumId: number, genres: string[]) =>
     ipcRenderer.invoke('album:setGenres', albumId, genres),
 
+  // 全量风格库（手动分配风格时的编辑框候选）
+  genreLibrary: () => ipcRenderer.invoke('genre:library'),
+
+  // 同步 MusicBrainz 风格库（仅增量写入，不破坏已有专辑↔风格映射）
+  syncGenreLibrary: () => ipcRenderer.invoke('genre:librarySyncStart'),
+
   // 播放控制
   playerPlayAlbum: (albumId: number) => ipcRenderer.invoke('player:playAlbum', albumId),
   playerPlaySong: (encryptedId: string, originalId: number) =>
@@ -281,6 +287,27 @@ const albumShelfAPI = {
     const handler = () => callback()
     ipcRenderer.on('menu:genreStats', handler)
     return () => ipcRenderer.removeListener('menu:genreStats', handler)
+  },
+
+  // 监听菜单栏"同步 MusicBrainz 风格库"事件
+  onMenuGenreLibrarySync: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:genreLibrarySync', handler)
+    return () => ipcRenderer.removeListener('menu:genreLibrarySync', handler)
+  },
+
+  // 风格库同步进度监听
+  onGenreLibrarySyncProgress: (
+    callback: (progress: {
+      current: number
+      total: number
+      added: number
+      existing: number
+    }) => void
+  ) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: any) => callback(progress)
+    ipcRenderer.on('genre:librarySyncProgress', handler)
+    return () => ipcRenderer.removeListener('genre:librarySyncProgress', handler)
   },
 
   // 监听菜单栏"关于"事件

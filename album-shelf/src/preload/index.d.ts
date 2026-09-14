@@ -323,6 +323,28 @@ interface ArtistIdFillResult {
   idsMerged: number
 }
 
+/** 风格库同步进度 */
+interface GenreLibrarySyncProgress {
+  /** 已处理风格数 */
+  current: number
+  /** 风格总数（MB 返回的 genre-count） */
+  total: number
+  /** 累计新增 */
+  added: number
+  /** 累计已存在 */
+  existing: number
+}
+
+/** 风格库同步结果 */
+interface GenreLibrarySyncResult {
+  added: number
+  existing: number
+  total: number
+  /** 是否因拉取失败中途中止（已写入部分保留，重跑即续） */
+  aborted: boolean
+  error?: string
+}
+
 interface ImportResult {
   albumsAdded: number
   albumsUpdated: number
@@ -362,6 +384,10 @@ interface AlbumShelfAPI {
     albumsWithGenre: number
   }>>
   setAlbumGenres: (albumId: number, genres: string[]) => Promise<IpcResult>
+  /** 全量风格库（手动分配风格时的编辑框候选，含尚未被使用的 MB 风格） */
+  genreLibrary: () => Promise<IpcResult<string[]>>
+  /** 全量同步 MusicBrainz 风格库（仅增量写入，不破坏已有专辑↔风格映射） */
+  syncGenreLibrary: () => Promise<IpcResult<GenreLibrarySyncResult>>
   albumResync: (albumId: number) => Promise<IpcResult<{
     cover_url: string | null
     tracks_synced: boolean
@@ -430,6 +456,8 @@ interface AlbumShelfAPI {
   onMenuReleaseDateFill: (callback: () => void) => () => void
   onMenuArtistIdFill: (callback: () => void) => () => void
   onMenuGenreStats: (callback: () => void) => () => void
+  onMenuGenreLibrarySync: (callback: () => void) => () => void
+  onGenreLibrarySyncProgress: (callback: (progress: GenreLibrarySyncProgress) => void) => () => void
   onMenuOpenAbout: (callback: () => void) => () => void
 
   // 在线搜索
