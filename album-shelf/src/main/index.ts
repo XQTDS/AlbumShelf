@@ -250,6 +250,15 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
         },
         { type: 'separator' },
         {
+          label: '同步 MusicBrainz 风格库',
+          click: (): void => {
+            const mainWindow = getMainWindow()
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('menu:genreLibrarySync')
+            }
+          }
+        },
+        {
           label: '补全缺失MB数据的专辑',
           click: (): void => {
             const mainWindow = getMainWindow()

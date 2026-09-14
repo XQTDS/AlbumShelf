@@ -30,6 +30,7 @@ import {
 } from './enrich'
 import * as authService from './auth-service'
 import { NcmLoginRequiredError } from './ncm-cli-service'
+import { GenreLibraryService } from './genre-library-service'
 
 let albumService: AlbumService
 let trackService: TrackService
@@ -39,6 +40,7 @@ let syncManager: SyncManager
 let enrichService: EnrichService
 let followedArtistService: FollowedArtistService
 let artistUpdateService: ArtistUpdateService
+let genreLibraryService: GenreLibraryService
 
 // 封面批量补全进行中标志（防重入）
 let coverFillRunning = false
@@ -48,6 +50,9 @@ let releaseDateFillRunning = false
 
 // 艺术家 ID 批量回填进行中标志（防重入）
 let artistIdFillRunning = false
+
+// 风格库同步进行中标志（防重入）
+let genreLibrarySyncRunning = false
 
 // 关注艺术家新专辑检查进行中标志（防重入）
 let artistUpdateCheckRunning = false
@@ -82,6 +87,7 @@ function initServices(): void {
   enrichService = new EnrichService(albumService)
   followedArtistService = new FollowedArtistService()
   artistUpdateService = new ArtistUpdateService()
+  genreLibraryService = new GenreLibraryService(albumService)
 
   // 初始化 MusicBrainz 客户端（搜索和 lookup 不需要认证）
   const credentials = loadCredentials()
@@ -160,15 +166,55 @@ export function registerIpcHandlers(): void {
   })
 
   /**
-   * 获取筛选选项（所有艺术家 + 所有风格标签）
+   * 获取筛选选项（所有艺术家 + 在用风格标签）
+   *
+   * 风格只返回「至少关联一张专辑」的（getUsedGenres）：风格库同步会把 MB 全量
+   * 2201 个风格写进 genre 表，其中绝大多数尚无专辑使用，列进筛选建议只会筛出空结果。
    */
   ipcMain.handle('album:filters', async () => {
     try {
       const artists = albumService.getAllArtists()
-      const genres = albumService.getAllGenres()
+      const genres = albumService.getUsedGenres()
       return { success: true, data: { artists, genres } }
     } catch (error) {
       return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 获取全量风格库（手动分配风格时的编辑框候选，含尚未被使用的 MB 风格）
+   */
+  ipcMain.handle('genre:library', async () => {
+    try {
+      return { success: true, data: albumService.getAllGenres() }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
+   * 全量同步 MusicBrainz 风格库（仅增量写入，绝不改动已有专辑↔风格映射）。
+   * 同步过程通过 genre:librarySyncProgress 推送进度。
+   */
+  ipcMain.handle('genre:librarySyncStart', async (event) => {
+    if (genreLibrarySyncRunning) {
+      return { success: false, error: '风格库同步正在进行中' }
+    }
+
+    genreLibrarySyncRunning = true
+
+    try {
+      const sender = event.sender
+      const result = await genreLibraryService.sync((progress) => {
+        if (!sender.isDestroyed()) {
+          sender.send('genre:librarySyncProgress', progress)
+        }
+      })
+      return { success: true, data: result }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    } finally {
+      genreLibrarySyncRunning = false
     }
   })
 

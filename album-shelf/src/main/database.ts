@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS track (
 const CREATE_GENRE_TABLE = `
 CREATE TABLE IF NOT EXISTS genre (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE
+  name TEXT NOT NULL UNIQUE,
+  mb_genre_id TEXT
 );
 `
 
@@ -169,6 +170,16 @@ export function initDatabase(): Database.Database {
     db.exec('ALTER TABLE track ADD COLUMN netease_original_id INTEGER')
   }
 
+  // Migration: genre table
+  const genreColumns = db
+    .prepare("PRAGMA table_info('genre')")
+    .all() as { name: string }[]
+  // Add mb_genre_id if missing（MusicBrainz 风格 UUID；来源标记，NULL = 非 MB 同步而来，
+  // 如历史手动标签或补全流程自动建档。风格库同步只补空值，不改 name/id，见 genre-library-service.ts）
+  if (!genreColumns.some((c) => c.name === 'mb_genre_id')) {
+    db.exec('ALTER TABLE genre ADD COLUMN mb_genre_id TEXT')
+  }
+
   // Migration: followed_artist table
   const followedArtistColumns = db
     .prepare("PRAGMA table_info('followed_artist')")
@@ -257,12 +268,15 @@ export function importDatabase(data: ImportData): ImportResult {
   const result: ImportResult = { albumsAdded: 0, albumsUpdated: 0, tracksImported: 0, genresImported: 0, followedArtistsImported: 0 }
 
   const importTx = database.transaction(() => {
-    // 1. Import genres (upsert by name)
-    const upsertGenre = database.prepare(
-      'INSERT INTO genre (name) VALUES (?) ON CONFLICT(name) DO NOTHING'
-    )
+    // 1. Import genres (upsert by name；已存在时只补空着的 mb_genre_id，
+    //    不改 name/id，避免破坏既有 album_genre 映射；旧版导出无该字段 → 写入 NULL)
+    const upsertGenre = database.prepare(`
+      INSERT INTO genre (name, mb_genre_id) VALUES (?, ?)
+      ON CONFLICT(name) DO UPDATE SET
+        mb_genre_id = COALESCE(genre.mb_genre_id, excluded.mb_genre_id)
+    `)
     for (const genre of data.data.genres) {
-      upsertGenre.run(genre.name)
+      upsertGenre.run(genre.name, genre.mb_genre_id ?? null)
     }
     result.genresImported = data.data.genres.length
 

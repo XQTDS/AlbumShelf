@@ -181,6 +181,16 @@
       </div>
     </div>
 
+    <!-- 风格库同步进度条 -->
+    <div v-if="genreLibrarySyncProgress" class="enrich-bar">
+      <div class="enrich-bar-inner">
+        <span class="enrich-text">正在同步 MusicBrainz 风格库 {{ genreLibrarySyncProgress.current }}/{{ genreLibrarySyncProgress.total }}：新增 {{ genreLibrarySyncProgress.added }} 个</span>
+        <div class="enrich-progress-track">
+          <div class="enrich-progress-fill" :style="{ width: (genreLibrarySyncProgress.current / genreLibrarySyncProgress.total * 100) + '%' }"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- 提示信息 -->
     <div v-if="message" class="message-bar" :class="messageType">
       <span>{{ message }}</span>
@@ -503,14 +513,17 @@
                         @blur="onGenreEditInputBlur"
                         @input="onGenreEditInputChange"
                       />
-                      <div v-if="showGenreEditSuggestions && filteredGenreEditSuggestions().length > 0" class="genre-edit-suggestions">
+                      <div v-if="showGenreEditSuggestions && genreEditSuggestions.items.length > 0" class="genre-edit-suggestions">
                         <div
-                          v-for="genre in filteredGenreEditSuggestions()"
+                          v-for="genre in genreEditSuggestions.items"
                           :key="genre"
                           class="genre-edit-suggestion-item"
                           @mousedown.prevent="selectGenreEditSuggestion(genre)"
                         >
                           {{ genre }}
+                        </div>
+                        <div v-if="genreEditSuggestions.hidden > 0" class="genre-edit-suggestion-more">
+                          还有 {{ genreEditSuggestions.hidden }} 个匹配，请继续输入…
                         </div>
                       </div>
                     </div>
@@ -1739,7 +1752,10 @@ const searchQuery = ref('')
 const selectedArtist = ref('')
 const selectedGenres = ref<string[]>([])  // 多风格筛选
 const artists = ref<string[]>([])
-const genres = ref<string[]>([])
+// 工具栏风格筛选建议：只含至少关联一张专辑的风格（后端 album:filters 已按此过滤）
+const filterGenres = ref<string[]>([])
+// 全量风格库：手动分配风格时编辑框的候选，含风格库同步写入、尚未被任何专辑使用的 MB 风格
+const genreLibrary = ref<string[]>([])
 
 // 风格输入相关
 const genreInput = ref('')
@@ -1849,10 +1865,22 @@ async function fetchFilters() {
     const result = await window.api.albumFilters()
     if (result.success && result.data) {
       artists.value = result.data.artists
-      genres.value = result.data.genres
+      filterGenres.value = result.data.genres
     }
   } catch (error) {
     console.error('获取筛选选项失败:', error)
+  }
+}
+
+// 拉取全量风格库（编辑框候选）：同步风格库后需重新拉取才能看到新增标签
+async function fetchGenreLibrary() {
+  try {
+    const result = await window.api.genreLibrary()
+    if (result.success && result.data) {
+      genreLibrary.value = result.data
+    }
+  } catch (error) {
+    console.error('获取风格库失败:', error)
   }
 }
 
@@ -1972,6 +2000,8 @@ function startEditGenres(album: Album) {
   editingGenres.value = [...(album.genres || [])]
   genreEditInput.value = ''
   showGenreEditSuggestions.value = false
+  // 进编辑态即刷新候选：补全流程会按 MB 词表自动建档，缓存可能落后一两个新风格
+  fetchGenreLibrary()
 }
 
 // 取消编辑
@@ -1982,11 +2012,17 @@ function cancelEditGenres() {
   showGenreEditSuggestions.value = false
 }
 
-// 自动补全筛选（仅从已有风格库；以输入开头的优先）
-function filteredGenreEditSuggestions(): string[] {
+// 自动补全筛选（从全量风格库；以输入开头的优先）
+//
+// 风格库同步后候选有 2000+ 条，输入单字母会命中数百条，故截断为前 MAX 条，
+// 剩余的以 hidden 计数交给下拉框末尾的「还有 N 个匹配」提示行。
+const GENRE_EDIT_SUGGESTION_LIMIT = 50
+
+const genreEditSuggestions = computed<{ items: string[]; hidden: number }>(() => {
   const input = genreEditInput.value.toLowerCase().trim()
-  if (!input) return []
-  const candidates = genres.value
+  if (!input) return { items: [], hidden: 0 }
+
+  const candidates = genreLibrary.value
     .filter(g => !editingGenres.value.includes(g))
     .filter(g => g.toLowerCase().includes(input))
   // 以输入开头的排在前面，其余保持字母序
@@ -1996,8 +2032,12 @@ function filteredGenreEditSuggestions(): string[] {
     if (aStarts !== bStarts) return aStarts - bStarts
     return a.localeCompare(b)
   })
-  return candidates
-}
+
+  return {
+    items: candidates.slice(0, GENRE_EDIT_SUGGESTION_LIMIT),
+    hidden: Math.max(0, candidates.length - GENRE_EDIT_SUGGESTION_LIMIT)
+  }
+})
 
 // 从建议列表选择风格
 function selectGenreEditSuggestion(genre: string) {
@@ -2094,10 +2134,11 @@ function handleSelectGenreFromStats(genre: string) {
 }
 
 // 过滤风格建议列表（排除已选、匹配输入；以输入开头的优先）
+// 候选来自 filterGenres（只含在用风格），不列尚未被使用的全量风味库标签
 function filteredGenreSuggestions(): string[] {
   const input = genreInput.value.toLowerCase().trim()
   if (!input) return []
-  const candidates = genres.value
+  const candidates = filterGenres.value
     .filter(g => !selectedGenres.value.includes(g))
     .filter(g => g.toLowerCase().includes(input))
   // 以输入开头的排在前面，其余保持字母序
@@ -2445,6 +2486,76 @@ function setupArtistIdFillProgressListener() {
       setTimeout(async () => {
         artistIdFillProgress.value = null
         await fetchAlbums()
+      }, 1000)
+    }
+  })
+}
+
+// ==================== MusicBrainz 风格库同步 ====================
+
+const genreLibrarySyncProgress = ref<{ current: number; total: number; added: number; existing: number } | null>(null)
+let removeGenreLibrarySyncProgressListener: (() => void) | null = null
+let removeMenuGenreLibrarySyncListener: (() => void) | null = null
+
+async function handleGenreLibrarySync() {
+  if (genreLibrarySyncProgress.value) {
+    showMessage('风格库同步正在进行中，请等待完成', 'info')
+    return
+  }
+
+  showMessage('正在同步 MusicBrainz 风格库...', 'info')
+
+  try {
+    const result = await window.api.syncGenreLibrary()
+    if (!result.success || !result.data) {
+      genreLibrarySyncProgress.value = null
+      showMessage(`风格库同步失败：${result.error ?? '未知错误'}`, 'error')
+      return
+    }
+
+    const data = result.data
+
+    // 无论成功还是中止都已有写入：刷新编辑框候选与工具栏筛选建议
+    await fetchGenreLibrary()
+    await fetchFilters()
+
+    if (data.aborted) {
+      // 中止时进度事件已停，主动收起进度条（结果已保留，可重跑续上）
+      genreLibrarySyncProgress.value = null
+      showMessage(
+        `风格库同步中止（${data.error ?? '网络错误'}）：已新增 ${data.added} 个、已存在 ${data.existing} 个，重新运行即可续上`,
+        'error'
+      )
+    } else if (data.added === 0) {
+      showMessage(`风格库已是最新：共 ${data.total} 个风格，无新增`, 'info')
+    } else {
+      showMessage(
+        `风格库同步完成！新增 ${data.added} 个，已存在 ${data.existing} 个，共 ${data.total} 个`,
+        'success'
+      )
+    }
+  } catch (error) {
+    genreLibrarySyncProgress.value = null
+    showMessage(
+      `风格库同步失败：${error instanceof Error ? error.message : '未知错误'}`,
+      'error'
+    )
+  }
+}
+
+function setupGenreLibrarySyncProgressListener() {
+  removeGenreLibrarySyncProgressListener = window.api.onGenreLibrarySyncProgress((progress) => {
+    genreLibrarySyncProgress.value = {
+      current: progress.current,
+      total: progress.total,
+      added: progress.added,
+      existing: progress.existing
+    }
+
+    // 已处理完全部风格：保留 1 秒让进度条走满后收起
+    if (progress.total > 0 && progress.current >= progress.total) {
+      setTimeout(() => {
+        genreLibrarySyncProgress.value = null
       }, 1000)
     }
   })
@@ -2962,6 +3073,7 @@ onMounted(async () => {
   setupCoverFillProgressListener()
   setupReleaseDateFillProgressListener()
   setupArtistIdFillProgressListener()
+  setupGenreLibrarySyncProgressListener()
 
   // Esc 关闭详情抽屉
   document.addEventListener('keydown', handleDetailKeydown)
@@ -3007,6 +3119,11 @@ onMounted(async () => {
   // 监听菜单栏"回填艺术家 ID"事件
   removeMenuArtistIdFillListener = window.api.onMenuArtistIdFill(() => {
     handleArtistIdFill()
+  })
+
+  // 监听菜单栏"同步 MusicBrainz 风格库"事件
+  removeMenuGenreLibrarySyncListener = window.api.onMenuGenreLibrarySync(() => {
+    handleGenreLibrarySync()
   })
 
   // 关注状态变更广播（本窗口操作或关注列表窗口操作）：刷新关注集合，必要时刷新列表
@@ -3075,12 +3192,14 @@ onMounted(async () => {
       await loadFollowedArtists()
       await fetchAlbums()
       await fetchFilters()
+      await fetchGenreLibrary()
     } else if (result.error && result.error !== '已取消') {
       alert(`导入失败: ${result.error}`)
     }
   })
 
   await fetchFilters()
+  await fetchGenreLibrary()
   await fetchAlbums()
   await loadFollowedArtists()
 })
@@ -3146,6 +3265,12 @@ onUnmounted(() => {
   }
   if (removeMenuGenreStatsListener) {
     removeMenuGenreStatsListener()
+  }
+  if (removeGenreLibrarySyncProgressListener) {
+    removeGenreLibrarySyncProgressListener()
+  }
+  if (removeMenuGenreLibrarySyncListener) {
+    removeMenuGenreLibrarySyncListener()
   }
   if (removeMenuAboutListener) {
     removeMenuAboutListener()
@@ -4681,6 +4806,18 @@ body {
 
 .genre-edit-suggestion-item:hover {
   background: #eef2ff;
+}
+
+/* 候选超过上限时的提示（MB 风格库全量落库后单次输入可能匹配上百条） */
+.genre-edit-suggestion-more {
+  position: sticky;
+  bottom: 0;
+  padding: 6px 10px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: default;
 }
 
 .genre-edit-actions {
