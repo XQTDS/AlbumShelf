@@ -570,6 +570,15 @@
                 <!-- 外部链接 -->
                 <div class="detail-section detail-links">
                   <a
+                    v-for="link in albumLinks"
+                    :key="link.label"
+                    class="detail-link"
+                    href="#"
+                    @click.prevent="openExternal(link.url, $event)"
+                  >
+                    {{ link.icon }} {{ link.label }}
+                  </a>
+                  <a
                     v-if="selectedAlbum.musicbrainz_id"
                     class="detail-link"
                     href="#"
@@ -824,7 +833,19 @@ interface Album {
   enriched_at?: string | null
   /** 艺术家结构化 JSON [{name, originalId, id}]（真源）；NULL = 未回填。artist 文本为其派生展示 */
   artists?: string | null
+  /**
+   * 外部站点链接 JSON，如 `{"discogs":"https://www.discogs.com/master/21491"}`。
+   * NULL = 未回填（面板打开时惰性查询）；`'{}'` = 已查询过但无任何链接。
+   * 注意 `rym` 键照常采集但无消费方 —— RYM 入口恒用搜索页，见 `albumLinks`。
+   */
+  external_links?: string | null
 }
+
+/** 支持的第三方站点标识 */
+type ExternalLinkKey = 'rym' | 'discogs' | 'allmusic' | 'lastfm' | 'wikipedia'
+
+/** 站点 → URL，仅包含实际取到的站点 */
+type ExternalLinks = Partial<Record<ExternalLinkKey, string>>
 
 const albums = ref<Album[]>([])
 const loading = ref(true)
@@ -916,6 +937,77 @@ const selectedAlbum = computed<Album | null>(
 
 function toggleSelect(albumId: number) {
   selectedAlbumId.value = selectedAlbumId.value === albumId ? null : albumId
+}
+
+// ==================== 外部站点链接 ====================
+
+/** 惰性查询回来的外部链接（按专辑 id 缓存，避免列表数据刷新前的空窗） */
+const externalLinksCache = ref<Map<number, ExternalLinks>>(new Map())
+
+/** 当前选中专辑的外部链接；未回填/无链接时为空对象 */
+const currentExternalLinks = computed<ExternalLinks>(() => {
+  const album = selectedAlbum.value
+  if (!album) return {}
+
+  const cached = externalLinksCache.value.get(album.id)
+  if (cached) return cached
+
+  // 回退到列表数据里的 JSON（补全流程写入的，或上次惰性查询后落库的）
+  if (album.external_links) {
+    try {
+      return JSON.parse(album.external_links) as ExternalLinks
+    } catch {
+      return {}
+    }
+  }
+  return {}
+})
+
+/** RYM 入口链接 —— 恒用搜索页 */
+function rymSearchUrl(artist: string, title: string): string {
+  const query = encodeURIComponent(`${artist} ${title}`.trim())
+  return `https://rateyourmusic.com/search?searchterm=${query}&searchtype=l`
+}
+
+/** 详情面板的外链列表：RYM 恒显示，其余按实际取到的渲染 */
+const albumLinks = computed<{ label: string; icon: string; url: string }[]>(() => {
+  const album = selectedAlbum.value
+  if (!album) return []
+
+  const links = currentExternalLinks.value
+  const items: { label: string; icon: string; url: string }[] = [
+    {
+      label: 'RateYourMusic',
+      icon: '🎧',
+      // 恒用搜索页，不用 external_links.rym 里的 release 直链 ——
+      // 实测那些直链点不开（MB 存的 slug 与实际不符，或 RYM 拦截直达）。
+      // 搜索页不依赖 slug 规则，是唯一可靠的入口。
+      url: rymSearchUrl(album.artist, album.title)
+    }
+  ]
+
+  if (links.discogs) items.push({ label: 'Discogs', icon: '💿', url: links.discogs })
+  if (links.allmusic) items.push({ label: 'AllMusic', icon: '🎼', url: links.allmusic })
+  if (links.lastfm) items.push({ label: 'Last.fm', icon: '📻', url: links.lastfm })
+  if (links.wikipedia) items.push({ label: 'Wikipedia', icon: '📖', url: links.wikipedia })
+
+  return items
+})
+
+/**
+ * 惰性补全外部链接（每张专辑一生只查一次）。
+ * 不阻塞渲染：先按当前数据显示（此时只有 RYM 入口与 MB/网易云链接），返回后补上其余站点链接。
+ */
+async function ensureExternalLinks(albumId: number) {
+  try {
+    const res = await window.api.albumEnsureExternalLinks(albumId)
+    if (!res.success || !res.data) return
+    const next = new Map(externalLinksCache.value)
+    next.set(albumId, res.data)
+    externalLinksCache.value = next
+  } catch (error) {
+    console.error('外部链接查询失败:', error)
+  }
 }
 
 // 关闭详情抽屉（✕ 按钮 / Esc）
@@ -1127,6 +1219,10 @@ watch(selectedAlbumId, (newId) => {
     // 有关联网易云 ID 时自动加载热评（TTL 内命中缓存则不请求）
     if (album?.netease_album_id) {
       loadComments(newId)
+    }
+    // 外部链接未回填时惰性查询一次（每张专辑一生只查一次，不阻塞渲染）
+    if (album && album.external_links == null) {
+      ensureExternalLinks(newId)
     }
   } else {
     // 所有关闭路径（✕/Esc/再点同行/筛选过滤掉）统一收敛：退出风格编辑态

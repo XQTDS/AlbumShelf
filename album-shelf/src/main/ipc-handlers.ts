@@ -327,6 +327,22 @@ export function registerIpcHandlers(): void {
   })
 
   /**
+   * 惰性补全专辑的外部站点链接（RYM / Discogs / AllMusic / Last.fm / Wikipedia）
+   *
+   * 详情面板打开时调用。每张专辑一生只查一次：查到与否都落库（空对象 = 已查询过），
+   * 查询失败则保持 NULL 以便下次重试。返回值不影响 RYM 入口——它恒用搜索页，
+   * 不读 external_links.rym。
+   */
+  ipcMain.handle('album:ensureExternalLinks', async (_event, albumId: number) => {
+    try {
+      const links = await enrichService.ensureExternalLinks(albumId)
+      return { success: true, data: links }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /**
    * 重新同步单张专辑的全部信息（封面 + 发行日期 + 曲目 + 评分 + 风格）
    */
   ipcMain.handle('album:resync', async (event, albumId: number) => {

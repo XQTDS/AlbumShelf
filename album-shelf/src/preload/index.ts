@@ -52,6 +52,10 @@ const albumShelfAPI = {
   // 单张专辑重新同步（封面 + 曲目 + 评分 + 风格）
   albumResync: (albumId: number) => ipcRenderer.invoke('album:resync', albumId),
 
+  // 惰性补全专辑外部站点链接（详情面板打开时调用）
+  albumEnsureExternalLinks: (albumId: number) =>
+    ipcRenderer.invoke('album:ensureExternalLinks', albumId),
+
   // 用户评分
   albumSetRating: (albumId: number, rating: number | null) =>
     ipcRenderer.invoke('album:setRating', albumId, rating),

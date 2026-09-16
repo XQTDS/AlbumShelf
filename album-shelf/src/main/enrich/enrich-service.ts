@@ -3,6 +3,7 @@ import { AlbumService, Album } from '../album-service'
 import type { IReleaseGroupMatch, IRating } from 'musicbrainz-api'
 import { getAliases, addAlias } from './artist-alias'
 import { getEnrichStrategies, type EnrichStrategies } from './settings'
+import { extractExternalLinks, type ExternalLinks, type MbUrlRelation } from './external-links'
 
 /**
  * MusicBrainz Genre 条目（官方审核的风格分类）
@@ -28,6 +29,8 @@ export interface MbMatchResult {
   ratingCount: number
   /** 风格标签（来自 MusicBrainz 官方 genres 分类） */
   genres: string[]
+  /** 外部站点链接（RYM / Discogs / AllMusic / Last.fm / Wikipedia），来自 MB url-rels */
+  externalLinks: ExternalLinks
   /** 首次发行日期（来自 MusicBrainz first-release-date，格式如 "YYYY-MM-DD"、"YYYY-MM"、"YYYY"） */
   releaseDate: string | null
 }
@@ -171,6 +174,8 @@ function pickBestReleaseGroup(
 export class EnrichService {
   private albumService: AlbumService
   private isEnriching = false
+  /** 正在查询外部链接的专辑 id，用于并发去重 */
+  private externalLinksInFlight = new Set<number>()
 
   constructor(albumService: AlbumService) {
     this.albumService = albumService
@@ -231,11 +236,18 @@ export class EnrichService {
       // 从同 score 候选中选出最佳匹配
       const bestMatch = pickBestReleaseGroup(topCandidates, releaseDate ?? null)
 
-      // 获取匹配 Release Group 的详细信息（ratings 和 genres）
-      const details = await mbApi.lookup('release-group', bestMatch.id, ['ratings', 'genres'])
+      // 获取匹配 Release Group 的详细信息（ratings、genres 与外部站点链接）
+      const details = await mbApi.lookup('release-group', bestMatch.id, [
+        'ratings',
+        'genres',
+        'url-rels'
+      ])
 
       const rating = (details as unknown as { rating?: IRating }).rating
       const genres = (details as unknown as { genres?: IMbGenre[] }).genres
+      const externalLinks = extractExternalLinks(
+        (details as unknown as { relations?: MbUrlRelation[] }).relations
+      )
 
       // 提取首次发行日期
       const firstReleaseDate =
@@ -247,6 +259,7 @@ export class EnrichService {
         rating: rating?.value ?? null,
         ratingCount: rating?.['votes-count'] ?? 0,
         genres: genres?.map((g) => g.name).filter(Boolean) ?? [],
+        externalLinks,
         releaseDate: firstReleaseDate
       }
     } catch (error) {
@@ -491,6 +504,11 @@ export class EnrichService {
         this.albumService.fillAlbumGenresIfEmpty(album.id, result.genres)
       }
 
+      // 外部链接：查到了就写，没查到也写空对象 —— '{}' 表示「已查询过」，
+      // 避免详情面板对「确实没有链接」的专辑反复发起惰性查询。
+      // 这里是顺带写入，不产生额外 MB 请求（url-rels 搭在上面那次 lookup 上）。
+      this.albumService.setAlbumExternalLinks(album.id, result.externalLinks)
+
       return 'matched'
     }
 
@@ -551,9 +569,17 @@ export class EnrichService {
 
     try {
       // 获取详细信息
-      const details = await mbApi.lookup('release-group', mbid, ['ratings', 'genres', 'artist-credits'])
+      const details = await mbApi.lookup('release-group', mbid, [
+        'ratings',
+        'genres',
+        'artist-credits',
+        'url-rels'
+      ])
       const rating = (details as unknown as { rating?: IRating }).rating
       const genres = (details as unknown as { genres?: IMbGenre[] }).genres
+      const externalLinks = extractExternalLinks(
+        (details as unknown as { relations?: MbUrlRelation[] }).relations
+      )
 
       // 从候选中找到选中项，以获取 releaseDate
       const selectedCandidate = candidates.find((c) => c.mbid === mbid)
@@ -572,6 +598,9 @@ export class EnrichService {
       if (genreNames.length > 0) {
         this.albumService.fillAlbumGenresIfEmpty(album.id, genreNames)
       }
+
+      // 外部链接：同 enrichAlbum，查到与否都写（空对象 = 已查询过）
+      this.albumService.setAlbumExternalLinks(album.id, externalLinks)
 
       // 自动别名学习：比较本地完整艺术家名与 MB 返回的艺术家名
       const localArtist = album.artist.trim()
@@ -771,6 +800,53 @@ export class EnrichService {
       return { matched, failed, pending, total }
     } finally {
       this.isEnriching = false
+    }
+  }
+
+  /**
+   * 惰性补全专辑的外部站点链接（详情面板打开时调用）。
+   *
+   * 与曲目数据的惰性补全同款思路：不提供批量回填入口 —— 本机库 2564 张专辑按
+   * MB 的 1 req/s 全量回填约需 43 分钟，且实测持续请求下 MB 频繁返回 503。
+   * 改为「用户看哪张补哪张」，每张专辑一生只查一次。
+   *
+   * 注：抽到的 `rym` 键当前无消费方 —— 详情面板的 RYM 入口恒用搜索页（实测 MB
+   * 存的 release 直链点不开）。保留采集是因为它与其余字段共用同一次 lookup。
+   *
+   * @returns 站点 → URL；无须查询或查询失败时返回 null
+   */
+  async ensureExternalLinks(albumId: number): Promise<ExternalLinks | null> {
+    const album = this.albumService.getAlbumById(albumId)
+    if (!album) return null
+
+    // 已回填过（含 '{}'：查过但确无链接）→ 直接返回，不再查询
+    if (album.external_links != null) {
+      return this.albumService.getAlbumExternalLinks(albumId)
+    }
+
+    // 无 MBID 则无从查起。此时**不写库**：该专辑后续补全拿到 MBID 后还应再试
+    if (!album.musicbrainz_id) return null
+
+    // 同一专辑的并发查询去重（用户快速连点会重复触发）
+    if (this.externalLinksInFlight.has(albumId)) return null
+    this.externalLinksInFlight.add(albumId)
+
+    try {
+      const mbApi = getMbClient()
+      const details = await mbApi.lookup('release-group', album.musicbrainz_id, ['url-rels'])
+      const links = extractExternalLinks(
+        (details as unknown as { relations?: MbUrlRelation[] }).relations
+      )
+
+      this.albumService.setAlbumExternalLinks(albumId, links)
+      return links
+    } catch (error) {
+      // 失败保持 NULL，下次打开面板自然重试。
+      // 不写 '{}' —— 否则一次网络抖动会把该专辑永久钉死成「无链接」。
+      console.error(`外部链接查询失败 [albumId=${albumId}]:`, error)
+      return null
+    } finally {
+      this.externalLinksInFlight.delete(albumId)
     }
   }
 

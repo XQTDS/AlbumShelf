@@ -13,6 +13,12 @@ interface AlbumQueryOptions {
   fetchAll?: boolean
 }
 
+/** 支持的第三方站点标识 */
+type ExternalLinkKey = 'rym' | 'discogs' | 'allmusic' | 'lastfm' | 'wikipedia'
+
+/** 站点 → URL，仅包含实际取到的站点 */
+type ExternalLinks = Partial<Record<ExternalLinkKey, string>>
+
 interface Album {
   id: number
   netease_album_id: string
@@ -28,6 +34,12 @@ interface Album {
   physical_media: string | null
   /** 艺术家结构化 JSON [{name, originalId, id}]（真源）；NULL = 未回填。artist 文本为其派生展示 */
   artists: string | null
+  /**
+   * 外部站点链接 JSON，如 `{"discogs":"https://www.discogs.com/master/21491"}`。
+   * NULL = 未回填（面板打开时惰性查询）；`'{}'` = 已查询过但无任何链接。
+   * 其中 `rym` 键照常采集但无消费方 —— RYM 入口恒用搜索页。
+   */
+  external_links: string | null
   track_count: number | null
   synced_at: string
   enriched_at: string | null
@@ -339,6 +351,12 @@ interface AlbumShelfAPI {
     tracks_synced: boolean
     enrich_matched: boolean
   }>>
+  /**
+   * 惰性补全专辑的外部站点链接（详情面板打开时调用）。
+   * data 为 null 表示无须查询（无 MBID / 已查询过但无链接）或查询失败；
+   * 无论成败，RYM 入口都恒用搜索页，不受此结果影响。
+   */
+  albumEnsureExternalLinks: (albumId: number) => Promise<IpcResult<ExternalLinks | null>>
   playerPlayAlbum: (albumId: number) => Promise<IpcResult<{
     playing: string
     totalTracks: number
