@@ -148,45 +148,6 @@
 - **WHEN** 前端请求已收藏专辑的 ID 列表
 - **THEN** 系统 SHALL 返回所有已收藏专辑的 netease_original_id 和 netease_album_id（用于兼容已有数据）
 
-### Requirement: 批量回填缺失发行日期
-
-系统 SHALL 提供菜单入口「补全缺失发行日期」，通过 `ncm-cli album get` 的 publishTime 为 `release_date` 为空的专辑批量回填发行日期。
-
-#### Scenario: 回填范围
-
-- **WHEN** 用户触发发行日期回填
-- **THEN** 系统 SHALL 仅处理 release_date 为空且 netease_album_id 非空的专辑，已有发行日期（含 MB 补全所得）不被覆盖
-
-#### Scenario: 回填执行
-
-- **WHEN** 逐张处理缺失发行日期的专辑
-- **THEN** 系统 SHALL 调用 `ncm-cli album get --albumId <id>` 获取 publishTime，按北京时间换算为 release_date 后写入数据库，并在 UI 推送进度（当前/总数/专辑名/成功数）
-
-#### Scenario: 无日期来源
-
-- **WHEN** 网易云返回的专辑详情不含 publishTime
-- **THEN** 系统 SHALL 计入失败数量，不写入 release_date
-
-#### Scenario: 失败增量收敛
-
-- **WHEN** 单张回填失败（网络错误等）
-- **THEN** 系统 SHALL 计入失败数量并继续处理后续专辑，不重试；重新运行回填时仅处理仍缺日期的专辑，天然增量收敛
-
-#### Scenario: 登录前置检查
-
-- **WHEN** 触发回填时未登录网易云
-- **THEN** 系统 SHALL 触发登录弹窗并中止回填，不执行批量调用
-
-#### Scenario: 登录中途失效
-
-- **WHEN** 回填过程中登录失效（ncm-cli 返回需要登录错误）
-- **THEN** 系统 SHALL 弹登录窗并中止回填，返回已处理的统计
-
-#### Scenario: 防重入
-
-- **WHEN** 回填正在进行中再次触发
-- **THEN** 系统 SHALL 拒绝本次触发并提示正在执行中
-
 ### Requirement: 同步顺带补全网易云跳转 ID
 
 同步 SHALL 利用 `album collected` 记录中的明文 ID（originalId）为已存在但 `netease_original_id` 为 NULL 的专辑顺带补写该列，修复详情面板网易云跳转链接缺失（详情面板跳转链接以 `netease_original_id` 为显示条件）。这是「已存在专辑不改动」不变量唯一例外。
@@ -230,41 +191,7 @@
 - **WHEN** 用户通过在线搜索添加一张专辑
 - **THEN** 系统 SHALL 将搜索结果的结构化艺术家数组写入 artists（与 ' / ' 分隔的艺术家文本同源派生）
 
-#### Scenario: 存量惰性回填
+#### Scenario: 存量数据不回填
 
-- **WHEN** 老库专辑的 artists 为 NULL
-- **THEN** 系统 SHALL 提供菜单「数据 → 回填艺术家 ID」批量回填（详见 artist-follow spec），同步流程 SHALL NOT 主动改写存量专辑的 artists 与其他字段（`netease_original_id` 空值补全为本 spec「同步顺带补全网易云跳转 ID」的明确例外）
-
-### Requirement: 批量回填缺失结构化艺术家数据
-
-系统 SHALL 提供菜单入口「回填艺术家 ID」，通过 `ncm-cli album get` 的 artists 字段为 `artists` 为 NULL 的专辑批量回填结构化艺术家数据。
-
-#### Scenario: 回填范围
-
-- **WHEN** 用户触发艺术家 ID 回填
-- **THEN** 系统 SHALL 仅处理 artists 为空且 netease_album_id 非空的专辑，已有值不被覆盖
-
-#### Scenario: 回填执行
-
-- **WHEN** 逐张处理缺失结构化艺术家数据的专辑
-- **THEN** 系统 SHALL 调用 `ncm-cli album get --albumId <id>` 取 detail.artists，将含 name 的结构化数组序列化写入 artists，并以同一数组 join(' / ') 重写 artist 展示文本（修复存量文本被旧 join('/') 或文本拆分误伤的问题），在 UI 推送进度（当前/总数/专辑名/成功数），每次调用间隔 300ms
-
-#### Scenario: 详情无艺术家
-
-- **WHEN** 网易云返回的专辑详情不含 artists
-- **THEN** 系统 SHALL 计入失败数量，不写入 artists
-
-#### Scenario: 登录前置检查与中途失效
-
-- **WHEN** 触发回填时未登录，或回填过程中登录失效
-- **THEN** 系统 SHALL 弹登录窗并中止回填，返回已处理统计
-
-#### Scenario: 防重入
-
-- **WHEN** 回填正在进行中再次触发
-- **THEN** 系统 SHALL 拒绝本次触发并提示正在执行中
-
-#### Scenario: 回填完成后补齐关注记录 ID
-
-- **WHEN** 艺术家数据回填完成（含登录失效中止前已回填的部分）
-- **THEN** 系统 SHALL 按名字匹配为缺失 ID 的关注记录补齐网易云艺术家 ID（详见 artist-follow spec），补齐条数计入回填结果
+- **WHEN** 老库专辑的 artists 为 NULL（历史遗留）
+- **THEN** 系统 SHALL NOT 主动改写存量专辑的 artists 与其他字段，也不提供批量回填入口（`netease_original_id` 空值补全为本 spec「同步顺带补全网易云跳转 ID」的明确例外）；存量行的 artists 保持 NULL，仅删除后重新添加（或导入）时按新写入路径补齐 — 实测库中不存在此类缺失行（artists 为空 0/2564），故不保留回填入口

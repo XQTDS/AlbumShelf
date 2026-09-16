@@ -221,33 +221,6 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
             }
           }
         },
-        {
-          label: '补全缺失封面',
-          click: (): void => {
-            const mainWindow = getMainWindow()
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('menu:coverFill')
-            }
-          }
-        },
-        {
-          label: '补全缺失发行日期',
-          click: (): void => {
-            const mainWindow = getMainWindow()
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('menu:releaseDateFill')
-            }
-          }
-        },
-        {
-          label: '回填艺术家 ID',
-          click: (): void => {
-            const mainWindow = getMainWindow()
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('menu:artistIdFill')
-            }
-          }
-        },
         { type: 'separator' },
         {
           label: '同步 MusicBrainz 风格库',

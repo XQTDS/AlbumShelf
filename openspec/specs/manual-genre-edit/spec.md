@@ -108,6 +108,12 @@
 - **WHEN** 前端调用 `album:setGenres(albumId, genres[])` 接口
 - **THEN** 系统 SHALL 调用 `AlbumService.setAlbumGenres()` 替换该专辑的所有风格关联，返回操作结果
 
+#### Scenario: 按归一化键复用已有行
+
+- **WHEN** 保存的风格名与库中已有行同名（按归一化键比较：去首尾空白 + 折叠连续空白 + 忽略大小写）
+- **THEN** 系统 SHALL 复用该已有行，SHALL NOT 新建同名的第二行；仅当归一化后无匹配时才新建风格行，且写入的是归一化后的展示名（去首尾空白、折叠连续空白）
+- **AND** 归一化后为空的名字 SHALL 被跳过，同一批提交中的重复名 SHALL 只落一条关联
+
 #### Scenario: 专辑不存在
 
 - **WHEN** 前端调用 `album:setGenres` 传入不存在的 albumId

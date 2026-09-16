@@ -276,53 +276,6 @@ interface AddAlbumRequest {
   publish_time?: number | null
 }
 
-/** 封面补全进度 */
-interface CoverFillProgress {
-  current: number
-  total: number
-  albumTitle: string
-  filled: number
-}
-
-/** 封面补全结果 */
-interface CoverFillResult {
-  total: number
-  filled: number
-  failed: number
-}
-
-/** 发行日期回填进度 */
-interface ReleaseDateFillProgress {
-  current: number
-  total: number
-  albumTitle: string
-  filled: number
-}
-
-/** 发行日期回填结果 */
-interface ReleaseDateFillResult {
-  total: number
-  filled: number
-  failed: number
-}
-
-/** 艺术家 ID 回填进度 */
-interface ArtistIdFillProgress {
-  current: number
-  total: number
-  albumTitle: string
-  filled: number
-}
-
-/** 艺术家 ID 回填结果 */
-interface ArtistIdFillResult {
-  total: number
-  filled: number
-  failed: number
-  /** 回填完成后为缺失 ID 的关注记录补齐的条数 */
-  idsMerged: number
-}
-
 /** 风格库同步进度 */
 interface GenreLibrarySyncProgress {
   /** 已处理风格数 */
@@ -369,13 +322,6 @@ interface AlbumShelfAPI {
   trackSyncByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   albumComments: (albumId: number) => Promise<IpcResult<AlbumCommentsResult>>
   albumFetchCover: (albumId: number, force?: boolean) => Promise<IpcResult<{ cover_url: string | null }>>
-  albumCoverFillStatus: () => Promise<
-    IpcResult<{ pending: number; running: boolean }>
-  >
-  albumCoverFillStart: () => Promise<IpcResult<CoverFillResult>>
-  onCoverFillProgress: (callback: (progress: CoverFillProgress) => void) => () => void
-  albumReleaseDateFillStart: () => Promise<IpcResult<ReleaseDateFillResult>>
-  onReleaseDateFillProgress: (callback: (progress: ReleaseDateFillProgress) => void) => () => void
   albumSetRating: (albumId: number, rating: number | null) => Promise<IpcResult>
   albumSetPhysicalMedia: (albumId: number, mediaTypes: string[] | null) => Promise<IpcResult>
   genreStats: () => Promise<IpcResult<{
@@ -452,9 +398,6 @@ interface AlbumShelfAPI {
   onLoginRequired: (callback: () => void) => () => void
   onMenuOpenLogin: (callback: () => void) => () => void
   onMenuSyncAlbums: (callback: () => void) => () => void
-  onMenuCoverFill: (callback: () => void) => () => void
-  onMenuReleaseDateFill: (callback: () => void) => () => void
-  onMenuArtistIdFill: (callback: () => void) => () => void
   onMenuGenreStats: (callback: () => void) => () => void
   onMenuGenreLibrarySync: (callback: () => void) => () => void
   onGenreLibrarySyncProgress: (callback: (progress: GenreLibrarySyncProgress) => void) => () => void
@@ -495,11 +438,6 @@ interface AlbumShelfAPI {
   ) => () => void
   /** 动态变更广播（检查完成 / 标记已读 / 取关级联清理后各窗口同步刷新） */
   onArtistUpdatesChanged: (callback: () => void) => () => void
-
-  // 艺术家 ID 批量回填
-  albumArtistIdFillStatus: () => Promise<IpcResult<{ pending: number; running: boolean }>>
-  albumArtistIdFillStart: () => Promise<IpcResult<ArtistIdFillResult>>
-  onArtistIdFillProgress: (callback: (progress: ArtistIdFillProgress) => void) => () => void
 
   // 数据导出/导入
   dbExport: () => Promise<IpcResult<ExportResult>>

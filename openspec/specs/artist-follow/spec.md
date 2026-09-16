@@ -136,9 +136,9 @@
 - **WHEN** 「已关注」开关激活期间用户取消关注某艺术家
 - **THEN** 系统 SHALL 重置分页并刷新列表，让该艺术家的专辑从「已关注」视图中消失
 
-### Requirement: 艺术家结构化持久化与回填
+### Requirement: 艺术家结构化持久化
 
-系统 SHALL 在同步与在线添加时以结构化 JSON 保留网易云艺术家数据（`album.artists`：`{name, originalId, id}` 数组，真源），并提供批量回填任务为存量专辑补齐（回填同时以 `' / '` 重写派生 artist 展示文本）。
+系统 SHALL 在同步与在线添加时以结构化 JSON 保留网易云艺术家数据（`album.artists`：`{name, originalId, id}` 数组，真源），并以 `' / '` 连接派生 `artist` 展示文本。
 
 #### Scenario: 同步写入
 
@@ -150,18 +150,7 @@
 - **WHEN** 用户通过在线搜索添加一张专辑
 - **THEN** 系统 SHALL 一并写入 `artists`（含 name，与 ' / ' 分隔的艺术家文本同源派生）
 
-#### Scenario: 批量回填
-
-- **WHEN** 用户通过菜单「数据 → 回填艺术家 ID」触发回填
-- **THEN** 系统 SHALL 仅处理 `artists` 为 NULL 的专辑，逐张调用 `ncm-cli album get` 取详情写入结构化艺术家数据并以 join(' / ') 重写 artist 文本，推送进度事件，300ms 限流，不覆盖已有值
-- **AND** 回填 SHALL 有登录前置检查与防重入保护，登录中途失效 SHALL 中止并弹登录窗
-
 #### Scenario: 关注时补充 ID
 
 - **WHEN** 用户关注某艺术家且该芯片带网易云 ID
 - **THEN** 系统 SHALL 将 ID 一并写入关注记录；已存在记录缺失 ID 时 SHALL 用 COALESCE 补齐
-
-#### Scenario: 回填完成后补齐关注记录 ID
-
-- **WHEN** 艺术家数据批量回填完成（含登录失效中止前已回填的部分）
-- **THEN** 系统 SHALL 对缺失 ID 的关注记录按名字匹配 `album.artists` 补齐 ID（COALESCE 只补缺失字段，不覆盖已有值），并在回填结果中返回补齐条数

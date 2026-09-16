@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { getDatabase } from './database'
 import { FollowedArtistService } from './followed-artist-service'
 import { albumArtistRefs } from './album-artist'
+import { normalizeGenreKey, normalizeGenreName } from './genre-name'
 
 // ==================== Types ====================
 
@@ -461,60 +462,6 @@ export class AlbumService {
   }
 
   /**
-   * Get albums without cover URL (封面缺失的专辑).
-   * 这些专辑 cover_url 为空，需要通过 ncm-cli 批量补全。
-   * 按 id 倒序排列，最新收藏的在前面。
-   */
-  getAlbumsWithoutCover(): Album[] {
-    const rows = this.db
-      .prepare(`
-        SELECT * FROM album
-        WHERE (cover_url IS NULL OR cover_url = '')
-          AND netease_album_id IS NOT NULL
-          AND netease_album_id != ''
-        ORDER BY id DESC
-      `)
-      .all() as Album[]
-    return rows
-  }
-
-  /**
-   * Get albums without release date (发行日期缺失的专辑).
-   * 这些专辑 release_date 为空，需要通过 ncm-cli album get 的 publishTime 批量回填。
-   * 按 id 倒序排列，最新收藏的在前面。
-   */
-  getAlbumsWithoutReleaseDate(): Album[] {
-    const rows = this.db
-      .prepare(`
-        SELECT * FROM album
-        WHERE (release_date IS NULL OR release_date = '')
-          AND netease_album_id IS NOT NULL
-          AND netease_album_id != ''
-        ORDER BY id DESC
-      `)
-      .all() as Album[]
-    return rows
-  }
-
-  /**
-   * Get albums without structured artists (结构化艺术家数据缺失的专辑).
-   * 这些专辑 artists 为空，需要通过 ncm-cli album get 的 artists 数组批量回填。
-   * 按 id 倒序排列，最新收藏的在前面。
-   */
-  getAlbumsWithoutArtists(): Album[] {
-    const rows = this.db
-      .prepare(`
-        SELECT * FROM album
-        WHERE (artists IS NULL OR artists = '')
-          AND netease_album_id IS NOT NULL
-          AND netease_album_id != ''
-        ORDER BY id DESC
-      `)
-      .all() as Album[]
-    return rows
-  }
-
-  /**
    * Get albums without genres (风格标签缺失的专辑).
    * 这些是已经尝试补全过，但没有获得任何风格标签的专辑。
    * 按 id 倒序排列，最新收藏的在前面。
@@ -552,26 +499,43 @@ export class AlbumService {
 
   /**
    * Set genres for an album. Replaces existing genre associations.
+   *
+   * 风格名按归一化键（trim + 折叠空白 + 忽略大小写）匹配已有行，命中即复用其 id，
+   * 未命中才以归一化后的名字建档 —— 避免 MB 补全返回的小写名与本地大写行
+   * （如 `impressionism` / `Impressionism`）各占一行。
    */
   setAlbumGenres(albumId: number, genreNames: string[]): void {
     const setGenres = this.db.transaction((names: string[]) => {
       // Remove existing associations
       this.db.prepare('DELETE FROM album_genre WHERE album_id = ?').run(albumId)
 
-      for (const name of names) {
-        // Upsert genre
-        this.db
-          .prepare('INSERT OR IGNORE INTO genre (name) VALUES (?)')
-          .run(name)
+      // 归一化索引（2200 行规模，构建开销可忽略）；事务内重建，自动看到本批新建的行
+      const index = new Map<string, number>()
+      const rows = this.db.prepare('SELECT id, name FROM genre').all() as {
+        id: number
+        name: string
+      }[]
+      for (const row of rows) index.set(normalizeGenreKey(row.name), row.id)
 
-        const genre = this.db
-          .prepare('SELECT id FROM genre WHERE name = ?')
-          .get(name) as { id: number }
+      const insertGenre = this.db.prepare('INSERT INTO genre (name) VALUES (?)')
+      const insertLink = this.db.prepare(
+        'INSERT OR IGNORE INTO album_genre (album_id, genre_id) VALUES (?, ?)'
+      )
 
-        // Create association
-        this.db
-          .prepare('INSERT OR IGNORE INTO album_genre (album_id, genre_id) VALUES (?, ?)')
-          .run(albumId, genre.id)
+      for (const raw of names) {
+        const name = normalizeGenreName(raw)
+        if (!name) continue
+
+        const key = normalizeGenreKey(name)
+        let genreId = index.get(key)
+
+        if (genreId === undefined) {
+          const info = insertGenre.run(name)
+          genreId = info.lastInsertRowid as number
+          index.set(key, genreId)
+        }
+
+        insertLink.run(albumId, genreId)
       }
     })
 
@@ -596,9 +560,8 @@ export class AlbumService {
    * 已有专辑↔风格的映射（album_genre 引用 genre.id）零风险。已有行只在
    * mb_genre_id 为空时补写该列（WHERE ... IS NULL 双保险）。
    *
-   * 名称去重用 JS 的 toLowerCase()（非 SQL 的 lower()：SQLite 内建实现只处理
-   * ASCII，会漏掉 "afoxé"、"cải lương" 这类名称）。逐页调用，每页重建一次索引
-   * （2201 行规模下开销可忽略），从而自动看到上一页写入的新行。
+   * 名称去重与专辑写入路径共用 `normalizeGenreKey`（trim + 折叠空白 + 忽略大小写）。
+   * 逐页调用，每页重建一次索引（2201 行规模下开销可忽略），从而自动看到上一页写入的新行。
    */
   mergeGenreLibrary(entries: GenreLibraryEntry[]): GenreLibraryWriteResult {
     if (entries.length === 0) return { added: 0, existing: 0 }
@@ -608,7 +571,7 @@ export class AlbumService {
       id: number
       name: string
     }[]
-    for (const row of rows) index.set(row.name.toLowerCase(), row.id)
+    for (const row of rows) index.set(normalizeGenreKey(row.name), row.id)
 
     const insertGenre = this.db.prepare(
       'INSERT INTO genre (name, mb_genre_id) VALUES (?, ?)'
@@ -622,14 +585,15 @@ export class AlbumService {
 
     const merge = this.db.transaction((items: GenreLibraryEntry[]) => {
       for (const entry of items) {
-        const key = entry.name.toLowerCase()
+        const name = normalizeGenreName(entry.name)
+        const key = normalizeGenreKey(name)
         const knownId = index.get(key)
 
         if (knownId !== undefined) {
           fillMbGenreId.run(entry.mbGenreId, knownId)
           existing++
         } else {
-          const info = insertGenre.run(entry.name, entry.mbGenreId)
+          const info = insertGenre.run(name, entry.mbGenreId)
           // 回填索引：同批次（同页）内出现重名时不重复插入
           index.set(key, info.lastInsertRowid as number)
           added++
