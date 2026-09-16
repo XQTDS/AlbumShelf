@@ -151,36 +151,6 @@
       </div>
     </div>
 
-    <!-- 封面补全进度条 -->
-    <div v-if="coverFillProgress" class="enrich-bar">
-      <div class="enrich-bar-inner">
-        <span class="enrich-text">正在补全封面 {{ coverFillProgress.current }}/{{ coverFillProgress.total }}：{{ coverFillProgress.albumTitle }}</span>
-        <div class="enrich-progress-track">
-          <div class="enrich-progress-fill" :style="{ width: (coverFillProgress.current / coverFillProgress.total * 100) + '%' }"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 发行日期回填进度条 -->
-    <div v-if="releaseDateFillProgress" class="enrich-bar">
-      <div class="enrich-bar-inner">
-        <span class="enrich-text">正在回填发行日期 {{ releaseDateFillProgress.current }}/{{ releaseDateFillProgress.total }}：{{ releaseDateFillProgress.albumTitle }}</span>
-        <div class="enrich-progress-track">
-          <div class="enrich-progress-fill" :style="{ width: (releaseDateFillProgress.current / releaseDateFillProgress.total * 100) + '%' }"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 艺术家 ID 回填进度条 -->
-    <div v-if="artistIdFillProgress" class="enrich-bar">
-      <div class="enrich-bar-inner">
-        <span class="enrich-text">正在回填艺术家 ID {{ artistIdFillProgress.current }}/{{ artistIdFillProgress.total }}：{{ artistIdFillProgress.albumTitle }}</span>
-        <div class="enrich-progress-track">
-          <div class="enrich-progress-fill" :style="{ width: (artistIdFillProgress.current / artistIdFillProgress.total * 100) + '%' }"></div>
-        </div>
-      </div>
-    </div>
-
     <!-- 风格库同步进度条 -->
     <div v-if="genreLibrarySyncProgress" class="enrich-bar">
       <div class="enrich-bar-inner">
@@ -1794,12 +1764,6 @@ const messageType = ref<'success' | 'error' | 'info'>('info')
 // 补全进度
 const enrichProgress = ref<{ current: number; total: number; albumTitle: string } | null>(null)
 
-// 封面补全进度
-const coverFillProgress = ref<{ current: number; total: number; albumTitle: string; filled: number } | null>(null)
-
-// 发行日期回填进度
-const releaseDateFillProgress = ref<{ current: number; total: number; albumTitle: string; filled: number } | null>(null)
-
 // ==================== 数据获取 ====================
 
 // 构建统一的查询参数（筛选/排序/分页），分页加载与全量加载路径共用
@@ -2430,67 +2394,6 @@ async function loadFollowedArtists() {
   }
 }
 
-// ==================== 艺术家 ID 批量回填 ====================
-
-const artistIdFillProgress = ref<{ current: number; total: number; albumTitle: string; filled: number } | null>(null)
-let removeArtistIdFillProgressListener: (() => void) | null = null
-let removeMenuArtistIdFillListener: (() => void) | null = null
-
-async function handleArtistIdFill() {
-  if (artistIdFillProgress.value) {
-    showMessage('艺术家 ID 回填正在进行中，请等待完成', 'info')
-    return
-  }
-
-  showMessage('正在回填缺失的艺术家 ID...', 'info')
-
-  try {
-    const result = await window.api.albumArtistIdFillStart()
-    if (!result.success) {
-      showMessage(`艺术家 ID 回填失败：${result.error}`, 'error')
-      return
-    }
-
-    if (result.data) {
-      const { total, filled, failed, idsMerged } = result.data
-      if (result.loginRequired) {
-        artistIdFillProgress.value = null
-        showMessage('艺术家 ID 回填已中止：需要先登录网易云', 'error')
-        return
-      }
-      const mergedTip = idsMerged > 0 ? `，已为 ${idsMerged} 位关注艺术家补齐 ID` : ''
-      if (total === 0) {
-        showMessage('所有专辑均已有艺术家 ID，无需回填', 'info')
-      } else if (failed > 0) {
-        showMessage(`艺术家 ID 回填完成！成功 ${filled} 张，失败 ${failed} 张（可重新运行回填）${mergedTip}`, 'info')
-      } else {
-        showMessage(`艺术家 ID 回填完成！成功 ${filled} 张${mergedTip}`, 'success')
-      }
-    }
-  } catch (error) {
-    showMessage('艺术家 ID 回填失败：未知错误', 'error')
-  }
-}
-
-function setupArtistIdFillProgressListener() {
-  removeArtistIdFillProgressListener = window.api.onArtistIdFillProgress((progress) => {
-    artistIdFillProgress.value = {
-      current: progress.current,
-      total: progress.total,
-      albumTitle: progress.albumTitle,
-      filled: progress.filled
-    }
-
-    // 回填完成
-    if (progress.current >= progress.total) {
-      setTimeout(async () => {
-        artistIdFillProgress.value = null
-        await fetchAlbums()
-      }, 1000)
-    }
-  })
-}
-
 // ==================== MusicBrainz 风格库同步 ====================
 
 const genreLibrarySyncProgress = ref<{ current: number; total: number; added: number; existing: number } | null>(null)
@@ -2924,128 +2827,6 @@ function showEnrichSummary(prefix: string, data: { matched: number; failed: numb
   showMessage(`${prefix}：${parts.join('，')}`, 'success')
 }
 
-// ==================== 批量补全缺失封面 ====================
-
-let removeCoverFillProgressListener: (() => void) | null = null
-let removeMenuCoverFillListener: (() => void) | null = null
-
-async function handleCoverFill() {
-  if (coverFillProgress.value) {
-    showMessage('封面补全正在进行中，请等待完成', 'info')
-    return
-  }
-
-  showMessage('正在补全缺失封面...', 'info')
-
-  try {
-    const result = await window.api.albumCoverFillStart()
-    if (!result.success) {
-      showMessage(`封面补全失败：${result.error}`, 'error')
-      return
-    }
-
-    if (result.data) {
-      const { total, filled, failed } = result.data
-      if (result.loginRequired) {
-        // 登录弹窗由后端触发，这里清理进度条并提示
-        coverFillProgress.value = null
-        showMessage('封面补全已中止：需要先登录网易云', 'error')
-        return
-      }
-      if (total === 0) {
-        showMessage('所有专辑均已有封面，无需补全', 'info')
-      } else if (failed > 0) {
-        showMessage(`封面补全完成！成功 ${filled} 张，失败 ${failed} 张（可重新运行补全）`, 'info')
-      } else {
-        showMessage(`封面补全完成！成功 ${filled} 张`, 'success')
-      }
-    }
-    // 进度条清除与列表刷新由 onCoverFillProgress 回调处理
-  } catch (error) {
-    showMessage('封面补全失败：未知错误', 'error')
-  }
-}
-
-function setupCoverFillProgressListener() {
-  removeCoverFillProgressListener = window.api.onCoverFillProgress((progress) => {
-    coverFillProgress.value = {
-      current: progress.current,
-      total: progress.total,
-      albumTitle: progress.albumTitle,
-      filled: progress.filled
-    }
-
-    // 补全完成
-    if (progress.current >= progress.total) {
-      setTimeout(async () => {
-        coverFillProgress.value = null
-        await fetchAlbums()
-      }, 1000)
-    }
-  })
-}
-
-// ==================== 批量回填缺失发行日期 ====================
-
-let removeReleaseDateFillProgressListener: (() => void) | null = null
-let removeMenuReleaseDateFillListener: (() => void) | null = null
-
-async function handleReleaseDateFill() {
-  if (releaseDateFillProgress.value) {
-    showMessage('发行日期回填正在进行中，请等待完成', 'info')
-    return
-  }
-
-  showMessage('正在回填缺失发行日期...', 'info')
-
-  try {
-    const result = await window.api.albumReleaseDateFillStart()
-    if (!result.success) {
-      showMessage(`发行日期回填失败：${result.error}`, 'error')
-      return
-    }
-
-    if (result.data) {
-      const { total, filled, failed } = result.data
-      if (result.loginRequired) {
-        // 登录弹窗由后端触发，这里清理进度条并提示
-        releaseDateFillProgress.value = null
-        showMessage('发行日期回填已中止：需要先登录网易云', 'error')
-        return
-      }
-      if (total === 0) {
-        showMessage('所有专辑均已有发行日期，无需回填', 'info')
-      } else if (failed > 0) {
-        showMessage(`发行日期回填完成！成功 ${filled} 张，失败 ${failed} 张（可重新运行回填）`, 'info')
-      } else {
-        showMessage(`发行日期回填完成！成功 ${filled} 张`, 'success')
-      }
-    }
-    // 进度条清除与列表刷新由 onReleaseDateFillProgress 回调处理
-  } catch (error) {
-    showMessage('发行日期回填失败：未知错误', 'error')
-  }
-}
-
-function setupReleaseDateFillProgressListener() {
-  removeReleaseDateFillProgressListener = window.api.onReleaseDateFillProgress((progress) => {
-    releaseDateFillProgress.value = {
-      current: progress.current,
-      total: progress.total,
-      albumTitle: progress.albumTitle,
-      filled: progress.filled
-    }
-
-    // 回填完成
-    if (progress.current >= progress.total) {
-      setTimeout(async () => {
-        releaseDateFillProgress.value = null
-        await fetchAlbums()
-      }, 1000)
-    }
-  })
-}
-
 // ==================== 登录相关 ====================
 
 const showLoginModal = ref(false)
@@ -3070,9 +2851,6 @@ function handleLoginGuideLogin() {
 onMounted(async () => {
   setupProgressListener()
   setupSyncProgressListener()
-  setupCoverFillProgressListener()
-  setupReleaseDateFillProgressListener()
-  setupArtistIdFillProgressListener()
   setupGenreLibrarySyncProgressListener()
 
   // Esc 关闭详情抽屉
@@ -3104,21 +2882,6 @@ onMounted(async () => {
   const removeMenuSyncListener = window.api.onMenuSyncAlbums(async () => {
     console.log('[App] 收到菜单同步事件')
     await handleSync()
-  })
-
-  // 监听菜单栏"补全缺失封面"事件
-  removeMenuCoverFillListener = window.api.onMenuCoverFill(() => {
-    handleCoverFill()
-  })
-
-  // 监听菜单栏"补全缺失发行日期"事件
-  removeMenuReleaseDateFillListener = window.api.onMenuReleaseDateFill(() => {
-    handleReleaseDateFill()
-  })
-
-  // 监听菜单栏"回填艺术家 ID"事件
-  removeMenuArtistIdFillListener = window.api.onMenuArtistIdFill(() => {
-    handleArtistIdFill()
   })
 
   // 监听菜单栏"同步 MusicBrainz 风格库"事件
@@ -3224,12 +2987,6 @@ onUnmounted(() => {
   if (removeSyncProgressListener) {
     removeSyncProgressListener()
   }
-  if (removeCoverFillProgressListener) {
-    removeCoverFillProgressListener()
-  }
-  if (removeMenuCoverFillListener) {
-    removeMenuCoverFillListener()
-  }
   if (removeMenuEnrichAlbumsWithoutMbDataListener) {
     removeMenuEnrichAlbumsWithoutMbDataListener()
   }
@@ -3247,15 +3004,6 @@ onUnmounted(() => {
   }
   if (removeAuthStatusChangedListener) {
     removeAuthStatusChangedListener()
-  }
-  if (removeMenuReleaseDateFillListener) {
-    removeMenuReleaseDateFillListener()
-  }
-  if (removeArtistIdFillProgressListener) {
-    removeArtistIdFillProgressListener()
-  }
-  if (removeMenuArtistIdFillListener) {
-    removeMenuArtistIdFillListener()
   }
   if (removeFollowedChangedListener) {
     removeFollowedChangedListener()

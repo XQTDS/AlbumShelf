@@ -51,13 +51,13 @@
 
 风格库同步 SHALL 为纯增量写入，SHALL NOT 破坏数据库中已有的专辑↔风格映射。
 
-同步路径 SHALL NOT 执行 `DELETE FROM genre`、`DELETE FROM album_genre` 或 `UPDATE genre SET name = ?`。
+同步路径 SHALL NOT 执行 `DELETE FROM genre`、`DELETE FROM album_genre` 或 `UPDATE genre SET name = ?`。（该不变量限定于同步路径；启动期的重复行合并是独立的一次性迁移，见 local-storage spec，二者不冲突。）
 
 #### Scenario: 已有风格按名称保留
 
-- **WHEN** MB 返回的风格名在本地 `genre` 表中已存在（忽略大小写比较）
+- **WHEN** MB 返回的风格名在本地 `genre` 表中已存在（按归一化键比较：去首尾空白 + 折叠连续空白 + 忽略大小写）
 - **THEN** 系统 SHALL 复用该行（`existing` 计数 +1），SHALL NOT 新建重复行，SHALL NOT 修改其 `name`
-- **AND** 本地风格的大小写形式 SHALL 被保留（如本地为 `Rock`、MB 为 `rock`，不新建也不改名）
+- **AND** 本地风格的大小写与空白形式 SHALL 被保留（如本地为 `Rock`、MB 为 `rock`，不新建也不改名）
 
 #### Scenario: 已有专辑↔风格映射不受影响
 

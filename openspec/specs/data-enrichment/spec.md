@@ -45,6 +45,11 @@
 - **THEN** 若专辑当前风格列表为空，系统 SHALL 写入 MB 风格标签
 - **AND** 若专辑当前风格列表非空，系统 SHALL NOT 修改其风格标签（跳过写入）
 
+#### Scenario: 补全写入按归一化键复用风格行
+
+- **WHEN** 补全写入 MB 返回的风格名（含 MB 的小写形式）
+- **THEN** 系统 SHALL 按归一化键（去首尾空白 + 折叠连续空白 + 忽略大小写）匹配已有风格行并复用，SHALL NOT 因大小写或空白差异新建重复行（历史上 `Impressionism` / `impressionism` 就是这样分裂成两行的）；仅当归一化后无匹配时才建档，写入归一化后的展示名
+
 #### Scenario: 重新补全不清空风格
 
 - **WHEN** 用户触发「重新补全所有专辑」，系统重置补全状态（enriched_at / musicbrainz_id / mb_rating）

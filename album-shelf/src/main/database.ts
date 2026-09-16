@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
+import { normalizeGenreKey } from './genre-name'
 
 let db: Database.Database | null = null
 
@@ -203,7 +204,78 @@ export function initDatabase(): Database.Database {
     db.exec('ALTER TABLE artist_update ADD COLUMN duration_ms INTEGER')
   }
 
+  // Data migration: 合并历史重复风格行（同名 = 归一化后同名，见 genre-name.ts）
+  mergeDuplicateGenres(db)
+
   return db
+}
+
+interface GenreRow {
+  id: number
+  name: string
+  mb_genre_id: string | null
+}
+
+/**
+ * 一次性合并历史重复风格行（幂等）。
+ *
+ * 背景：风格库同步（大小写不敏感去重）与专辑写入（历史上的精确匹配 INSERT OR IGNORE）
+ * 口径不一致，导致同名风格可能存在多行 —— 例如 `Impressionism`（带 MB UUID，无专辑）
+ * 与 `impressionism`（无 UUID，挂着专辑）；`choral symphony` 与带换行符的
+ * `choral symphony\n`。写入路径已修（album-service.ts 的 setAlbumGenres），此处清理存量。
+ *
+ * 规则：同组胜者优先「持有 mb_genre_id」的行，并列取最小 id；败者的专辑关联改指胜者后
+ * 删除该行。全程单事务，不丢任何专辑↔风格关联；无重复时零写入。
+ */
+function mergeDuplicateGenres(db: Database.Database): void {
+  const rows = db
+    .prepare('SELECT id, name, mb_genre_id FROM genre ORDER BY id')
+    .all() as GenreRow[]
+
+  const groups = new Map<string, GenreRow[]>()
+  for (const row of rows) {
+    const key = normalizeGenreKey(row.name)
+    const list = groups.get(key)
+    if (list) {
+      list.push(row)
+    } else {
+      groups.set(key, [row])
+    }
+  }
+
+  const repoint = db.prepare(
+    `INSERT OR IGNORE INTO album_genre (album_id, genre_id)
+     SELECT album_id, ? FROM album_genre WHERE genre_id = ?`
+  )
+  const unlink = db.prepare('DELETE FROM album_genre WHERE genre_id = ?')
+  const removeGenre = db.prepare('DELETE FROM genre WHERE id = ?')
+
+  const merge = db.transaction(() => {
+    let mergedGroups = 0
+    let deletedRows = 0
+
+    for (const group of groups.values()) {
+      if (group.length < 2) continue
+
+      const winner = group.find((r) => r.mb_genre_id) ?? group.reduce((a, b) => (a.id <= b.id ? a : b))
+
+      for (const loser of group) {
+        if (loser.id === winner.id) continue
+        repoint.run(winner.id, loser.id)
+        unlink.run(loser.id)
+        removeGenre.run(loser.id)
+        deletedRows++
+      }
+      mergedGroups++
+    }
+
+    return { mergedGroups, deletedRows }
+  })
+
+  const { mergedGroups, deletedRows } = merge()
+  if (mergedGroups > 0) {
+    console.log(`[Database] 合并重复风格 ${mergedGroups} 组，删除 ${deletedRows} 行孤儿风格`)
+  }
 }
 
 export function getDatabase(): Database.Database {
