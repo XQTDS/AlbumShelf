@@ -12,7 +12,7 @@
 #### Scenario: 匹配成功
 
 - **WHEN** MusicBrainz 搜索 Release Group（按专辑名 + 艺术家名及其别名）返回结果
-- **THEN** 系统 SHALL 取 score 最高的结果，获取其 ratings 和 tags，写入本地数据库的对应字段（风格标签仅在专辑当前风格为空时写入，见「风格标签保护」）
+- **THEN** 系统 SHALL 取 score 最高的结果，获取其 ratings、genres 与 url-rels，写入本地数据库的对应字段（风格标签仅在专辑当前风格为空时写入，见「风格标签保护」；外部站点链接见「外部站点链接的顺带采集」）
 
 #### Scenario: 精确匹配失败后模糊匹配产生候选
 
@@ -23,7 +23,7 @@
 #### Scenario: 用户确认模糊匹配候选
 
 - **WHEN** 用户在逐条确认弹窗中选择了某个候选
-- **THEN** 系统 SHALL 调用 MusicBrainz lookup 获取该候选的 ratings 和 genres，写入数据库，并检查是否需要学习新别名
+- **THEN** 系统 SHALL 调用 MusicBrainz lookup 获取该候选的 ratings、genres 与 url-rels，写入数据库，并检查是否需要学习新别名
 
 #### Scenario: 用户拒绝模糊匹配候选
 
@@ -106,3 +106,36 @@
 
 - **WHEN** 系统调用 MusicBrainz API
 - **THEN** 系统 SHALL 使用 `musicbrainz-api` npm 包（官方推荐的 Node.js 库）进行所有 API 交互
+
+### Requirement: 外部站点链接的顺带采集
+
+数据补全 SHALL 在获取专辑详情的同一次 lookup 中顺带取回外部站点链接（`inc=url-rels`），SHALL NOT 为此额外发起 MusicBrainz 请求。
+
+采集范围 SHALL 限于白名单站点的 URL：RYM / Discogs / AllMusic / Last.fm / Wikipedia。站点识别 SHALL 按 **URL host** 匹配（含子域），SHALL NOT 按关系的 `type` 字段匹配——实测 RYM 链接的 type 是通用的 `other databases`，同一 type 下混有大量无关站点（last.fm、musik-sammler、offiziellecharts 等），按 type 筛会同时漏收与误收。
+
+其中 `rym` 字段**照常采集但没有消费方**：详情面板的 RYM 入口恒用搜索页（实测 MB 存的 release 直链点不开，见 `album-detail-expand`）。保留采集是因为它与其余字段共用同一次 lookup，零额外成本，且记录了「MB 是否收录了这张专辑的 RYM 链接」这一信息。
+
+系统 SHALL NOT 请求这些站点本身以校验链接有效性。
+
+#### Scenario: 匹配成功时写入
+
+- **WHEN** 数据补全精确匹配成功并完成 lookup
+- **THEN** 系统 SHALL 从返回的 relations 中按 host 白名单抽取链接并写入 external_links
+- **AND** 即使未抽到任何链接，SHALL 写入空对象 `'{}'`（表示已查询过），避免详情面板对该专辑反复发起惰性查询
+
+#### Scenario: 模糊匹配确认时写入
+
+- **WHEN** 用户确认模糊匹配候选并完成 lookup
+- **THEN** 系统 SHALL 同样抽取并写入 external_links
+
+#### Scenario: 不按 type 匹配
+
+- **WHEN** 关系的 `type` 为 `other databases` 且 URL host 为 rateyourmusic.com
+- **THEN** 系统 SHALL 抽取该链接并归入 rym
+- **WHEN** 同一 `type` 下 URL host 为 musik-sammler.de 等白名单外站点
+- **THEN** 系统 SHALL 忽略该链接
+
+#### Scenario: 同站点多条链接
+
+- **WHEN** 同一站点在 relations 中出现多条
+- **THEN** 系统 SHALL 取第一条

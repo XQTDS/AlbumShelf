@@ -149,6 +149,12 @@ export function initDatabase(): Database.Database {
   if (!albumColumns.some((c) => c.name === 'artists')) {
     db.exec('ALTER TABLE album ADD COLUMN artists TEXT')
   }
+  // Add external_links if missing (外部站点链接 JSON，如 {"discogs":"https://www.discogs.com/master/21491"}。
+  // NULL = 未回填（详情面板打开时惰性查询），'{}' = 已查询过但无任何白名单链接 —— 两者必须区分，
+  // 否则「确实没有链接」的专辑每次打开面板都会重查一遍，见 external-links.ts)
+  if (!albumColumns.some((c) => c.name === 'external_links')) {
+    db.exec('ALTER TABLE album ADD COLUMN external_links TEXT')
+  }
   // Drop artist_ids if present (从未随版本发布的冗余列；best-effort，失败仅告警，保留无害)
   if (albumColumns.some((c) => c.name === 'artist_ids')) {
     try {
@@ -370,14 +376,15 @@ export function importDatabase(data: ImportData): ImportResult {
             title = ?, artist = ?, cover_url = ?, release_date = ?,
             musicbrainz_id = ?, mb_rating = ?, mb_rating_count = ?,
             track_count = ?, enriched_at = ?, user_rating = ?,
-            netease_original_id = ?, physical_media = ?, artists = ?
+            netease_original_id = ?, physical_media = ?, artists = ?,
+            external_links = ?
           WHERE id = ?
         `).run(
           album.title, album.artist, album.cover_url, album.release_date,
           album.musicbrainz_id, album.mb_rating, album.mb_rating_count,
           album.track_count, album.enriched_at, album.user_rating,
           album.netease_original_id, album.physical_media,
-          album.artists ?? null, existing.id
+          album.artists ?? null, album.external_links ?? null, existing.id
         )
         albumIdMap.set(album.id as number, existing.id)
         result.albumsUpdated++
@@ -385,14 +392,14 @@ export function importDatabase(data: ImportData): ImportResult {
         const info = database.prepare(`
           INSERT INTO album (netease_album_id, netease_original_id, musicbrainz_id, title, artist,
             cover_url, release_date, mb_rating, mb_rating_count, track_count, synced_at, enriched_at, user_rating,
-            physical_media, artists)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            physical_media, artists, external_links)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           album.netease_album_id, album.netease_original_id, album.musicbrainz_id,
           album.title, album.artist, album.cover_url, album.release_date,
           album.mb_rating, album.mb_rating_count, album.track_count,
           album.synced_at || new Date().toISOString(), album.enriched_at, album.user_rating,
-          album.physical_media, album.artists ?? null
+          album.physical_media, album.artists ?? null, album.external_links ?? null
         )
         albumIdMap.set(album.id as number, info.lastInsertRowid as number)
         result.albumsAdded++

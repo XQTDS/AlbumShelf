@@ -103,6 +103,8 @@
 - 封面图（来自 cover_url，无封面时显示占位符）
 - 所有风格标签（完整展示，不截断），旁边带有 ✏️ 编辑按钮可进入就地编辑态
 - 实体收藏标记控件（黑胶/CD/磁带分段按钮组，可多选，见 physical-media spec）
+- RateYourMusic 外部链接（恒显示，且恒为搜索页，见下方 requirement）
+- Discogs / AllMusic / Last.fm / Wikipedia 外部链接（各自取到时才显示）
 - MusicBrainz 外部链接（基于 musicbrainz_id，字段为空时不显示）
 - 网易云音乐外部链接（基于 netease_id）
 - MB 评分（mb_rating，为空时显示"—"）
@@ -125,12 +127,67 @@
 - **WHEN** 用户选中一个未补全或部分数据为空的专辑
 - **THEN** 缺失字段使用"—"或"未补全"等占位文字，MusicBrainz 链接在 musicbrainz_id 为空时不显示，封面图为空时显示占位符，风格区域显示"—"但仍然提供编辑按钮
 
+### Requirement: 详情面板展示外部站点链接
+
+面板 SHALL 提供到第三方音乐数据库的跳转链接，让用户自行查阅本系统未采集的数据（如 RYM 的风格分类）。系统**只提供链接，不抓取这些站点的内容**。
+
+RYM 入口 SHALL 恒显示，且 SHALL 恒指向**搜索页**，SHALL NOT 使用 MusicBrainz 里存的 release 直链——实测那些直链点不开（MB 记录的 slug 与实际不符，或 RYM 拦截直达访问），而搜索页不依赖 slug 规则，是唯一可靠的入口。因此 RYM 入口与 external_links 的回填状态无关，任何专辑在任何时刻都可点。
+
+#### Scenario: RYM 入口恒为搜索页
+
+- **WHEN** 用户选中任一专辑
+- **THEN** 面板 SHALL 展示 RateYourMusic 入口，指向 `https://rateyourmusic.com/search?searchterm=<艺术家 专辑名>&searchtype=l`
+- **AND** SHALL NOT 使用 external_links 中的 rym 直链
+- **AND** SHALL NOT 显示 loading 态或占位符（搜索链接任何时刻都可用）
+
+#### Scenario: 其余站点按需显示
+
+- **WHEN** 专辑的 external_links 含 discogs / allmusic / lastfm / wikipedia 字段
+- **THEN** 面板 SHALL 展示对应链接；字段缺失时 SHALL NOT 显示该项
+
+#### Scenario: 链接数量与换行
+
+- **WHEN** 面板展示多个外部链接
+- **THEN** 链接 SHALL 以可换行的横排展示，SHALL NOT 溢出面板宽度
+
+### Requirement: 外部站点链接的惰性采集
+
+系统 SHALL 在详情面板打开时按需采集该专辑的 external_links，SHALL NOT 提供批量回填入口。
+
+本机库规模（数千张专辑）按 MusicBrainz 的 1 req/s 限速全量回填需数十分钟，且实测持续请求下 MusicBrainz 频繁返回 503；而用户实际只会查看其中一部分专辑，且 RYM 入口恒为搜索页、已保证全部专辑可点。故采用「用户看哪张补哪张」，与曲目数据的惰性补全同款思路。
+
+#### Scenario: 面板打开时按需查询
+
+- **WHEN** 用户选中一张 external_links 为 NULL 且有 musicbrainz_id 的专辑
+- **THEN** 系统 SHALL 调用 MusicBrainz lookup（`inc=url-rels`）获取链接并落库，SHALL NOT 阻塞面板渲染（先按当前数据渲染，查询返回后补上其余站点链接；RYM 入口不受影响）
+
+#### Scenario: 每张专辑只查一次
+
+- **WHEN** 专辑的 external_links 已非 NULL（含 `'{}'`）
+- **THEN** 系统 SHALL 直接返回已存链接或空对象，SHALL NOT 发起 MusicBrainz 请求
+
+#### Scenario: 无 musicbrainz_id 时不查询
+
+- **WHEN** 用户选中一张 external_links 为 NULL 且 musicbrainz_id 也为空的专辑
+- **THEN** 系统 SHALL 不发起查询，SHALL NOT 写入任何值（该专辑后续补全拿到 musicbrainz_id 后仍应再试）
+
+#### Scenario: 查询失败不落库
+
+- **WHEN** 惰性查询因网络错误或 MusicBrainz 不可用而失败
+- **THEN** 系统 SHALL 保持 external_links 为 NULL 以便下次打开面板重试
+- **AND** SHALL NOT 写入空对象——否则一次网络抖动会把该专辑永久钉死成「无链接」
+
+#### Scenario: 并发去重
+
+- **WHEN** 同一专辑的多个查询在未完成时并发到达
+- **THEN** 系统 SHALL 仅发起一次查询，其余直接返回
+
 ### Requirement: 外部链接在系统浏览器中打开
 
-点击 MusicBrainz 链接或网易云音乐链接 SHALL 通过系统默认浏览器打开，而非在 Electron 应用内打开。
+点击面板中的任一外部链接（RYM / Discogs / AllMusic / Last.fm / Wikipedia / MusicBrainz / 网易云音乐）SHALL 通过系统默认浏览器打开，而非在 Electron 应用内打开。
 
 #### Scenario: 点击外部链接
-- **WHEN** 用户点击面板中的 MusicBrainz 链接或网易云链接
+- **WHEN** 用户点击面板中的任一外部链接
 - **THEN** 系统默认浏览器打开对应的 URL
 
 ### Requirement: 详情面板展示曲目列表

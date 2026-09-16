@@ -21,7 +21,7 @@
 #### Scenario: Album 表字段
 
 - **WHEN** Album 表被创建
-- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、netease_album_id（网易云加密专辑ID，唯一）、netease_original_id（网易云原始专辑ID，可空）、musicbrainz_id（MusicBrainz Release Group ID，可空）、title（专辑名）、artist（艺术家名，派生展示文本，多艺术家以 ' / ' 连接）、artists（结构化艺术家 JSON [{name, originalId, id}]，真源，可空；NULL = 未回填）、cover_url（封面URL，可空）、release_date（发行日期，可空）、mb_rating（MusicBrainz 评分，可空）、mb_rating_count（评分人数，可空）、user_rating（用户个人评分，REAL 类型，可空，范围 0.5~5.0 步长 0.5）、physical_media（实体介质标记，TEXT 类型，可空，逗号分隔的 vinyl/cd/cassette 枚举组合）、track_count（曲目数，可空）、synced_at（同步时间）、enriched_at（补全时间，可空）、created_at（创建时间）
+- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、netease_album_id（网易云加密专辑ID，唯一）、netease_original_id（网易云原始专辑ID，可空）、musicbrainz_id（MusicBrainz Release Group ID，可空）、title（专辑名）、artist（艺术家名，派生展示文本，多艺术家以 ' / ' 连接）、artists（结构化艺术家 JSON [{name, originalId, id}]，真源，可空；NULL = 未回填）、cover_url（封面URL，可空）、release_date（发行日期，可空）、mb_rating（MusicBrainz 评分，可空）、mb_rating_count（评分人数，可空）、user_rating（用户个人评分，REAL 类型，可空，范围 0.5~5.0 步长 0.5）、physical_media（实体介质标记，TEXT 类型，可空，逗号分隔的 vinyl/cd/cassette 枚举组合）、external_links（外部站点链接 JSON，可空）、track_count（曲目数，可空）、synced_at（同步时间）、enriched_at（补全时间，可空）、created_at（创建时间）
 
 #### Scenario: user_rating 字段迁移
 
@@ -44,6 +44,27 @@
 - **WHEN** 应用启动且 album 表仍存在 artist_ids 列（历史开发版遗留，从未随版本发布）
 - **THEN** 系统 SHALL 尝试 ALTER TABLE DROP COLUMN artist_ids
 - **AND** 删除失败时 SHALL 仅记录警告并继续启动（列保留无害）
+
+#### Scenario: external_links 字段迁移
+
+- **WHEN** 应用启动且 album 表尚无 external_links 列
+- **THEN** 系统 SHALL 通过 ALTER TABLE 添加 `external_links TEXT` 列，默认值为 NULL
+
+#### Scenario: external_links 的 NULL 与空对象语义
+
+- **WHEN** 专辑的 external_links 为 NULL
+- **THEN** 表示**未回填**，详情面板打开时 SHALL 触发惰性查询
+- **WHEN** 专辑的 external_links 为 `'{}'`
+- **THEN** 表示**已查询过但无任何链接**，SHALL NOT 再次查询
+- **AND** 两者 SHALL 严格区分——否则「确实没有链接」的专辑每次打开面板都会重查一遍
+
+#### Scenario: external_links 的导出导入
+
+- **WHEN** 用户导出数据
+- **THEN** 导出 JSON SHALL 包含 album 的 external_links 字段（`SELECT *` 全列导出，无需额外处理）
+- **WHEN** 导入数据
+- **THEN** 系统 SHALL 在 album 的 UPDATE 与 INSERT 列清单中包含 external_links，SHALL NOT 因遗漏该列而静默丢弃
+- **AND** 导入旧版导出（album 元素无 external_links 字段）时 SHALL 按 NULL 处理，即视为未回填，由惰性查询补齐
 
 ### Requirement: Track 表结构
 

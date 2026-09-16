@@ -3,6 +3,7 @@ import { getDatabase } from './database'
 import { FollowedArtistService } from './followed-artist-service'
 import { albumArtistRefs } from './album-artist'
 import { normalizeGenreKey, normalizeGenreName } from './genre-name'
+import type { ExternalLinks } from './enrich/external-links'
 
 // ==================== Types ====================
 
@@ -21,6 +22,11 @@ export interface Album {
   physical_media: string | null
   /** 艺术家结构化 JSON [{name, originalId, id}]（真源）；NULL = 未回填。artist 文本为其派生展示 */
   artists: string | null
+  /**
+   * 外部站点链接 JSON，如 `{"discogs":"https://www.discogs.com/master/21491"}`。
+   * NULL = 未回填（详情面板打开时惰性查询）；`'{}'` = 已查询过但无任何链接。
+   */
+  external_links: string | null
   track_count: number | null
   synced_at: string
   enriched_at: string | null
@@ -51,6 +57,8 @@ export interface AlbumUpdate {
   user_rating?: number | null
   physical_media?: string | null
   artists?: string | null
+  /** 外部站点链接 JSON（见 {@link Album.external_links}） */
+  external_links?: string | null
   track_count?: number | null
   enriched_at?: string | null
   /** 明文专辑 ID（网易云网页跳转用） */
@@ -210,6 +218,39 @@ export class AlbumService {
     this.db
       .prepare(`UPDATE album SET ${fields.join(', ')} WHERE id = @id`)
       .run(values)
+  }
+
+  /**
+   * 写入专辑的外部站点链接。
+   *
+   * 传空对象会落库为 `'{}'`（= 已查询过但无链接），用于避免对「确实没有链接」的专辑
+   * 反复查询；查询失败时**不要调用本方法**，保持 NULL 以便下次重试。
+   */
+  setAlbumExternalLinks(id: number, links: ExternalLinks): void {
+    this.updateAlbum(id, { external_links: JSON.stringify(links) })
+  }
+
+  /**
+   * 读取专辑的外部站点链接。
+   *
+   * - 返回 `null` —— 列值为 NULL（**未回填**）或数据损坏
+   * - 返回 `{}` —— 已查询过但无任何链接
+   *
+   * 「未回填」与「已查过但无链接」的判定请直接看 {@link Album.external_links} 是否为 null。
+   */
+  getAlbumExternalLinks(id: number): ExternalLinks | null {
+    const row = this.db
+      .prepare('SELECT external_links FROM album WHERE id = ?')
+      .get(id) as { external_links: string | null } | undefined
+
+    if (!row?.external_links) return null
+
+    try {
+      return JSON.parse(row.external_links) as ExternalLinks
+    } catch {
+      // 数据损坏时按未回填处理，让惰性查询重新写入
+      return null
+    }
   }
 
   /**
