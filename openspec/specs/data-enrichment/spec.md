@@ -49,8 +49,9 @@
 
 - **WHEN** 数据补全精确匹配成功并 lookup release-group（include 含 `artist-credits`）
 - **THEN** 系统 SHALL 从 `artist-credit[0].artist` 读取 MBID、名称、country / area
-- **AND** 若 artist 表尚无该 MBID 的有效地区结果，系统 SHALL upsert artist 行
-- **AND** 系统 SHALL 写入专辑的 `primary_artist_mbid` 与 `region_checked_at`
+- **AND** 写入共享 artist 行前 SHALL 校验 MB credit 与网易云主艺人可确认为同一实体；无法确认或为群星/Various Artists 等合成实体时 SHALL NOT 写入 MBID/地区
+- **AND** 可确认时按专辑的网易云主艺人 ID（`artists[0].originalId`）upsert artist 行：已有地区保留，缺失地区填充
+- **AND** 系统 SHALL 写入专辑的 `primary_artist_id` 与 `region_checked_at`
 
 #### Scenario: country 缺失时补 artist lookup
 
@@ -62,13 +63,18 @@
 
 - **WHEN** artist lookup 因网络/API 错误失败
 - **THEN** 系统 SHALL 仍写入专辑的 MB 匹配、评分、风格与外部链接
-- **AND** SHALL NOT 写入新的 `primary_artist_mbid`（保留旧值供界面暂时展示）
 - **AND** SHALL 将 `region_checked_at` 置为 NULL，标记本次地区解析未成功，后续重新补全/重新同步可再次尝试
+- **AND** SHALL NOT 删除已有 artist 行的地区（界面暂时沿用旧值）
 
 #### Scenario: 无 artist-credit
 
 - **WHEN** release-group lookup 成功但不含 `artist-credit`
-- **THEN** 系统 SHALL 写入 `region_checked_at` 表示已尝试，并保持 `primary_artist_mbid` 为 NULL，避免反复查询
+- **THEN** 系统 SHALL 写入专辑的 `primary_artist_id` 与 `region_checked_at`，保持 artist 行已有地区不变，避免反复查询
+
+#### Scenario: 无结构化网易云主艺人
+
+- **WHEN** 专辑没有 `artists[0].originalId`
+- **THEN** 系统 SHALL 只写 `region_checked_at`，SHALL NOT 创建网易云 artist 行
 
 #### Scenario: 模糊匹配确认时写入地区
 

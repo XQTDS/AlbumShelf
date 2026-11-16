@@ -207,3 +207,73 @@ export function regionLabel(region: string | null | undefined): string | null {
     return key
   }
 }
+
+/** 合成/合辑类艺人名，不应承载具体地区 */
+const SYNTHETIC_ARTIST_NAMES = new Set([
+  '群星',
+  '群星合辑',
+  '合辑',
+  '精选',
+  'variousartists',
+  'various',
+  'variousartist'
+])
+
+function normalizeArtistName(name: string): string {
+  return name
+    .normalize('NFKC')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s·・.,，、&＆/\\\-–—_()（）\[\]【】'’`]/g, '')
+}
+
+function cjkChars(name: string): string[] {
+  return [...name].filter((ch) => /[一-鿿]/.test(ch))
+}
+
+/**
+ * 判断 MusicBrainz 艺人是否与网易云主艺人是同一实体。
+ *
+ * 地区按网易云艺人 ID 共享，因此只有能确认「MB credit 与网易云主艺人同名」
+ * 时才写入地区；无法确认时留空，避免把作曲家/合辑/同名不同人的地区挂错。
+ *
+ * 匹配规则（按顺序）：
+ * 1. 合成/合辑名（群星、Various Artists 等）直接排除；
+ * 2. 归一化后完全相同；
+ * 3. 含拉丁的中英混排名存在包含关系（如「椅子樂團 The Chairs」vs「椅子樂團」）；
+ * 4. 双方都是**同长度** CJK 名（≥3 字）且字符重合率 ≥ 60%——覆盖简繁体差异。
+ *    长度不同一律不猜，避免「王菲」命中「王菲菲」。
+ */
+export function isLikelySameArtist(
+  neteaseName: string | null | undefined,
+  mbNames: (string | null | undefined)[]
+): boolean {
+  const netease = normalizeArtistName(neteaseName ?? '')
+  if (!netease || SYNTHETIC_ARTIST_NAMES.has(netease)) return false
+
+  for (const raw of mbNames) {
+    const mb = normalizeArtistName(raw ?? '')
+    if (!mb || SYNTHETIC_ARTIST_NAMES.has(mb)) continue
+
+    if (netease === mb) return true
+
+    const shorter = netease.length <= mb.length ? netease : mb
+    const longer = netease.length <= mb.length ? mb : netease
+    // 包含关系只用于「中英混排」名（如「椅子樂團 The Chairs」vs「椅子樂團」）；
+    // 纯 CJK 或纯拉丁名只认完全相同，避免「李健」命中「李健宏」这类误判。
+    const hasCjk = /[一-鿿]/.test(netease) || /[一-鿿]/.test(mb)
+    const hasLatin = /[a-z]/i.test(longer)
+    if (hasCjk && hasLatin && shorter.length >= 2 && longer.includes(shorter)) return true
+
+    const aCjk = cjkChars(netease)
+    const bCjk = cjkChars(mb)
+    // 简繁差异只做同长度比较；长度不同一律不猜（王菲 vs 王菲菲）。
+    if (aCjk.length === bCjk.length && aCjk.length >= 3) {
+      const bSet = new Set(bCjk)
+      const overlap = aCjk.filter((ch) => bSet.has(ch)).length
+      if (overlap / aCjk.length >= 0.6) return true
+    }
+  }
+
+  return false
+}

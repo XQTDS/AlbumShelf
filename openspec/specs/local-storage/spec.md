@@ -21,7 +21,7 @@
 #### Scenario: Album 表字段
 
 - **WHEN** Album 表被创建
-- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、netease_album_id（网易云加密专辑ID，唯一）、netease_original_id（网易云原始专辑ID，可空）、musicbrainz_id（MusicBrainz Release Group ID，可空）、title（专辑名）、artist（艺术家名，派生展示文本，多艺术家以 ' / ' 连接）、artists（结构化艺术家 JSON [{name, originalId, id}]，真源，可空；NULL = 未回填）、cover_url（封面URL，可空）、release_date（发行日期，可空）、mb_rating（MusicBrainz 评分，可空）、mb_rating_count（评分人数，可空）、user_rating（用户个人评分，REAL 类型，可空，范围 0.5~5.0 步长 0.5）、physical_media（实体介质标记，TEXT 类型，可空，逗号分隔的 vinyl/cd/cassette 枚举组合）、external_links（外部站点链接 JSON，可空）、primary_artist_mbid（主艺人 MusicBrainz Artist MBID，可空，引用 artist 表）、region_checked_at（地区最近一次解析尝试时间，可空）、track_count（曲目数，可空）、synced_at（同步时间）、enriched_at（补全时间，可空）、created_at（创建时间）
+- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、netease_album_id（网易云加密专辑ID，唯一）、netease_original_id（网易云原始专辑ID，可空）、musicbrainz_id（MusicBrainz Release Group ID，可空）、title（专辑名）、artist（艺术家名，派生展示文本，多艺术家以 ' / ' 连接）、artists（结构化艺术家 JSON [{name, originalId, id}]，真源，可空；NULL = 未回填）、cover_url（封面URL，可空）、release_date（发行日期，可空）、mb_rating（MusicBrainz 评分，可空）、mb_rating_count（评分人数，可空）、user_rating（用户个人评分，REAL 类型，可空，范围 0.5~5.0 步长 0.5）、physical_media（实体介质标记，TEXT 类型，可空，逗号分隔的 vinyl/cd/cassette 枚举组合）、external_links（外部站点链接 JSON，可空）、primary_artist_mbid（主艺人 MBID，历史/迁移字段，可空；查询与展示不使用）、primary_artist_id（主艺人网易云明文 ID，地区 JOIN artist.netease_artist_id，可空）、region_checked_at（专辑级地区最近一次解析尝试时间，可空）、track_count（曲目数，可空）、synced_at（同步时间）、enriched_at（补全时间，可空）、created_at（创建时间）
 
 #### Scenario: user_rating 字段迁移
 
@@ -72,6 +72,14 @@
 - **THEN** 系统 SHALL 通过 ALTER TABLE 添加 `primary_artist_mbid TEXT` 列，默认值为 NULL
 - **AND** 该列 SHALL 以 `REFERENCES artist(musicbrainz_artist_id)` 声明逻辑外键（不影响既有行）
 - **AND** 系统 SHALL 建立 `idx_album_primary_artist_mbid` 索引
+- **AND** 该列 SHALL 仅作为历史/迁移数据保留：查询与地区展示不再使用；启动迁移会读取它以选择各网易云艺人的主 MBID，导入与补全时只写入目标库中有效的 MBID 以维持旧外键与旧版备份的地区关联
+
+#### Scenario: primary_artist_id 字段迁移
+
+- **WHEN** 应用启动且 album 表尚无 primary_artist_id 列
+- **THEN** 系统 SHALL 通过 ALTER TABLE 添加 `primary_artist_id INTEGER` 列，默认值为 NULL
+- **AND** 系统 SHALL 建立 `idx_album_primary_artist_id` 索引
+- **AND** 启动迁移 SHALL 按 `album.artists[0].originalId` 回填该列
 
 #### Scenario: region_checked_at 字段迁移
 
@@ -83,7 +91,7 @@
 
 - **WHEN** 专辑表被创建或迁移
 - **THEN** album 表 SHALL NOT 包含 region / country / area 等地区值列
-- **AND** 专辑地区 SHALL 始终通过 primary_artist_mbid JOIN artist 表得到
+- **AND** 专辑地区 SHALL 始终通过 `primary_artist_id JOIN artist.netease_artist_id` 得到
 
 ### Requirement: Track 表结构
 
@@ -136,30 +144,45 @@
 
 ### Requirement: artist 表结构
 
-系统 SHALL 维护 `artist` 表，按 MusicBrainz Artist MBID 唯一标识艺人并存储其来源地区。该表是专辑地区的唯一数据来源，专辑行 SHALL NOT 冗余存储地区值。
+系统 SHALL 维护 `artist` 表，以网易云艺人 ID（`netease_artist_id`）为业务唯一键，并存储 MusicBrainz 来源地区。该表是专辑地区的唯一数据来源，专辑行 SHALL NOT 冗余存储地区值。
 
 #### Scenario: artist 表字段
 
 - **WHEN** artist 表被创建
-- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、musicbrainz_artist_id（MusicBrainz Artist MBID，非空，唯一）、name（MB 艺人规范名，非空）、sort_name（MB 排序名，可空）、country（MB 原始 country，ISO 3166-1 alpha-2，可空）、area（MB area 名称，可空）、region（归一化地区键，可空）、region_fetched_at（地区已尝试解析时间，可空）、created_at（创建时间）、updated_at（更新时间，可空）
-- **AND** 表 SHALL 建立 `idx_artist_region(region)` 索引
+- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、netease_artist_id（网易云明文艺人 ID，业务唯一键，可空以兼容历史行）、netease_encrypted_id（网易云加密艺人 ID，可空）、musicbrainz_artist_id（MusicBrainz Artist MBID，地区来源属性，可空且唯一）、name（网易云展示名，非空）、sort_name（MB 排序名，可空）、country（MB 原始 country，ISO 3166-1 alpha-2，可空）、area（MB area 名称，可空）、region（归一化地区键，可空）、region_fetched_at（地区首次解析时间，已有值保留，可空）、created_at（创建时间）、updated_at（更新时间，可空）
+- **AND** 表 SHALL 建立 `idx_artist_region(region)` 索引与 `idx_artist_netease_id(netease_artist_id)` 唯一索引
+
+#### Scenario: 旧表结构迁移
+
+- **WHEN** 应用启动且 artist 表的 `musicbrainz_artist_id` 仍为 NOT NULL
+- **THEN** 系统 SHALL 在 `foreign_keys=OFF` 下重建该表，保留所有行与 id，仅把 MBID 约束放宽为可空（仍保持 UNIQUE）
+- **AND** 专辑的 `primary_artist_mbid` 旧外键 SHALL 继续指向重建后的表
 
 #### Scenario: artist 表创建时机
 
 - **WHEN** 应用启动初始化数据库
-- **THEN** 系统 SHALL 在 album 表的地区字段迁移之前创建 artist 表（保证外键目标存在）
+- **THEN** 系统 SHALL 在 album 表的地区字段迁移之前创建/重建 artist 表（保证外键目标存在）
+
+#### Scenario: 网易云艺人身份迁移
+
+- **WHEN** 应用启动执行数据迁移
+- **THEN** 系统 SHALL 按 `album.artists[0].originalId` 分组，为每个网易云艺人确保一行
+- **AND** SHALL 优先复用尚无网易云 ID 的历史 MBID 行
+- **AND** SHALL 回填所有有结构化主艺人 ID 的专辑的 `primary_artist_id`
+- **AND** 迁移 SHALL 幂等，重复启动不重复写入
 
 #### Scenario: 地区的导出导入
 
 - **WHEN** 用户导出数据
-- **THEN** 导出 JSON SHALL 包含 `artists` 数组（artist 表完整字段）
+- **THEN** 导出 JSON SHALL 包含 `artists` 数组（artist 表完整字段，含 `netease_artist_id` / `netease_encrypted_id` / `musicbrainz_artist_id` / 地区字段）
 - **WHEN** 导入数据
-- **THEN** 系统 SHALL 先按 `musicbrainz_artist_id` upsert artist 行：非空新值覆盖旧值，空新值保留旧值
-- **AND** 再导入 album，并在 album 的 UPDATE / INSERT 列清单中包含 `primary_artist_mbid` 与 `region_checked_at`
+- **THEN** artist 行有 `netease_artist_id` 时 SHALL 按网易云 ID upsert；没有时 SHALL 按 `musicbrainz_artist_id` upsert
+- **AND** 再导入 album，并在 album 的 UPDATE / INSERT 列清单中包含 `primary_artist_id`、`primary_artist_mbid` 与 `region_checked_at`
+- **AND** 导入完成后 SHALL 执行一次网易云艺人身份迁移
 - **WHEN** 导入旧版导出（无 artists 字段）
 - **THEN** 系统 SHALL 按空数组处理 artists
-- **AND** 对已存在专辑，UPDATE SHALL 用 COALESCE 保留库中已有的 `primary_artist_mbid` / `region_checked_at`（旧版文件不含这两列，不应抹掉已有地区关联）
-- **AND** 对新专辑，两个新列 SHALL 按 NULL 落库，导入正常完成
+- **AND** 对已存在专辑，UPDATE SHALL 用 COALESCE 保留库中已有的地区列（旧版文件不含这些列，不应抹掉已有地区关联）
+- **AND** 对新专辑，缺失列 SHALL 按 NULL 落库，导入正常完成
 
 ### Requirement: followed_artist 表结构
 
@@ -178,7 +201,7 @@
 #### Scenario: 导出导入包含关注数据
 
 - **WHEN** 用户导出数据
-- **THEN** 导出 JSON SHALL 为 version 3 格式，包含 followedArtists 数组（完整字段）
+- **THEN** 导出 JSON SHALL 为 version 4 格式，包含 followedArtists 数组（完整字段）
 - **WHEN** 导入 v2 数据
 - **THEN** 系统 SHALL 按 name 去重 upsert 关注记录，已存在记录 SHALL 仅补缺失的 ID 字段，并在导入结果中返回导入的关注数
 - **WHEN** 导入 v1 数据（无 followedArtists 字段）

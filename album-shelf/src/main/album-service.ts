@@ -28,8 +28,10 @@ export interface Album {
    * NULL = 未回填（详情面板打开时惰性查询）；`'{}'` = 已查询过但无任何链接。
    */
   external_links: string | null
-  /** 主艺人 MusicBrainz Artist MBID；NULL = 尚未补全。地区通过 artist 表 JOIN 得到 */
+  /** 主艺人 MusicBrainz Artist MBID（历史字段，已停用；新代码使用 primary_artist_id） */
   primary_artist_mbid?: string | null
+  /** 主艺人网易云明文 ID（业务键，地区 JOIN artist.netease_artist_id） */
+  primary_artist_id?: number | null
   /** 地区补全水位线；NULL = 尚未尝试 */
   region_checked_at?: string | null
   /** 地区键（JOIN artist 派生，不落 album 表），如 CN / TW / HK */
@@ -74,8 +76,10 @@ export interface AlbumUpdate {
   enriched_at?: string | null
   /** 明文专辑 ID（网易云网页跳转用） */
   netease_original_id?: number | null
-  /** 主艺人 MusicBrainz Artist MBID（地区通过 artist 表 JOIN 得到） */
+  /** 主艺人 MusicBrainz Artist MBID（历史字段，已停用） */
   primary_artist_mbid?: string | null
+  /** 主艺人网易云明文 ID（地区 JOIN artist.netease_artist_id） */
+  primary_artist_id?: number | null
   /** 地区补全水位线；NULL = 尚未尝试 */
   region_checked_at?: string | null
 }
@@ -130,7 +134,7 @@ export interface AlbumQueryResult {
 const ALBUM_SELECT_WITH_REGION = `
   SELECT a.*, ar.region AS region, ar.area AS region_area
   FROM album a
-  LEFT JOIN artist ar ON ar.musicbrainz_artist_id = a.primary_artist_mbid
+  LEFT JOIN artist ar ON ar.netease_artist_id = a.primary_artist_id
 `
 
 export class AlbumService {
@@ -153,10 +157,17 @@ export class AlbumService {
       return existing.id
     }
 
+    // 主艺人网易云 ID 是地区 JOIN 的业务键；入库时就写好，避免依赖后续补全
+    const primaryArtist = albumArtistRefs({
+      artist: album.artist,
+      artists: album.artists ?? null
+    })[0]
+    const primaryArtistId = primaryArtist?.originalId ?? null
+
     const result = this.db
       .prepare(
-        `INSERT INTO album (netease_album_id, netease_original_id, title, artist, cover_url, release_date, artists, track_count, synced_at)
-         VALUES (@netease_album_id, @netease_original_id, @title, @artist, @cover_url, @release_date, @artists, @track_count, @synced_at)`
+        `INSERT INTO album (netease_album_id, netease_original_id, title, artist, cover_url, release_date, artists, track_count, synced_at, primary_artist_id)
+         VALUES (@netease_album_id, @netease_original_id, @title, @artist, @cover_url, @release_date, @artists, @track_count, @synced_at, @primary_artist_id)`
       )
       .run({
         netease_album_id: album.netease_album_id,
@@ -167,7 +178,8 @@ export class AlbumService {
         release_date: album.release_date ?? null,
         artists: album.artists ?? null,
         track_count: album.track_count ?? null,
-        synced_at: album.synced_at
+        synced_at: album.synced_at,
+        primary_artist_id: primaryArtistId
       })
 
     return result.lastInsertRowid as number
@@ -425,7 +437,7 @@ export class AlbumService {
     const countSql = `
       SELECT COUNT(DISTINCT a.id) as total
       FROM album a
-      LEFT JOIN artist ar ON ar.musicbrainz_artist_id = a.primary_artist_mbid
+      LEFT JOIN artist ar ON ar.netease_artist_id = a.primary_artist_id
       ${whereClause}
     `
     const { total } = this.db.prepare(countSql).get(params) as { total: number }

@@ -873,8 +873,10 @@ interface Album {
    * 注意 `rym` 键照常采集但无消费方 —— RYM 入口恒用搜索页，见 `albumLinks`。
    */
   external_links?: string | null
-  /** 主艺人 MusicBrainz Artist MBID；NULL = 尚未补全。地区通过 artist 表 JOIN 得到 */
+  /** 主艺人 MusicBrainz Artist MBID（历史字段，已停用） */
   primary_artist_mbid?: string | null
+  /** 主艺人网易云明文 ID（业务键，地区 JOIN artist.netease_artist_id） */
+  primary_artist_id?: number | null
   /** 地区补全水位线；NULL = 尚未尝试 */
   region_checked_at?: string | null
   /** 地区键（JOIN artist 派生），如 CN / TW / HK */

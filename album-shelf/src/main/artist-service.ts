@@ -4,10 +4,14 @@ import { normalizeRegion, regionLabel } from './region'
 
 /** 写入 artist 表的最小地区信息 */
 export interface ArtistRegionInput {
-  /** MusicBrainz Artist MBID（唯一键） */
-  musicbrainzArtistId: string
-  /** MB 艺人规范名 */
+  /** 网易云明文主艺人 ID（业务唯一键） */
+  neteaseArtistId: number
+  /** 网易云加密艺人 ID */
+  neteaseEncryptedId?: string | null
+  /** 网易云展示名（新建行使用；已有行优先保留） */
   name: string
+  /** MusicBrainz Artist MBID（地区来源属性） */
+  musicbrainzArtistId: string
   sortName?: string | null
   /** MB country（ISO 3166-1 alpha-2） */
   country?: string | null
@@ -19,7 +23,9 @@ export interface ArtistRegionInput {
 
 export interface ArtistRow {
   id: number
-  musicbrainz_artist_id: string
+  netease_artist_id: number | null
+  netease_encrypted_id: string | null
+  musicbrainz_artist_id: string | null
   name: string
   sort_name: string | null
   country: string | null
@@ -40,8 +46,8 @@ export interface RegionOption {
 /**
  * 艺人资料服务。
  *
- * 当前只负责 MusicBrainz 艺人地区：artist 表以 MBID 为唯一键，
- * 专辑通过 `album.primary_artist_mbid` 引用，地区由查询时 JOIN 得到。
+ * 业务唯一键是网易云艺人 ID（`netease_artist_id`）；`musicbrainz_artist_id`
+ * 只是地区来源属性。专辑通过 `album.primary_artist_id` 引用，地区由查询时 JOIN 得到。
  */
 export class ArtistService {
   private db: Database.Database
@@ -57,49 +63,155 @@ export class ArtistService {
     return row ?? null
   }
 
+  getArtistByNeteaseId(neteaseArtistId: number): ArtistRow | null {
+    const row = this.db
+      .prepare('SELECT * FROM artist WHERE netease_artist_id = ?')
+      .get(neteaseArtistId) as ArtistRow | undefined
+    return row ?? null
+  }
+
   /**
-   * upsert 艺人地区。
+   * 按网易云艺人 ID upsert 地区。
    *
-   * - 以 MBID 为唯一键；同一艺人被多张专辑引用时只保留一行。
-   * - 新值非空时覆盖旧值（允许 MB 社区后续修正），新值为空时保留旧值。
-   * - `region_fetched_at` 表示「已尝试解析」——即使最终没有地区也写入，
-   *   避免回填对「MB 确实无地区」的艺人反复查询。
+   * 规则：
+   * - 一个网易云艺人一行；首次写入的地区优先保留（first-wins），避免同一艺人
+   *   在多次补全/多张专辑之间抖动；
+   * - 若 MBID 已被另一个网易云行占用（artist.musicbrainz_artist_id 仍是 UNIQUE），
+   *   当前行只复制地区字段、不写 MBID；
+   * - 若目标 MBID 行是尚未绑定网易云 ID 的历史行，则直接把网易云 ID 挂到该行，
+   *   避免产生孤立的 MBID 行；
+   * - `region_fetched_at` 记录**首次**写入地区结果的时间（已有值保留），
+   *   用作「是否已尝试解析」的标记。
    */
   upsertArtist(input: ArtistRegionInput): ArtistRow {
     const region = normalizeRegion(input.country, input.area, input.isoCodes)
     const fetchedAt = new Date().toISOString()
 
-    this.db
-      .prepare(`
-        INSERT INTO artist (
-          musicbrainz_artist_id, name, sort_name, country, area, region, region_fetched_at
-        ) VALUES (
-          @musicbrainz_artist_id, @name, @sort_name, @country, @area, @region, @region_fetched_at
-        )
-        ON CONFLICT(musicbrainz_artist_id) DO UPDATE SET
-          name = excluded.name,
-          sort_name = COALESCE(excluded.sort_name, artist.sort_name),
-          country = COALESCE(excluded.country, artist.country),
-          area = COALESCE(excluded.area, artist.area),
-          region = COALESCE(excluded.region, artist.region),
-          region_fetched_at = COALESCE(excluded.region_fetched_at, artist.region_fetched_at),
-          updated_at = datetime('now')
-      `)
-      .run({
-        musicbrainz_artist_id: input.musicbrainzArtistId,
-        name: input.name,
-        sort_name: input.sortName ?? null,
-        country: input.country ?? null,
-        area: input.area ?? null,
-        region,
-        region_fetched_at: fetchedAt
-      })
+    const run = this.db.transaction((): ArtistRow => {
+      const byNetease = this.getArtistByNeteaseId(input.neteaseArtistId)
+      const byMbid = this.getArtistByMbid(input.musicbrainzArtistId)
 
-    const row = this.getArtistByMbid(input.musicbrainzArtistId)
-    if (!row) {
-      throw new Error(`artist upsert 后未能读取记录: ${input.musicbrainzArtistId}`)
-    }
-    return row
+      // A. 没有网易云行，但目标 MBID 行尚未绑定网易云 ID：复用该行
+      if (!byNetease && byMbid && byMbid.netease_artist_id == null) {
+        this.db
+          .prepare(`
+            UPDATE artist SET
+              netease_artist_id = ?,
+              netease_encrypted_id = COALESCE(?, netease_encrypted_id),
+              name = ?,
+              sort_name = COALESCE(sort_name, ?),
+              country = COALESCE(country, ?),
+              area = COALESCE(area, ?),
+              region = COALESCE(region, ?),
+              region_fetched_at = COALESCE(region_fetched_at, ?),
+              updated_at = datetime('now')
+            WHERE id = ?
+          `)
+          .run(
+            input.neteaseArtistId,
+            input.neteaseEncryptedId ?? null,
+            input.name,
+            input.sortName ?? null,
+            input.country ?? null,
+            input.area ?? null,
+            region,
+            fetchedAt,
+            byMbid.id
+          )
+
+        const row = this.getArtistByNeteaseId(input.neteaseArtistId)
+        if (!row) {
+          throw new Error(`artist upsert 后未能读取记录: ${input.neteaseArtistId}`)
+        }
+        return row
+      }
+
+      // B. 目标 MBID 已归属另一行（绑定到其他网易云 ID，或仍是未绑定的历史行）：
+      //    本行只复制地区，不写 MBID；未绑定的历史行由下次启动迁移合并。
+      if (byMbid && (!byNetease || byMbid.id !== byNetease.id)) {
+        const country = input.country ?? byMbid.country
+        const area = input.area ?? byMbid.area
+        const regionValue = region ?? byMbid.region
+        const regionFetchedAt = fetchedAt
+
+        this.db
+          .prepare(`
+            INSERT INTO artist (
+              netease_artist_id, netease_encrypted_id, name,
+              sort_name, country, area, region, region_fetched_at
+            ) VALUES (
+              @netease_artist_id, @netease_encrypted_id, @name,
+              @sort_name, @country, @area, @region, @region_fetched_at
+            )
+            ON CONFLICT(netease_artist_id) DO UPDATE SET
+              netease_encrypted_id = COALESCE(excluded.netease_encrypted_id, artist.netease_encrypted_id),
+              name = excluded.name,
+              sort_name = COALESCE(artist.sort_name, excluded.sort_name),
+              country = COALESCE(artist.country, excluded.country),
+              area = COALESCE(artist.area, excluded.area),
+              region = COALESCE(artist.region, excluded.region),
+              region_fetched_at = COALESCE(artist.region_fetched_at, excluded.region_fetched_at),
+              updated_at = datetime('now')
+          `)
+          .run({
+            netease_artist_id: input.neteaseArtistId,
+            netease_encrypted_id: input.neteaseEncryptedId ?? null,
+            name: input.name,
+            sort_name: input.sortName ?? byMbid.sort_name,
+            country,
+            area,
+            region: regionValue,
+            region_fetched_at: regionFetchedAt
+          })
+
+        const row = this.getArtistByNeteaseId(input.neteaseArtistId)
+        if (!row) {
+          throw new Error(`artist upsert 后未能读取记录: ${input.neteaseArtistId}`)
+        }
+        return row
+      }
+
+      // C. 常规 upsert：按网易云 ID 写入；已有地区/MBID 优先保留
+      this.db
+        .prepare(`
+          INSERT INTO artist (
+            netease_artist_id, netease_encrypted_id, musicbrainz_artist_id, name,
+            sort_name, country, area, region, region_fetched_at
+          ) VALUES (
+            @netease_artist_id, @netease_encrypted_id, @musicbrainz_artist_id, @name,
+            @sort_name, @country, @area, @region, @region_fetched_at
+          )
+          ON CONFLICT(netease_artist_id) DO UPDATE SET
+            netease_encrypted_id = COALESCE(excluded.netease_encrypted_id, artist.netease_encrypted_id),
+            musicbrainz_artist_id = COALESCE(artist.musicbrainz_artist_id, excluded.musicbrainz_artist_id),
+            name = excluded.name,
+            sort_name = COALESCE(artist.sort_name, excluded.sort_name),
+            country = COALESCE(artist.country, excluded.country),
+            area = COALESCE(artist.area, excluded.area),
+            region = COALESCE(artist.region, excluded.region),
+            region_fetched_at = COALESCE(artist.region_fetched_at, excluded.region_fetched_at),
+            updated_at = datetime('now')
+        `)
+        .run({
+          netease_artist_id: input.neteaseArtistId,
+          netease_encrypted_id: input.neteaseEncryptedId ?? null,
+          musicbrainz_artist_id: input.musicbrainzArtistId,
+          name: input.name,
+          sort_name: input.sortName ?? null,
+          country: input.country ?? null,
+          area: input.area ?? null,
+          region,
+          region_fetched_at: fetchedAt
+        })
+
+      const row = this.getArtistByNeteaseId(input.neteaseArtistId)
+      if (!row) {
+        throw new Error(`artist upsert 后未能读取记录: ${input.neteaseArtistId}`)
+      }
+      return row
+    })
+
+    return run()
   }
 
   /**
@@ -112,7 +224,7 @@ export class ArtistService {
       .prepare(`
         SELECT ar.region AS region, COUNT(DISTINCT a.id) AS count
         FROM artist ar
-        INNER JOIN album a ON a.primary_artist_mbid = ar.musicbrainz_artist_id
+        INNER JOIN album a ON a.primary_artist_id = ar.netease_artist_id
         WHERE ar.region IS NOT NULL
         GROUP BY ar.region
         ORDER BY count DESC, ar.region

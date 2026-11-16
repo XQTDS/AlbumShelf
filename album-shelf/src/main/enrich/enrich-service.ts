@@ -1,6 +1,8 @@
 import { getMbClient } from './mb-client'
 import { AlbumService, Album } from '../album-service'
 import { ArtistService } from '../artist-service'
+import { albumArtistRefs } from '../album-artist'
+import { isLikelySameArtist } from '../region'
 import type { IReleaseGroupMatch, IRating, IArtist } from 'musicbrainz-api'
 import { getAliases, addAlias } from './artist-alias'
 import { getEnrichStrategies, type EnrichStrategies } from './settings'
@@ -583,31 +585,71 @@ export class EnrichService {
   /**
    * 把主艺人地区写入 artist 表，并返回应合并进 album update 的地区字段。
    *
-   * - `resolveFailed`：网络/API 失败 → 清空 `region_checked_at`（保留
-   *   `primary_artist_mbid` 让界面暂时沿用旧地区），标记本次未解析成功；
-   *   后续重新补全/重新同步可再次尝试。
-   * - `artist === null`：lookup 成功但没有 artist-credit → 记已尝试，避免反复查询
-   * - 有 artist：upsert artist 表，写 primary_artist_mbid + region_checked_at
+   * - `resolveFailed`：网络/API 失败 → 清空 `region_checked_at`（保留旧地区
+   *   供界面暂时展示），标记本次未解析成功；后续重新补全/重新同步可再次尝试。
+   * - 专辑有网易云主艺人 ID：按该 ID upsert artist（业务键），并写
+   *   `album.primary_artist_id`；`artist === null`（无 artist-credit）时只写键与
+   *   水位线，地区由已有 artist 行的数据 JOIN 得到。
+   * - 专辑没有结构化网易云主艺人 ID：无法建立业务键关联，只写水位线。
    */
   private buildRegionUpdate(
+    album: Album,
     artist: MbArtistRegion | null,
     resolveFailed: boolean
-  ): { primary_artist_mbid?: string | null; region_checked_at?: string | null } {
+  ): {
+    primary_artist_id?: number | null
+    /** 旧 MBID 列：仅用于启动迁移合并/旧备份兼容，查询与展示不读 */
+    primary_artist_mbid?: string | null
+    region_checked_at?: string | null
+  } {
     if (resolveFailed) {
       // updateAlbum 只跳过 undefined，null 会真正落库
       return { region_checked_at: null }
     }
 
+    const primary = albumArtistRefs(album)[0]
+    if (primary?.originalId == null) {
+      // 无网易云主艺人 ID：地区无法按业务键关联，但本次尝试仍然算已处理
+      return { region_checked_at: new Date().toISOString() }
+    }
+
     if (!artist) {
       return {
-        primary_artist_mbid: null,
+        primary_artist_id: primary.originalId,
+        region_checked_at: new Date().toISOString()
+      }
+    }
+
+    // 地区按网易云艺人 ID 共享：只有能确认 MB credit 与网易云主艺人是同一实体时才写入，
+    // 否则会把作曲家/合辑/同名不同人的地区挂到该网易云艺人名下的所有专辑。
+    // 别名文件是「网易云名 → MB 名」，所以别名要作为网易云侧补充名参与比较；
+    // 同时查询主艺人名与专辑展示名的别名，覆盖以 "A / B" 为 key 的历史别名。
+    const neteaseNames = new Set(
+      [
+        primary.name,
+        ...getAliases(primary.name),
+        ...getAliases(album.artist)
+      ].filter(Boolean)
+    )
+    const matched = [...neteaseNames].some((name) =>
+      isLikelySameArtist(name, [artist.name, artist.sortName])
+    )
+    if (!matched) {
+      console.warn(
+        `[Enrich] MB 主艺人与网易云主艺人不匹配，跳过地区写入: ` +
+          `${primary.name} <-> ${artist.name}`
+      )
+      return {
+        primary_artist_id: primary.originalId,
         region_checked_at: new Date().toISOString()
       }
     }
 
     this.artistService.upsertArtist({
+      neteaseArtistId: primary.originalId,
+      neteaseEncryptedId: primary.id,
+      name: primary.name,
       musicbrainzArtistId: artist.mbid,
-      name: artist.name,
       sortName: artist.sortName,
       country: artist.country,
       area: artist.area,
@@ -615,6 +657,9 @@ export class EnrichService {
     })
 
     return {
+      primary_artist_id: primary.originalId,
+      // 旧 MBID 列仅供启动迁移合并 split 行/兼容旧备份使用，查询与展示不读它。
+      // 此处写入的 MBID 在 artist 表中必然存在（上面 upsertArtist 已保证），外键安全。
       primary_artist_mbid: artist.mbid,
       region_checked_at: new Date().toISOString()
     }
@@ -642,7 +687,7 @@ export class EnrichService {
         mb_rating_count: result.ratingCount,
         release_date: result.releaseDate ?? album.release_date,
         enriched_at: new Date().toISOString(),
-        ...this.buildRegionUpdate(result.artist, result.artistResolveFailed)
+        ...this.buildRegionUpdate(album, result.artist, result.artistResolveFailed)
       })
 
       if (result.genres.length > 0) {
@@ -751,7 +796,7 @@ export class EnrichService {
         mb_rating_count: rating?.['votes-count'] ?? 0,
         release_date: selectedCandidate?.releaseDate ?? undefined,
         enriched_at: new Date().toISOString(),
-        ...this.buildRegionUpdate(artistRegion, artistResolveFailed)
+        ...this.buildRegionUpdate(album, artistRegion, artistResolveFailed)
       })
 
       // 更新 Genre 关联（仅当专辑当前无风格时写入，保护手动编辑）
