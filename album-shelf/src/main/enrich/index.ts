@@ -2,6 +2,7 @@ export { createMbClient, getMbClient, isMbClientInitialized, MbCredentials } fro
 export {
   EnrichService,
   MbMatchResult,
+  MbArtistRegion,
   MbFuzzyCandidate,
   OnFuzzyMatchCallback,
   EnrichProgress,

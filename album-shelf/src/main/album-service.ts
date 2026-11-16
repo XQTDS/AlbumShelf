@@ -3,6 +3,7 @@ import { getDatabase } from './database'
 import { FollowedArtistService } from './followed-artist-service'
 import { albumArtistRefs } from './album-artist'
 import { normalizeGenreKey, normalizeGenreName } from './genre-name'
+import { regionLabel } from './region'
 import type { ExternalLinks } from './enrich/external-links'
 
 // ==================== Types ====================
@@ -27,6 +28,16 @@ export interface Album {
    * NULL = 未回填（详情面板打开时惰性查询）；`'{}'` = 已查询过但无任何链接。
    */
   external_links: string | null
+  /** 主艺人 MusicBrainz Artist MBID；NULL = 尚未补全。地区通过 artist 表 JOIN 得到 */
+  primary_artist_mbid?: string | null
+  /** 地区补全水位线；NULL = 尚未尝试 */
+  region_checked_at?: string | null
+  /** 地区键（JOIN artist 派生，不落 album 表），如 CN / TW / HK */
+  region?: string | null
+  /** MB area 名称（JOIN 派生），如 Taiwan / Hong Kong / Taipei */
+  region_area?: string | null
+  /** 地区中文展示名（主进程用 regionLabel 派生） */
+  region_label?: string | null
   track_count: number | null
   synced_at: string
   enriched_at: string | null
@@ -63,6 +74,10 @@ export interface AlbumUpdate {
   enriched_at?: string | null
   /** 明文专辑 ID（网易云网页跳转用） */
   netease_original_id?: number | null
+  /** 主艺人 MusicBrainz Artist MBID（地区通过 artist 表 JOIN 得到） */
+  primary_artist_mbid?: string | null
+  /** 地区补全水位线；NULL = 尚未尝试 */
+  region_checked_at?: string | null
 }
 
 /** 风格库条目（MusicBrainz 风格库同步用） */
@@ -88,6 +103,8 @@ export interface AlbumQueryOptions {
   followedOnly?: boolean
   /** 按单个艺术家名部分匹配（"A" 能命中 artist 为 "A/B" 的专辑） */
   artistPartial?: string
+  /** 按地区键筛选（ISO 3166-1 alpha-2，如 CN / TW / HK） */
+  region?: string
   sortBy?: 'mb_rating' | 'release_date' | 'user_rating'
   sortOrder?: 'asc' | 'desc'
   page?: number
@@ -105,6 +122,16 @@ export interface AlbumQueryResult {
 }
 
 // ==================== AlbumService ====================
+
+/**
+ * 专辑查询的公共 SELECT：地区不在 album 表冗余存储，
+ * 通过主艺人 MBID LEFT JOIN artist 派生。
+ */
+const ALBUM_SELECT_WITH_REGION = `
+  SELECT a.*, ar.region AS region, ar.area AS region_area
+  FROM album a
+  LEFT JOIN artist ar ON ar.musicbrainz_artist_id = a.primary_artist_mbid
+`
 
 export class AlbumService {
   private db: Database.Database
@@ -258,12 +285,13 @@ export class AlbumService {
    */
   getAlbumById(id: number): Album | null {
     const row = this.db
-      .prepare('SELECT * FROM album WHERE id = ?')
+      .prepare(`${ALBUM_SELECT_WITH_REGION} WHERE a.id = ?`)
       .get(id) as Album | undefined
 
     if (!row) return null
 
     row.genres = this.getGenresForAlbum(id)
+    row.region_label = regionLabel(row.region)
     return row
   }
 
@@ -283,12 +311,13 @@ export class AlbumService {
    */
   getAlbumByNeteaseAlbumId(neteaseAlbumId: string): Album | null {
     const row = this.db
-      .prepare('SELECT * FROM album WHERE netease_album_id = ?')
+      .prepare(`${ALBUM_SELECT_WITH_REGION} WHERE a.netease_album_id = ?`)
       .get(neteaseAlbumId) as Album | undefined
 
     if (!row) return null
 
     row.genres = this.getGenresForAlbum(row.id)
+    row.region_label = regionLabel(row.region)
     return row
   }
 
@@ -302,6 +331,7 @@ export class AlbumService {
       genres,
       followedOnly,
       artistPartial,
+      region,
       sortBy,
       sortOrder = 'desc',
       page = 1,
@@ -338,6 +368,12 @@ export class AlbumService {
           HAVING COUNT(DISTINCT g.name) = @genreCount
         )`)
       }
+    }
+
+    // 地区筛选：album 不存 region，条件落在 JOIN 后的 artist 表上
+    if (region) {
+      conditions.push('ar.region = @region')
+      params.region = region
     }
 
     // 已关注艺术家筛选 / 艺术家筛选（精确名或部分匹配）：JS 预计算命中专辑 id 集合 → id IN (...)。
@@ -385,8 +421,13 @@ export class AlbumService {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
-    // Count total
-    const countSql = `SELECT COUNT(DISTINCT a.id) as total FROM album a ${whereClause}`
+    // Count total（join artist 以支持地区筛选；artist 按 MBID 唯一，不影响计数）
+    const countSql = `
+      SELECT COUNT(DISTINCT a.id) as total
+      FROM album a
+      LEFT JOIN artist ar ON ar.musicbrainz_artist_id = a.primary_artist_mbid
+      ${whereClause}
+    `
     const { total } = this.db.prepare(countSql).get(params) as { total: number }
 
     // Sort clause (with id DESC as secondary sort key)
@@ -409,7 +450,7 @@ export class AlbumService {
     let dataSql: string
     if (fetchAll) {
       dataSql = `
-        SELECT DISTINCT a.* FROM album a
+        ${ALBUM_SELECT_WITH_REGION}
         ${whereClause}
         ${orderClause}
       `
@@ -418,7 +459,7 @@ export class AlbumService {
       params.limit = pageSize
       params.offset = offset
       dataSql = `
-        SELECT DISTINCT a.* FROM album a
+        ${ALBUM_SELECT_WITH_REGION}
         ${whereClause}
         ${orderClause}
         LIMIT @limit OFFSET @offset
@@ -427,9 +468,10 @@ export class AlbumService {
 
     const rows = this.db.prepare(dataSql).all(params) as Album[]
 
-    // Attach genres to each album
+    // Attach genres + 地区展示名
     for (const row of rows) {
       row.genres = this.getGenresForAlbum(row.id)
+      row.region_label = regionLabel(row.region)
     }
 
     if (fetchAll) {

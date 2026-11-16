@@ -7,7 +7,7 @@
 #### Scenario: 首次启动
 
 - **WHEN** 应用首次启动且数据库文件不存在
-- **THEN** 系统 SHALL 在用户应用数据目录下创建 SQLite 数据库文件，并执行建表语句创建 Album、Track、Genre、album_genre 表
+- **THEN** 系统 SHALL 在用户应用数据目录下创建 SQLite 数据库文件，并执行建表语句创建 Album、Artist、Track、Genre、album_genre、followed_artist、artist_update 表
 
 #### Scenario: 后续启动
 
@@ -21,7 +21,7 @@
 #### Scenario: Album 表字段
 
 - **WHEN** Album 表被创建
-- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、netease_album_id（网易云加密专辑ID，唯一）、netease_original_id（网易云原始专辑ID，可空）、musicbrainz_id（MusicBrainz Release Group ID，可空）、title（专辑名）、artist（艺术家名，派生展示文本，多艺术家以 ' / ' 连接）、artists（结构化艺术家 JSON [{name, originalId, id}]，真源，可空；NULL = 未回填）、cover_url（封面URL，可空）、release_date（发行日期，可空）、mb_rating（MusicBrainz 评分，可空）、mb_rating_count（评分人数，可空）、user_rating（用户个人评分，REAL 类型，可空，范围 0.5~5.0 步长 0.5）、physical_media（实体介质标记，TEXT 类型，可空，逗号分隔的 vinyl/cd/cassette 枚举组合）、external_links（外部站点链接 JSON，可空）、track_count（曲目数，可空）、synced_at（同步时间）、enriched_at（补全时间，可空）、created_at（创建时间）
+- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、netease_album_id（网易云加密专辑ID，唯一）、netease_original_id（网易云原始专辑ID，可空）、musicbrainz_id（MusicBrainz Release Group ID，可空）、title（专辑名）、artist（艺术家名，派生展示文本，多艺术家以 ' / ' 连接）、artists（结构化艺术家 JSON [{name, originalId, id}]，真源，可空；NULL = 未回填）、cover_url（封面URL，可空）、release_date（发行日期，可空）、mb_rating（MusicBrainz 评分，可空）、mb_rating_count（评分人数，可空）、user_rating（用户个人评分，REAL 类型，可空，范围 0.5~5.0 步长 0.5）、physical_media（实体介质标记，TEXT 类型，可空，逗号分隔的 vinyl/cd/cassette 枚举组合）、external_links（外部站点链接 JSON，可空）、primary_artist_mbid（主艺人 MusicBrainz Artist MBID，可空，引用 artist 表）、region_checked_at（地区最近一次解析尝试时间，可空）、track_count（曲目数，可空）、synced_at（同步时间）、enriched_at（补全时间，可空）、created_at（创建时间）
 
 #### Scenario: user_rating 字段迁移
 
@@ -65,6 +65,25 @@
 - **WHEN** 导入数据
 - **THEN** 系统 SHALL 在 album 的 UPDATE 与 INSERT 列清单中包含 external_links，SHALL NOT 因遗漏该列而静默丢弃
 - **AND** 导入旧版导出（album 元素无 external_links 字段）时 SHALL 按 NULL 处理，即视为未回填，由惰性查询补齐
+
+#### Scenario: primary_artist_mbid 字段迁移
+
+- **WHEN** 应用启动且 album 表尚无 primary_artist_mbid 列
+- **THEN** 系统 SHALL 通过 ALTER TABLE 添加 `primary_artist_mbid TEXT` 列，默认值为 NULL
+- **AND** 该列 SHALL 以 `REFERENCES artist(musicbrainz_artist_id)` 声明逻辑外键（不影响既有行）
+- **AND** 系统 SHALL 建立 `idx_album_primary_artist_mbid` 索引
+
+#### Scenario: region_checked_at 字段迁移
+
+- **WHEN** 应用启动且 album 表尚无 region_checked_at 列
+- **THEN** 系统 SHALL 通过 ALTER TABLE 添加 `region_checked_at TEXT` 列，默认值为 NULL
+- **AND** NULL SHALL 表示该专辑尚未记录地区解析时间；写入后表示最近一次地区解析尝试的时间
+
+#### Scenario: 地区字段不冗余存储
+
+- **WHEN** 专辑表被创建或迁移
+- **THEN** album 表 SHALL NOT 包含 region / country / area 等地区值列
+- **AND** 专辑地区 SHALL 始终通过 primary_artist_mbid JOIN artist 表得到
 
 ### Requirement: Track 表结构
 
@@ -115,6 +134,33 @@
 - **WHEN** 导入旧版导出（genres 元素无 mb_genre_id 字段）
 - **THEN** 系统 SHALL 按 NULL 处理，导入 SHALL 正常完成
 
+### Requirement: artist 表结构
+
+系统 SHALL 维护 `artist` 表，按 MusicBrainz Artist MBID 唯一标识艺人并存储其来源地区。该表是专辑地区的唯一数据来源，专辑行 SHALL NOT 冗余存储地区值。
+
+#### Scenario: artist 表字段
+
+- **WHEN** artist 表被创建
+- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、musicbrainz_artist_id（MusicBrainz Artist MBID，非空，唯一）、name（MB 艺人规范名，非空）、sort_name（MB 排序名，可空）、country（MB 原始 country，ISO 3166-1 alpha-2，可空）、area（MB area 名称，可空）、region（归一化地区键，可空）、region_fetched_at（地区已尝试解析时间，可空）、created_at（创建时间）、updated_at（更新时间，可空）
+- **AND** 表 SHALL 建立 `idx_artist_region(region)` 索引
+
+#### Scenario: artist 表创建时机
+
+- **WHEN** 应用启动初始化数据库
+- **THEN** 系统 SHALL 在 album 表的地区字段迁移之前创建 artist 表（保证外键目标存在）
+
+#### Scenario: 地区的导出导入
+
+- **WHEN** 用户导出数据
+- **THEN** 导出 JSON SHALL 包含 `artists` 数组（artist 表完整字段）
+- **WHEN** 导入数据
+- **THEN** 系统 SHALL 先按 `musicbrainz_artist_id` upsert artist 行：非空新值覆盖旧值，空新值保留旧值
+- **AND** 再导入 album，并在 album 的 UPDATE / INSERT 列清单中包含 `primary_artist_mbid` 与 `region_checked_at`
+- **WHEN** 导入旧版导出（无 artists 字段）
+- **THEN** 系统 SHALL 按空数组处理 artists
+- **AND** 对已存在专辑，UPDATE SHALL 用 COALESCE 保留库中已有的 `primary_artist_mbid` / `region_checked_at`（旧版文件不含这两列，不应抹掉已有地区关联）
+- **AND** 对新专辑，两个新列 SHALL 按 NULL 落库，导入正常完成
+
 ### Requirement: followed_artist 表结构
 
 系统 SHALL 维护 followed_artist 表，存储用户关注的艺术家（关注粒度 = 拆分后的单个艺术家名）。
@@ -132,7 +178,7 @@
 #### Scenario: 导出导入包含关注数据
 
 - **WHEN** 用户导出数据
-- **THEN** 导出 JSON SHALL 为 version 2 格式，包含 followedArtists 数组（完整字段）
+- **THEN** 导出 JSON SHALL 为 version 3 格式，包含 followedArtists 数组（完整字段）
 - **WHEN** 导入 v2 数据
 - **THEN** 系统 SHALL 按 name 去重 upsert 关注记录，已存在记录 SHALL 仅补缺失的 ID 字段，并在导入结果中返回导入的关注数
 - **WHEN** 导入 v1 数据（无 followedArtists 字段）

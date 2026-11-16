@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from 'fs'
 import { getMainWindow } from './window-ref'
 import { exportDatabase, importDatabase, type ExportData } from './database'
 import { AlbumService, AlbumQueryOptions, type Album } from './album-service'
+import { ArtistService } from './artist-service'
 import { FollowedArtistService } from './followed-artist-service'
 import {
   ArtistUpdateService,
@@ -33,6 +34,7 @@ import { NcmLoginRequiredError } from './ncm-cli-service'
 import { GenreLibraryService } from './genre-library-service'
 
 let albumService: AlbumService
+let artistService: ArtistService
 let trackService: TrackService
 let ncmCliService: NcmCliService
 let trackSyncService: TrackSyncService
@@ -47,6 +49,10 @@ let genreLibrarySyncRunning = false
 
 // 关注艺术家新专辑检查进行中标志（防重入）
 let artistUpdateCheckRunning = false
+
+// 同步后的自动补全若因其他批量补全占用而未能启动，标记为延后；
+// 当前批量任务结束后由 runPendingAutoEnrich 补跑，避免新增专辑静默漏补。
+let pendingAutoEnrich = false
 
 // 播放会话代际：新一轮 player:playAlbum / player:stop 使上一轮未完成的
 // 后台补队列任务失效（代际不匹配即中止），避免旧任务污染新队列
@@ -67,6 +73,7 @@ let fuzzyDialogDraining = false
  */
 function initServices(): void {
   albumService = new AlbumService()
+  artistService = new ArtistService()
   trackService = new TrackService()
   ncmCliService = new NcmCliService()
   trackSyncService = new TrackSyncService(ncmCliService, trackService, albumService)
@@ -115,9 +122,15 @@ export function registerIpcHandlers(): void {
       if (result.added > 0 && isMbClientInitialized()) {
         // 异步触发，不阻塞同步返回
         const mainWindow = getMainWindow()
-        enrichAll(mainWindow).catch((err) =>
+        enrichAll(mainWindow).catch((err) => {
+          if (enrichService.busy) {
+            // 其他批量补全/地区回填正在运行；标记延后，等它结束后补跑
+            pendingAutoEnrich = true
+            console.log('批量补全进行中，新增专辑的自动补全已延后')
+            return
+          }
           console.error('自动补全失败:', err)
-        )
+        })
       }
 
       return { success: true, data: result }
@@ -157,16 +170,18 @@ export function registerIpcHandlers(): void {
   })
 
   /**
-   * 获取筛选选项（所有艺术家 + 在用风格标签）
+   * 获取筛选选项（所有艺术家 + 在用风格标签 + 在用地区）
    *
    * 风格只返回「至少关联一张专辑」的（getUsedGenres）：风格库同步会把 MB 全量
    * 2201 个风格写进 genre 表，其中绝大多数尚无专辑使用，列进筛选建议只会筛出空结果。
+   * 地区同理，只返回至少关联一张专辑的地区。
    */
   ipcMain.handle('album:filters', async () => {
     try {
       const artists = albumService.getAllArtists()
       const genres = albumService.getUsedGenres()
-      return { success: true, data: { artists, genres } }
+      const regions = artistService.getUsedRegions()
+      return { success: true, data: { artists, genres, regions } }
     } catch (error) {
       return { success: false, error: (error as Error).message }
     }
@@ -798,6 +813,7 @@ export function registerIpcHandlers(): void {
 
       const mainWindow = BrowserWindow.fromWebContents(event.sender)
       const result = await enrichAll(mainWindow)
+      runPendingAutoEnrich(mainWindow)
       return { success: true, data: result }
     } catch (error) {
       return { success: false, error: (error as Error).message }
@@ -813,6 +829,7 @@ export function registerIpcHandlers(): void {
 
       const mainWindow = BrowserWindow.fromWebContents(event.sender)
       const result = await enrichAlbumsWithoutMbData(mainWindow)
+      runPendingAutoEnrich(mainWindow)
       return { success: true, data: result }
     } catch (error) {
       return { success: false, error: (error as Error).message }
@@ -828,6 +845,7 @@ export function registerIpcHandlers(): void {
 
       const mainWindow = BrowserWindow.fromWebContents(event.sender)
       const result = await reEnrichAll(mainWindow)
+      runPendingAutoEnrich(mainWindow)
       return { success: true, data: result }
     } catch (error) {
       return { success: false, error: (error as Error).message }
@@ -1461,7 +1479,8 @@ export function registerIpcHandlers(): void {
         data: {
           path: filePath,
           albums: data.data.albums.length,
-          tracks: data.data.tracks.length
+          tracks: data.data.tracks.length,
+          artists: data.data.artists.length
         }
       }
     } catch (error) {
@@ -1658,6 +1677,16 @@ async function enrichAll(mainWindow: BrowserWindow | null) {
     createFuzzyMatchCallback(mainWindow)
   )
   return result
+}
+
+/**
+ * 当前批量任务结束后，补跑同步期间被 busy 拒绝的自动补全。
+ * 异步触发，不阻塞调用方返回。
+ */
+function runPendingAutoEnrich(mainWindow: BrowserWindow | null): void {
+  if (!pendingAutoEnrich) return
+  pendingAutoEnrich = false
+  enrichAll(mainWindow).catch((err) => console.error('延后自动补全失败:', err))
 }
 
 /**

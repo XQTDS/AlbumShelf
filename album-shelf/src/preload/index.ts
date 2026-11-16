@@ -29,6 +29,7 @@ const albumShelfAPI = {
     search?: string
     artist?: string
     genres?: string
+    region?: string
     sortBy?: 'mb_rating' | 'release_date' | 'user_rating'
     sortOrder?: 'asc' | 'desc'
     page?: number

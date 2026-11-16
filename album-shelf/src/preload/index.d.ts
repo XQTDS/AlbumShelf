@@ -4,6 +4,8 @@ interface AlbumQueryOptions {
   search?: string
   artist?: string
   genres?: string
+  /** 按地区键筛选（ISO 3166-1 alpha-2，如 CN / TW / HK） */
+  region?: string
   followedOnly?: boolean
   artistPartial?: string
   sortBy?: 'mb_rating' | 'release_date' | 'user_rating'
@@ -40,6 +42,16 @@ interface Album {
    * 其中 `rym` 键照常采集但无消费方 —— RYM 入口恒用搜索页。
    */
   external_links: string | null
+  /** 主艺人 MusicBrainz Artist MBID；NULL = 尚未补全。地区通过 artist 表 JOIN 得到 */
+  primary_artist_mbid?: string | null
+  /** 地区补全水位线；NULL = 尚未尝试 */
+  region_checked_at?: string | null
+  /** 地区键（JOIN artist 派生），如 CN / TW / HK */
+  region?: string | null
+  /** MB area 名称（JOIN 派生），如 Taiwan / Hong Kong / Taipei */
+  region_area?: string | null
+  /** 地区中文展示名（主进程派生） */
+  region_label?: string | null
   track_count: number | null
   synced_at: string
   enriched_at: string | null
@@ -121,6 +133,13 @@ interface AlbumQueryResult {
   page: number
   pageSize: number
   totalPages: number
+}
+
+/** 地区筛选项（只含至少关联一张专辑的地区） */
+interface RegionOption {
+  key: string
+  label: string
+  count: number
 }
 
 interface Track {
@@ -316,12 +335,14 @@ interface ImportResult {
   tracksImported: number
   genresImported: number
   followedArtistsImported: number
+  artistsImported: number
 }
 
 interface ExportResult {
   path: string
   albums: number
   tracks: number
+  artists: number
 }
 
 interface AlbumShelfAPI {
@@ -329,7 +350,7 @@ interface AlbumShelfAPI {
   onSyncProgress: (callback: (progress: SyncProgress) => void) => () => void
   albumRandom: () => Promise<IpcResult<Album>>
   albumList: (options: AlbumQueryOptions) => Promise<IpcResult<AlbumQueryResult>>
-  albumFilters: () => Promise<IpcResult<{ artists: string[]; genres: string[] }>>
+  albumFilters: () => Promise<IpcResult<{ artists: string[]; genres: string[]; regions: RegionOption[] }>>
   trackListByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   trackSyncByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   albumComments: (albumId: number) => Promise<IpcResult<AlbumCommentsResult>>

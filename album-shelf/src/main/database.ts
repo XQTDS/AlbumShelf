@@ -25,6 +25,28 @@ CREATE TABLE IF NOT EXISTS album (
 );
 `
 
+// 艺人资料表：当前只承载 MusicBrainz 艺人地区。
+// 以 MBID 为唯一键——同名艺人（实测「王菲」在 MB 有 HK/TW 两个结果）不能按名字关联。
+// album 通过 primary_artist_mbid 引用本表，地区由查询时 JOIN 得到，不在 album 行冗余存储。
+const CREATE_ARTIST_TABLE = `
+CREATE TABLE IF NOT EXISTS artist (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  musicbrainz_artist_id TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  sort_name TEXT,
+  country TEXT,
+  area TEXT,
+  region TEXT,
+  region_fetched_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT
+);
+`
+
+const CREATE_ARTIST_INDEXES = `
+CREATE INDEX IF NOT EXISTS idx_artist_region ON artist(region);
+`
+
 const CREATE_TRACK_TABLE = `
 CREATE TABLE IF NOT EXISTS track (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,6 +140,9 @@ export function initDatabase(): Database.Database {
 
   // Create tables
   db.exec(CREATE_ALBUM_TABLE)
+  // artist 表必须在 album 的 primary_artist_mbid 迁移之前创建（外键目标）
+  db.exec(CREATE_ARTIST_TABLE)
+  db.exec(CREATE_ARTIST_INDEXES)
   db.exec(CREATE_TRACK_TABLE)
   db.exec(CREATE_GENRE_TABLE)
   db.exec(CREATE_ALBUM_GENRE_TABLE)
@@ -155,6 +180,21 @@ export function initDatabase(): Database.Database {
   if (!albumColumns.some((c) => c.name === 'external_links')) {
     db.exec('ALTER TABLE album ADD COLUMN external_links TEXT')
   }
+  // Add primary_artist_mbid if missing（主艺人 MBID；地区由 artist 表 JOIN 得到，不在 album 冗余存储。
+  // 引用 artist.musicbrainz_artist_id（UNIQUE）；ADD COLUMN 默认 NULL，满足 SQLite 外键迁移要求）
+  if (!albumColumns.some((c) => c.name === 'primary_artist_mbid')) {
+    db.exec(
+      'ALTER TABLE album ADD COLUMN primary_artist_mbid TEXT REFERENCES artist(musicbrainz_artist_id)'
+    )
+  }
+  // Add region_checked_at if missing（地区补全水位线：NULL = 尚未尝试；
+  // 成功解析（含「MB 无艺人地区」）后写入；查询失败保持 NULL 以便重试）
+  if (!albumColumns.some((c) => c.name === 'region_checked_at')) {
+    db.exec('ALTER TABLE album ADD COLUMN region_checked_at TEXT')
+  }
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_album_primary_artist_mbid ON album(primary_artist_mbid)'
+  )
   // Drop artist_ids if present (从未随版本发布的冗余列；best-effort，失败仅告警，保留无害)
   if (albumColumns.some((c) => c.name === 'artist_ids')) {
     try {
@@ -299,7 +339,7 @@ export function closeDatabase(): void {
 }
 
 export interface ExportData {
-  version: 2
+  version: 3
   exportedAt: string
   data: {
     albums: Record<string, unknown>[]
@@ -307,20 +347,22 @@ export interface ExportData {
     genres: Record<string, unknown>[]
     albumGenres: Record<string, unknown>[]
     followedArtists: Record<string, unknown>[]
+    artists: Record<string, unknown>[]
   }
 }
 
 export function exportDatabase(): ExportData {
   const database = getDatabase()
   return {
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     data: {
       albums: database.prepare('SELECT * FROM album').all() as Record<string, unknown>[],
       tracks: database.prepare('SELECT * FROM track').all() as Record<string, unknown>[],
       genres: database.prepare('SELECT * FROM genre').all() as Record<string, unknown>[],
       albumGenres: database.prepare('SELECT * FROM album_genre').all() as Record<string, unknown>[],
-      followedArtists: database.prepare('SELECT * FROM followed_artist').all() as Record<string, unknown>[]
+      followedArtists: database.prepare('SELECT * FROM followed_artist').all() as Record<string, unknown>[],
+      artists: database.prepare('SELECT * FROM artist').all() as Record<string, unknown>[]
     }
   }
 }
@@ -331,21 +373,58 @@ export interface ImportResult {
   tracksImported: number
   genresImported: number
   followedArtistsImported: number
+  artistsImported: number
 }
 
-/** 导入文件可接受的版本（v2 = 当前格式；v1 = 无 followedArtists 与 artists 结构化字段的历史格式） */
-export type ImportData = Omit<ExportData, 'version'> & { version: 1 | 2 }
+/** 导入文件可接受的版本（v3 = 当前格式；v1/v2 = 无 artists 与地区字段的历史格式） */
+export type ImportData = Omit<ExportData, 'version'> & { version: 1 | 2 | 3 }
 
 export function importDatabase(data: ImportData): ImportResult {
   const database = getDatabase()
 
-  if (data.version !== 1 && data.version !== 2) {
+  if (data.version !== 1 && data.version !== 2 && data.version !== 3) {
     throw new Error(`不支持的导出版本: ${data.version}`)
   }
 
-  const result: ImportResult = { albumsAdded: 0, albumsUpdated: 0, tracksImported: 0, genresImported: 0, followedArtistsImported: 0 }
+  const result: ImportResult = {
+    albumsAdded: 0,
+    albumsUpdated: 0,
+    tracksImported: 0,
+    genresImported: 0,
+    followedArtistsImported: 0,
+    artistsImported: 0
+  }
 
   const importTx = database.transaction(() => {
+    // 0. Import artists (upsert by MBID；旧版导出无 artists 字段 → 空数组)
+    //    必须在 album 之前导入：album.primary_artist_mbid 引用 artist.musicbrainz_artist_id。
+    const artists = data.data.artists ?? []
+    const upsertArtist = database.prepare(`
+      INSERT INTO artist (musicbrainz_artist_id, name, sort_name, country, area, region, region_fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(musicbrainz_artist_id) DO UPDATE SET
+        name = excluded.name,
+        sort_name = COALESCE(excluded.sort_name, artist.sort_name),
+        country = COALESCE(excluded.country, artist.country),
+        area = COALESCE(excluded.area, artist.area),
+        region = COALESCE(excluded.region, artist.region),
+        region_fetched_at = COALESCE(excluded.region_fetched_at, artist.region_fetched_at),
+        updated_at = datetime('now')
+    `)
+    for (const artist of artists) {
+      if (!artist.musicbrainz_artist_id) continue
+      upsertArtist.run(
+        artist.musicbrainz_artist_id,
+        artist.name ?? '',
+        artist.sort_name ?? null,
+        artist.country ?? null,
+        artist.area ?? null,
+        artist.region ?? null,
+        artist.region_fetched_at ?? null
+      )
+      result.artistsImported++
+    }
+
     // 1. Import genres (upsert by name；已存在时只补空着的 mb_genre_id，
     //    不改 name/id，避免破坏既有 album_genre 映射；旧版导出无该字段 → 写入 NULL)
     const upsertGenre = database.prepare(`
@@ -371,20 +450,25 @@ export function importDatabase(data: ImportData): ImportResult {
       const existing = database.prepare('SELECT id FROM album WHERE netease_album_id = ?').get(album.netease_album_id) as { id: number } | undefined
 
       if (existing) {
+        // 地区列使用 COALESCE：旧版导出（v1/v2）不含这两列，导入时不应把库中
+        // 已有地区关联抹成 NULL；新专辑（INSERT 分支）仍按导入值或 NULL 落库。
         database.prepare(`
           UPDATE album SET
             title = ?, artist = ?, cover_url = ?, release_date = ?,
             musicbrainz_id = ?, mb_rating = ?, mb_rating_count = ?,
             track_count = ?, enriched_at = ?, user_rating = ?,
             netease_original_id = ?, physical_media = ?, artists = ?,
-            external_links = ?
+            external_links = ?, primary_artist_mbid = COALESCE(?, primary_artist_mbid),
+            region_checked_at = COALESCE(?, region_checked_at)
           WHERE id = ?
         `).run(
           album.title, album.artist, album.cover_url, album.release_date,
           album.musicbrainz_id, album.mb_rating, album.mb_rating_count,
           album.track_count, album.enriched_at, album.user_rating,
           album.netease_original_id, album.physical_media,
-          album.artists ?? null, album.external_links ?? null, existing.id
+          album.artists ?? null, album.external_links ?? null,
+          album.primary_artist_mbid ?? null, album.region_checked_at ?? null,
+          existing.id
         )
         albumIdMap.set(album.id as number, existing.id)
         result.albumsUpdated++
@@ -392,14 +476,15 @@ export function importDatabase(data: ImportData): ImportResult {
         const info = database.prepare(`
           INSERT INTO album (netease_album_id, netease_original_id, musicbrainz_id, title, artist,
             cover_url, release_date, mb_rating, mb_rating_count, track_count, synced_at, enriched_at, user_rating,
-            physical_media, artists, external_links)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            physical_media, artists, external_links, primary_artist_mbid, region_checked_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           album.netease_album_id, album.netease_original_id, album.musicbrainz_id,
           album.title, album.artist, album.cover_url, album.release_date,
           album.mb_rating, album.mb_rating_count, album.track_count,
           album.synced_at || new Date().toISOString(), album.enriched_at, album.user_rating,
-          album.physical_media, album.artists ?? null, album.external_links ?? null
+          album.physical_media, album.artists ?? null, album.external_links ?? null,
+          album.primary_artist_mbid ?? null, album.region_checked_at ?? null
         )
         albumIdMap.set(album.id as number, info.lastInsertRowid as number)
         result.albumsAdded++
