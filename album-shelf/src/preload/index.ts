@@ -68,6 +68,9 @@ const albumShelfAPI = {
   // 风格统计
   genreStats: () => ipcRenderer.invoke('genre:stats'),
 
+  // 地区统计
+  regionStats: () => ipcRenderer.invoke('region:stats'),
+
   // 风格标签管理
   setAlbumGenres: (albumId: number, genres: string[]) =>
     ipcRenderer.invoke('album:setGenres', albumId, genres),
@@ -234,6 +237,13 @@ const albumShelfAPI = {
     const handler = () => callback()
     ipcRenderer.on('menu:genreStats', handler)
     return () => ipcRenderer.removeListener('menu:genreStats', handler)
+  },
+
+  // 监听菜单栏地区统计事件
+  onMenuRegionStats: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:regionStats', handler)
+    return () => ipcRenderer.removeListener('menu:regionStats', handler)
   },
 
   // 监听菜单栏"同步 MusicBrainz 风格库"事件

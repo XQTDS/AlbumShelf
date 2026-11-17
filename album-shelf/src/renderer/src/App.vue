@@ -812,6 +812,13 @@
       @select-genre="handleSelectGenreFromStats"
     />
 
+    <!-- 地区统计弹窗 -->
+    <RegionStatsModal
+      :visible="showRegionStatsModal"
+      @close="showRegionStatsModal = false"
+      @select-region="handleSelectRegionFromStats"
+    />
+
     <!-- 关于弹窗 -->
     <AboutModal
       :visible="showAboutModal"
@@ -841,6 +848,7 @@ import ScrollProgressBar from './ScrollProgressBar.vue'
 import AlbumSearchModal from './AlbumSearchModal.vue'
 import SettingsModal from './SettingsModal.vue'
 import GenreStatsModal from './GenreStatsModal.vue'
+import RegionStatsModal from './RegionStatsModal.vue'
 import AboutModal from './AboutModal.vue'
 import PlayerBar from './PlayerBar.vue'
 import MediaIcon from './MediaIcon.vue'
@@ -971,6 +979,10 @@ const showSearchModal = ref(false)
 const showGenreStatsModal = ref(false)
 let removeMenuGenreStatsListener: (() => void) | null = null
 
+// 地区统计弹窗
+const showRegionStatsModal = ref(false)
+let removeMenuRegionStatsListener: (() => void) | null = null
+
 // 关于弹窗
 const showAboutModal = ref(false)
 let removeMenuAboutListener: (() => void) | null = null
@@ -1069,6 +1081,7 @@ function handleDetailKeydown(e: KeyboardEvent) {
     showLoginGuide.value ||
     showSearchModal.value ||
     showGenreStatsModal.value ||
+    showRegionStatsModal.value ||
     showAboutModal.value ||
     artistPopover.visible
   ) {
@@ -2334,6 +2347,12 @@ function handleSelectGenreFromStats(genre: string) {
   }
 }
 
+// 从地区统计弹窗中选择地区进行筛选（地区为单选，直接替换）
+function handleSelectRegionFromStats(region: string) {
+  selectedRegion.value = region
+  resetAndFetch()
+}
+
 // 过滤风格建议列表（排除已选、匹配输入；以输入开头的优先）
 // 候选来自 filterGenres（只含在用风格），不列尚未被使用的全量风味库标签
 function filteredGenreSuggestions(): string[] {
@@ -3218,6 +3237,11 @@ onMounted(async () => {
     showGenreStatsModal.value = true
   })
 
+  // 监听菜单栏"地区统计"事件
+  removeMenuRegionStatsListener = window.api.onMenuRegionStats(() => {
+    showRegionStatsModal.value = true
+  })
+
   // 监听菜单栏"关于"事件
   removeMenuAboutListener = window.api.onMenuOpenAbout(() => {
     showAboutModal.value = true
@@ -3305,6 +3329,9 @@ onUnmounted(() => {
   }
   if (removeMenuGenreStatsListener) {
     removeMenuGenreStatsListener()
+  }
+  if (removeMenuRegionStatsListener) {
+    removeMenuRegionStatsListener()
   }
   if (removeGenreLibrarySyncProgressListener) {
     removeGenreLibrarySyncProgressListener()

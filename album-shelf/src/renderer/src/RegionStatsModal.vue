@@ -1,0 +1,336 @@
+<template>
+  <div v-if="visible" class="modal-overlay" @click.self="close">
+    <div class="modal-content region-stats-modal">
+      <div class="modal-header">
+        <h3>🗺️ 地区统计</h3>
+        <button class="modal-close" @click="close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- 加载中 -->
+        <div v-if="loading" class="stats-loading">
+          <span class="spinner"></span>
+          <span>加载中...</span>
+        </div>
+
+        <!-- 空状态 -->
+        <div v-else-if="stats.length === 0" class="stats-empty">
+          <div class="stats-empty-icon">🗺️</div>
+          <p>暂无地区数据，请先补全 MusicBrainz 信息，或在「艺人信息」中手动设置地区</p>
+        </div>
+
+        <!-- 统计内容 -->
+        <template v-else>
+          <!-- 辅助统计信息 -->
+          <div class="stats-summary">
+            <div class="summary-item">
+              <span class="summary-value">{{ totalAlbums }}</span>
+              <span class="summary-label">收藏总数</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-value">{{ albumsWithRegion }}</span>
+              <span class="summary-label">有地区标签</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-value">{{ stats.length }}</span>
+              <span class="summary-label">地区数量</span>
+            </div>
+          </div>
+
+          <p class="stats-note">
+            💡 地区取自专辑主艺人，每张专辑最多计入一个地区；未标注地区的专辑不参与统计
+          </p>
+
+          <!-- 条形图 -->
+          <div class="bar-chart">
+            <div
+              v-for="item in displayItems"
+              :key="item.key"
+              class="bar-row"
+              :title="`点击筛选「${item.label}」`"
+              @click="selectRegion(item.key)"
+            >
+              <div class="bar-label" :title="item.label">{{ item.label }}</div>
+              <div class="bar-track">
+                <div
+                  class="bar-fill"
+                  :style="{ width: barWidth(item.count) }"
+                ></div>
+              </div>
+              <div class="bar-count">{{ item.count }}</div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue'
+
+const props = defineProps<{
+  visible: boolean
+}>()
+
+const emit = defineEmits<{
+  close: []
+  selectRegion: [key: string]
+}>()
+
+interface RegionStat {
+  key: string
+  label: string
+  count: number
+}
+
+const loading = ref(false)
+const stats = ref<RegionStat[]>([])
+const totalAlbums = ref(0)
+const albumsWithRegion = ref(0)
+
+// 展示所有地区
+const displayItems = computed(() => stats.value)
+
+// 最大值（用于条形图比例）
+const maxCount = computed(() => {
+  if (displayItems.value.length === 0) return 1
+  return Math.max(...displayItems.value.map((i) => i.count), 1)
+})
+
+function barWidth(count: number): string {
+  return `${(count / maxCount.value) * 100}%`
+}
+
+// 打开时加载数据
+watch(
+  () => props.visible,
+  async (v) => {
+    if (v) {
+      await loadStats()
+    }
+  }
+)
+
+async function loadStats() {
+  loading.value = true
+  try {
+    const res = await window.api.regionStats()
+    if (res.success && res.data) {
+      stats.value = res.data.stats
+      totalAlbums.value = res.data.totalAlbums
+      albumsWithRegion.value = res.data.albumsWithRegion
+    }
+  } catch (err) {
+    console.error('加载地区统计失败:', err)
+  } finally {
+    loading.value = false
+  }
+}
+
+function close() {
+  emit('close')
+}
+
+function selectRegion(key: string) {
+  emit('selectRegion', key)
+  emit('close')
+}
+</script>
+
+<style scoped>
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.region-stats-modal {
+  background: #1e1e1e;
+  border-radius: 12px;
+  width: 560px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #333;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #e0e0e0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.modal-close:hover {
+  background: #333;
+  color: #fff;
+}
+
+.modal-body {
+  padding: 20px;
+  overflow-y: auto;
+}
+
+/* 加载中 */
+.stats-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 0;
+  color: #aaa;
+}
+
+.spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #555;
+  border-top-color: #4fc3f7;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 空状态 */
+.stats-empty {
+  text-align: center;
+  padding: 40px 0;
+  color: #888;
+}
+
+.stats-empty-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+
+.stats-empty p {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* 辅助统计 */
+.stats-summary {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.summary-item {
+  flex: 1;
+  background: #2a2a2a;
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.summary-value {
+  display: block;
+  font-size: 24px;
+  font-weight: 700;
+  color: #4fc3f7;
+}
+
+.summary-label {
+  display: block;
+  font-size: 12px;
+  color: #888;
+  margin-top: 4px;
+}
+
+.stats-note {
+  font-size: 12px;
+  color: #666;
+  margin: 0 0 16px 0;
+}
+
+/* 条形图 */
+.bar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0 4px;
+  transition: background-color 0.15s ease;
+}
+
+.bar-row:hover {
+  background: #2a2a2a;
+}
+
+.bar-row:hover .bar-label {
+  color: #4fc3f7;
+}
+
+.bar-label {
+  width: 140px;
+  min-width: 140px;
+  font-size: 13px;
+  color: #ccc;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-track {
+  flex: 1;
+  height: 20px;
+  background: #2a2a2a;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4fc3f7, #29b6f6);
+  border-radius: 4px;
+  transition: width 0.4s ease;
+  min-width: 2px;
+}
+
+.bar-count {
+  width: 36px;
+  min-width: 36px;
+  font-size: 13px;
+  color: #aaa;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+</style>

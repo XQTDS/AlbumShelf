@@ -527,6 +527,20 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  // ==================== 地区统计 ====================
+
+  /**
+   * 获取地区统计数据（各地区的专辑数量、收藏总数、有地区标签的专辑数）
+   */
+  ipcMain.handle('region:stats', async () => {
+    try {
+      const data = artistService.getRegionStats()
+      return { success: true, data }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
   // ==================== 风格标签管理 ====================
 
   /**

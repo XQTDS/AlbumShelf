@@ -54,6 +54,13 @@ export interface RegionOption {
   count: number
 }
 
+/** 地区统计数据 */
+export interface RegionStats {
+  stats: RegionOption[]
+  totalAlbums: number
+  albumsWithRegion: number
+}
+
 /**
  * 艺人资料服务。
  *
@@ -339,5 +346,32 @@ export class ArtistService {
         count: row.count
       }))
       .filter((option) => option.key)
+  }
+
+  /**
+   * 地区统计数据：各地区的专辑数、收藏总数、有地区标签的专辑数。
+   *
+   * 与风格统计不同，地区是单值：一张专辑最多归属一个地区，因此
+   * `stats` 的 count 之和等于 `albumsWithRegion`。
+   */
+  getRegionStats(): RegionStats {
+    // 复用筛选候选：只含至少关联一张专辑的地区，按专辑数降序
+    const stats = this.getUsedRegions()
+
+    const { totalAlbums } = this.db
+      .prepare('SELECT COUNT(*) AS totalAlbums FROM album')
+      .get() as { totalAlbums: number }
+
+    // COUNT(DISTINCT) 防御同一网易云艺人 ID 对应多行 artist 的极端情况
+    const { albumsWithRegion } = this.db
+      .prepare(`
+        SELECT COUNT(DISTINCT a.id) AS albumsWithRegion
+        FROM album a
+        INNER JOIN artist ar ON ar.netease_artist_id = a.primary_artist_id
+        WHERE ar.region IS NOT NULL
+      `)
+      .get() as { albumsWithRegion: number }
+
+    return { stats, totalAlbums, albumsWithRegion }
   }
 }

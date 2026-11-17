@@ -344,6 +344,15 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
               mainWindow.webContents.send('menu:genreStats')
             }
           }
+        },
+        {
+          label: '地区统计',
+          click: (): void => {
+            const mainWindow = getMainWindow()
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('menu:regionStats')
+            }
+          }
         }
       ]
     },

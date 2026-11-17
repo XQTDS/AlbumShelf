@@ -410,6 +410,11 @@ interface AlbumShelfAPI {
     totalAlbums: number
     albumsWithGenre: number
   }>>
+  regionStats: () => Promise<IpcResult<{
+    stats: RegionOption[]
+    totalAlbums: number
+    albumsWithRegion: number
+  }>>
   setAlbumGenres: (albumId: number, genres: string[]) => Promise<IpcResult>
   /** 全量风格库（手动分配风格时的编辑框候选，含尚未被使用的 MB 风格） */
   genreLibrary: () => Promise<IpcResult<string[]>>
@@ -486,6 +491,7 @@ interface AlbumShelfAPI {
   onMenuOpenLogin: (callback: () => void) => () => void
   onMenuSyncAlbums: (callback: () => void) => () => void
   onMenuGenreStats: (callback: () => void) => () => void
+  onMenuRegionStats: (callback: () => void) => () => void
   onMenuGenreLibrarySync: (callback: () => void) => () => void
   onGenreLibrarySyncProgress: (callback: (progress: GenreLibrarySyncProgress) => void) => () => void
   onMenuOpenAbout: (callback: () => void) => () => void
