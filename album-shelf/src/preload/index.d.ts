@@ -4,6 +4,8 @@ interface AlbumQueryOptions {
   search?: string
   artist?: string
   genres?: string
+  /** 按地区键筛选（ISO 3166-1 alpha-2，如 CN / TW / HK） */
+  region?: string
   followedOnly?: boolean
   artistPartial?: string
   sortBy?: 'mb_rating' | 'release_date' | 'user_rating'
@@ -40,6 +42,18 @@ interface Album {
    * 其中 `rym` 键照常采集但无消费方 —— RYM 入口恒用搜索页。
    */
   external_links: string | null
+  /** 主艺人 MusicBrainz Artist MBID（历史字段，已停用） */
+  primary_artist_mbid?: string | null
+  /** 主艺人网易云明文 ID（业务键，地区 JOIN artist.netease_artist_id） */
+  primary_artist_id?: number | null
+  /** 地区补全水位线；NULL = 尚未尝试 */
+  region_checked_at?: string | null
+  /** 地区键（JOIN artist 派生），如 CN / TW / HK */
+  region?: string | null
+  /** MB area 名称（JOIN 派生），如 Taiwan / Hong Kong / Taipei */
+  region_area?: string | null
+  /** 地区中文展示名（主进程派生） */
+  region_label?: string | null
   track_count: number | null
   synced_at: string
   enriched_at: string | null
@@ -58,6 +72,52 @@ interface FollowedArtist {
   last_checked_at: string | null
   /** 该艺术家在库中的专辑数 */
   album_count: number
+}
+
+/** 艺人信息窗口：全库艺人摘要 */
+interface ArtistBrowserSummary {
+  key: string
+  netease_artist_id: number | null
+  netease_encrypted_id: string | null
+  name: string
+  alias_names: string[]
+  region: string | null
+  region_label: string | null
+  region_area: string | null
+  /** NULL = 自动/MB 来源；'manual' = 用户手动设置或清除 */
+  region_source: 'manual' | null
+  album_count: number
+  primary_album_count: number
+  rated_album_count: number
+  average_rating: number | null
+  is_synthetic: boolean
+}
+
+/** 艺人信息窗口：某艺人的专辑条目 */
+interface ArtistBrowserAlbum {
+  id: number
+  title: string
+  cover_url: string | null
+  user_rating: number | null
+  release_date: string | null
+  is_primary: boolean
+  artist_text: string
+}
+
+/** 手动地区选择项 */
+interface ArtistBrowserRegionOption {
+  key: string
+  label: string
+}
+
+/** 手动设置/清除艺人地区请求 */
+interface ArtistBrowserSetRegionRequest {
+  key: string
+  name: string
+  neteaseArtistId: number
+  neteaseEncryptedId?: string | null
+  /** null = 清除地区（仍标记手动，不会被自动补全回填） */
+  region: string | null
 }
 
 /**
@@ -121,6 +181,13 @@ interface AlbumQueryResult {
   page: number
   pageSize: number
   totalPages: number
+}
+
+/** 地区筛选项（只含至少关联一张专辑的地区） */
+interface RegionOption {
+  key: string
+  label: string
+  count: number
 }
 
 interface Track {
@@ -316,12 +383,14 @@ interface ImportResult {
   tracksImported: number
   genresImported: number
   followedArtistsImported: number
+  artistsImported: number
 }
 
 interface ExportResult {
   path: string
   albums: number
   tracks: number
+  artists: number
 }
 
 interface AlbumShelfAPI {
@@ -329,7 +398,7 @@ interface AlbumShelfAPI {
   onSyncProgress: (callback: (progress: SyncProgress) => void) => () => void
   albumRandom: () => Promise<IpcResult<Album>>
   albumList: (options: AlbumQueryOptions) => Promise<IpcResult<AlbumQueryResult>>
-  albumFilters: () => Promise<IpcResult<{ artists: string[]; genres: string[] }>>
+  albumFilters: () => Promise<IpcResult<{ artists: string[]; genres: string[]; regions: RegionOption[] }>>
   trackListByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   trackSyncByAlbum: (albumId: number) => Promise<IpcResult<Track[]>>
   albumComments: (albumId: number) => Promise<IpcResult<AlbumCommentsResult>>
@@ -340,6 +409,11 @@ interface AlbumShelfAPI {
     stats: { name: string; count: number }[]
     totalAlbums: number
     albumsWithGenre: number
+  }>>
+  regionStats: () => Promise<IpcResult<{
+    stats: RegionOption[]
+    totalAlbums: number
+    albumsWithRegion: number
   }>>
   setAlbumGenres: (albumId: number, genres: string[]) => Promise<IpcResult>
   /** 全量风格库（手动分配风格时的编辑框候选，含尚未被使用的 MB 风格） */
@@ -417,6 +491,7 @@ interface AlbumShelfAPI {
   onMenuOpenLogin: (callback: () => void) => () => void
   onMenuSyncAlbums: (callback: () => void) => () => void
   onMenuGenreStats: (callback: () => void) => () => void
+  onMenuRegionStats: (callback: () => void) => () => void
   onMenuGenreLibrarySync: (callback: () => void) => () => void
   onGenreLibrarySyncProgress: (callback: (progress: GenreLibrarySyncProgress) => void) => () => void
   onMenuOpenAbout: (callback: () => void) => () => void
@@ -438,6 +513,26 @@ interface AlbumShelfAPI {
   onArtistFilterRequest: (callback: (name: string) => void) => () => void
   /** 关注列表窗口：关闭自身 */
   followedWindowClose: () => void
+
+  // 艺人信息窗口
+  artistBrowserList: () => Promise<IpcResult<ArtistBrowserSummary[]>>
+  artistBrowserAlbums: (key: string) => Promise<IpcResult<ArtistBrowserAlbum[]>>
+  artistBrowserRegionOptions: () => Promise<IpcResult<ArtistBrowserRegionOption[]>>
+  artistBrowserSetRegion: (
+    payload: ArtistBrowserSetRegionRequest
+  ) => Promise<IpcResult<ArtistBrowserSummary | null>>
+  artistBrowserOpenAlbum: (albumId: number) => Promise<IpcResult<{ albumId: number }>>
+  artistBrowserCloseWindow: () => void
+  /** 主窗口：接收艺人信息窗口的专辑跳转请求 */
+  onArtistBrowserOpenAlbum: (callback: (albumId: number) => void) => () => void
+  /** 主窗口：手动修改艺人地区后同步刷新 */
+  onArtistRegionChanged: (
+    callback: (payload: {
+      neteaseArtistId: number
+      region: string | null
+      regionLabel: string | null
+    }) => void
+  ) => () => void
   /** 检查关注艺术家的新专辑（严格手动触发；单飞防重入）
    *  @param lookbackDays 回溯天数（30/90/180/365，默认 90）。实际扫描窗口取
    *  `min(now - lookbackDays, 该艺人水位线)`，即至少扫这个范围，水位线更早则扫到水位线 */

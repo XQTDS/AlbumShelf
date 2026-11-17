@@ -29,6 +29,7 @@ const albumShelfAPI = {
     search?: string
     artist?: string
     genres?: string
+    region?: string
     sortBy?: 'mb_rating' | 'release_date' | 'user_rating'
     sortOrder?: 'asc' | 'desc'
     page?: number
@@ -66,6 +67,9 @@ const albumShelfAPI = {
 
   // 风格统计
   genreStats: () => ipcRenderer.invoke('genre:stats'),
+
+  // 地区统计
+  regionStats: () => ipcRenderer.invoke('region:stats'),
 
   // 风格标签管理
   setAlbumGenres: (albumId: number, genres: string[]) =>
@@ -235,6 +239,13 @@ const albumShelfAPI = {
     return () => ipcRenderer.removeListener('menu:genreStats', handler)
   },
 
+  // 监听菜单栏地区统计事件
+  onMenuRegionStats: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:regionStats', handler)
+    return () => ipcRenderer.removeListener('menu:regionStats', handler)
+  },
+
   // 监听菜单栏"同步 MusicBrainz 风格库"事件
   onMenuGenreLibrarySync: (callback: () => void) => {
     const handler = () => callback()
@@ -310,6 +321,48 @@ const albumShelfAPI = {
 
   // 关注列表窗口：关闭自身（Esc 快捷键）
   followedWindowClose: () => ipcRenderer.send('followed:closeWindow'),
+
+  // ==================== 艺人信息窗口 ====================
+
+  artistBrowserList: () => ipcRenderer.invoke('artistBrowser:list'),
+
+  artistBrowserAlbums: (key: string) =>
+    ipcRenderer.invoke('artistBrowser:albums', key),
+
+  artistBrowserRegionOptions: () => ipcRenderer.invoke('artistBrowser:regionOptions'),
+
+  artistBrowserSetRegion: (payload: {
+    key: string
+    name: string
+    neteaseArtistId: number
+    neteaseEncryptedId?: string | null
+    region: string | null
+  }) => ipcRenderer.invoke('artistBrowser:setRegion', payload),
+
+  artistBrowserOpenAlbum: (albumId: number) =>
+    ipcRenderer.invoke('artistBrowser:openAlbum', albumId),
+
+  artistBrowserCloseWindow: () => ipcRenderer.send('artistBrowser:closeWindow'),
+
+  /** 主窗口：接收艺人信息窗口的专辑跳转请求 */
+  onArtistBrowserOpenAlbum: (callback: (albumId: number) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, albumId: number) => callback(albumId)
+    ipcRenderer.on('artistBrowser:openAlbum', handler)
+    return () => ipcRenderer.removeListener('artistBrowser:openAlbum', handler)
+  },
+
+  /** 主窗口：手动修改艺人地区后同步刷新 */
+  onArtistRegionChanged: (
+    callback: (payload: {
+      neteaseArtistId: number
+      region: string | null
+      regionLabel: string | null
+    }) => void
+  ) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: any) => callback(payload)
+    ipcRenderer.on('artist-region:changed', handler)
+    return () => ipcRenderer.removeListener('artist-region:changed', handler)
+  },
 
   // ==================== 关注艺术家新专辑动态 ====================
 

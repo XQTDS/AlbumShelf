@@ -96,6 +96,19 @@
             </div>
           </div>
         </div>
+        <!-- 地区筛选（单选；地区是固定枚举，与多选风格不同） -->
+        <select
+          v-model="selectedRegion"
+          class="region-filter-select"
+          :disabled="filterRegions.length === 0"
+          :title="filterRegions.length === 0 ? '暂无地区数据，新专辑补全后自动出现' : '按地区筛选'"
+          @change="onRegionChange"
+        >
+          <option value="">全部地区</option>
+          <option v-for="region in filterRegions" :key="region.key" :value="region.key">
+            {{ region.label }}
+          </option>
+        </select>
       </div>
     </header>
 
@@ -196,7 +209,7 @@
         <tbody>
           <template v-for="(album, index) in albums" :key="album.id">
             <tr
-              v-memo="[index, album.title, album.artist, album.artists, album.user_rating, album.physical_media, album.mb_rating, album.release_date, album.genres, selectedAlbumId, playingAlbumId, selectedGenres, followedArtists]"
+              v-memo="[index, album.title, album.artist, album.artists, album.user_rating, album.physical_media, album.mb_rating, album.release_date, album.genres, album.region_label, album.region_area, selectedAlbumId, playingAlbumId, selectedGenres, followedArtists]"
               class="album-row"
               :class="{ 'row-selected': selectedAlbumId === album.id }"
               @click="toggleSelect(album.id)"
@@ -217,10 +230,20 @@
                 </div>
               </td>
               <td class="col-artist">
-                <!-- 表格中艺术家为纯文本（仅详情面板芯片可点击），已关注艺术家名以金色文字标识 -->
-                <template v-for="(artistInfo, ai) in albumArtists(album)" :key="ai">
-                  <span v-if="ai > 0"> / </span><span :class="{ 'artist-text-followed': isArtistFollowed(artistInfo.name) }">{{ artistInfo.name }}</span>
-                </template>
+                <div class="artist-cell">
+                  <!-- 表格中艺术家为纯文本（仅详情面板芯片可点击），已关注艺术家名以金色文字标识 -->
+                  <div class="artist-names">
+                    <template v-for="(artistInfo, ai) in albumArtists(album)" :key="ai">
+                      <span v-if="ai > 0"> / </span><span :class="{ 'artist-text-followed': isArtistFollowed(artistInfo.name) }">{{ artistInfo.name }}</span>
+                    </template>
+                  </div>
+                  <!-- 地区跟主艺人绑定：有 MB 地区时展示 chip，无数据不渲染 -->
+                  <span
+                    v-if="album.region_label"
+                    class="region-tag"
+                    :title="album.region_area || album.region_label"
+                  >{{ album.region_label }}</span>
+                </div>
               </td>
               <td class="col-user-rating">
                 <span v-if="album.user_rating != null" class="user-rating-display">
@@ -555,6 +578,17 @@
                     <span class="meta-value">{{ selectedAlbum.mb_rating_count != null ? selectedAlbum.mb_rating_count : '—' }}</span>
                   </div>
                   <div class="meta-item">
+                    <span class="meta-label">地区</span>
+                    <span class="meta-value">
+                      <span
+                        v-if="selectedAlbum.region_label"
+                        class="region-tag"
+                        :title="selectedAlbum.region_area || selectedAlbum.region_label"
+                      >{{ selectedAlbum.region_label }}</span>
+                      <span v-else>—</span>
+                    </span>
+                  </div>
+                  <div class="meta-item">
                     <span class="meta-label">发行日期</span>
                     <span class="meta-value">{{ selectedAlbum.release_date || '—' }}</span>
                   </div>
@@ -778,6 +812,13 @@
       @select-genre="handleSelectGenreFromStats"
     />
 
+    <!-- 地区统计弹窗 -->
+    <RegionStatsModal
+      :visible="showRegionStatsModal"
+      @close="showRegionStatsModal = false"
+      @select-region="handleSelectRegionFromStats"
+    />
+
     <!-- 关于弹窗 -->
     <AboutModal
       :visible="showAboutModal"
@@ -807,6 +848,7 @@ import ScrollProgressBar from './ScrollProgressBar.vue'
 import AlbumSearchModal from './AlbumSearchModal.vue'
 import SettingsModal from './SettingsModal.vue'
 import GenreStatsModal from './GenreStatsModal.vue'
+import RegionStatsModal from './RegionStatsModal.vue'
 import AboutModal from './AboutModal.vue'
 import PlayerBar from './PlayerBar.vue'
 import MediaIcon from './MediaIcon.vue'
@@ -839,6 +881,18 @@ interface Album {
    * 注意 `rym` 键照常采集但无消费方 —— RYM 入口恒用搜索页，见 `albumLinks`。
    */
   external_links?: string | null
+  /** 主艺人 MusicBrainz Artist MBID（历史字段，已停用） */
+  primary_artist_mbid?: string | null
+  /** 主艺人网易云明文 ID（业务键，地区 JOIN artist.netease_artist_id） */
+  primary_artist_id?: number | null
+  /** 地区补全水位线；NULL = 尚未尝试 */
+  region_checked_at?: string | null
+  /** 地区键（JOIN artist 派生），如 CN / TW / HK */
+  region?: string | null
+  /** MB area 名称（JOIN 派生），如 Taiwan / Hong Kong / Taipei */
+  region_area?: string | null
+  /** 地区中文展示名（主进程派生） */
+  region_label?: string | null
 }
 
 /** 支持的第三方站点标识 */
@@ -924,6 +978,10 @@ const showSearchModal = ref(false)
 // 风格统计弹窗
 const showGenreStatsModal = ref(false)
 let removeMenuGenreStatsListener: (() => void) | null = null
+
+// 地区统计弹窗
+const showRegionStatsModal = ref(false)
+let removeMenuRegionStatsListener: (() => void) | null = null
 
 // 关于弹窗
 const showAboutModal = ref(false)
@@ -1023,6 +1081,7 @@ function handleDetailKeydown(e: KeyboardEvent) {
     showLoginGuide.value ||
     showSearchModal.value ||
     showGenreStatsModal.value ||
+    showRegionStatsModal.value ||
     showAboutModal.value ||
     artistPopover.visible
   ) {
@@ -1773,20 +1832,20 @@ function handlePlayerCoverClick(): void {
     selectedAlbumId.value = albumId
     return
   }
-  // 清除过滤条件（镜像 handleRandomPick 的清条件逻辑）
-  searchQuery.value = ''
-  selectedArtist.value = ''
-  artistInput.value = ''
-  selectedGenres.value = []
-  genreInput.value = ''
+  // 清除过滤条件（与随机选择共用；含 followedOnly / artistPartial）
+  clearAllListFiltersForJump()
   sortBy.value = undefined
   sortOrder.value = 'desc'
-  // 重置分页并定位：fetchAlbumsAndScrollTo 持续分页直到找到目标专辑
+  // 重置分页并定位：fetchAlbumsAndScrollTo 一次拉取完整结果集并滚动到目标
   albums.value = []
   currentPage.value = 1
   hasMore.value = true
-  void fetchAlbumsAndScrollTo(albumId).then(() => {
-    selectedAlbumId.value = albumId
+  void fetchAlbumsAndScrollTo(albumId).then((found) => {
+    if (found) {
+      selectedAlbumId.value = albumId
+    } else {
+      showMessage('该专辑已不在库中（可能已被同步删除）', 'error')
+    }
   })
 }
 
@@ -1820,6 +1879,9 @@ const selectedGenres = ref<string[]>([])  // 多风格筛选
 const artists = ref<string[]>([])
 // 工具栏风格筛选建议：只含至少关联一张专辑的风格（后端 album:filters 已按此过滤）
 const filterGenres = ref<string[]>([])
+// 工具栏地区筛选：只含至少关联一张专辑的地区（后端 album:filters 已按此过滤）
+const filterRegions = ref<{ key: string; label: string; count: number }[]>([])
+const selectedRegion = ref('')
 // 全量风格库：手动分配风格时编辑框的候选，含风格库同步写入、尚未被任何专辑使用的 MB 风格
 const genreLibrary = ref<string[]>([])
 
@@ -1868,6 +1930,7 @@ function buildAlbumQueryOptions() {
     search: searchQuery.value || undefined,
     artist: selectedArtist.value || undefined,
     genres: selectedGenres.value.length > 0 ? selectedGenres.value.join(',') : undefined,
+    region: selectedRegion.value || undefined,
     followedOnly: followedOnly.value || undefined,
     artistPartial: artistPartial.value || undefined,
     sortBy: sortBy.value,
@@ -1926,9 +1989,48 @@ async function fetchFilters() {
     if (result.success && result.data) {
       artists.value = result.data.artists
       filterGenres.value = result.data.genres
+      filterRegions.value = result.data.regions
+
+      // 候选消失的地区筛选自动清除：导入旧备份、同步删除、地区重算等都可能让
+      // 已选地区不再存在。若不清理，下拉框会因候选为空而禁用，但查询仍带着
+      // 失效的 region，列表被锁死在空结果且无法从 UI 解除。
+      if (
+        selectedRegion.value &&
+        !result.data.regions.some((r) => r.key === selectedRegion.value)
+      ) {
+        selectedRegion.value = ''
+        resetAndFetch(selectedAlbumId.value)
+      }
     }
   } catch (error) {
     console.error('获取筛选选项失败:', error)
+  }
+}
+
+/**
+ * 艺人信息窗口手动修改地区后的同步：
+ * 更新当前已加载专辑的地区展示，刷新地区筛选项；地区筛选生效时按新值重载列表。
+ */
+async function applyArtistRegionChange(payload: {
+  neteaseArtistId: number
+  region: string | null
+  regionLabel: string | null
+}): Promise<void> {
+  albums.value = albums.value.map((album) =>
+    album.primary_artist_id === payload.neteaseArtistId
+      ? {
+          ...album,
+          region: payload.region,
+          region_label: payload.regionLabel,
+          region_area: null
+        }
+      : album
+  )
+
+  await fetchFilters()
+  // fetchFilters 可能已因候选消失清空地区并重载；仅在筛选仍有效时再按新地区重载
+  if (selectedRegion.value) {
+    resetAndFetch(selectedAlbumId.value)
   }
 }
 
@@ -1970,8 +2072,10 @@ function resetAndFetch(scrollToAlbumId?: number | null) {
 /**
  * 一次拉取完整结果集（fetchAll 模式）并滚动定位到目标专辑。
  * 替代逐页顺序加载循环：底部专辑定位从几十轮 IPC 降为一次。
+ *
+ * @returns 目标专辑是否出现在结果集中（被同步删除时可能为 false）
  */
-async function fetchAlbumsAndScrollTo(targetAlbumId: number) {
+async function fetchAlbumsAndScrollTo(targetAlbumId: number): Promise<boolean> {
   loadingAll.value = true
   loadingMore.value = true
   try {
@@ -1989,9 +2093,51 @@ async function fetchAlbumsAndScrollTo(targetAlbumId: number) {
     loadingAll.value = false
   }
 
-  // 滚动到目标专辑
+  const found = albums.value.some((album) => album.id === targetAlbumId)
+  if (found) {
+    // 滚动到目标专辑
+    await nextTick()
+    scrollToAlbumRow(targetAlbumId)
+  }
+  return found
+}
+
+/**
+ * 艺人信息窗口点击专辑：在主界面直接选中该专辑并打开详情。
+ *
+ * - 目标已在当前列表：只改变详情面板选中态，保留搜索/筛选/排序；
+ * - 目标不在列表：清空所有影响结果集包含性的筛选，fetchAll 后定位；
+ * - 目标已被同步删除：提示，不设置选中态。
+ */
+let artistBrowserJumpSeq = 0
+
+async function openAlbumFromArtistBrowser(albumId: number): Promise<void> {
+  if (!Number.isInteger(albumId) || albumId <= 0) return
+  const seq = ++artistBrowserJumpSeq
+
+  if (albums.value.some((album) => album.id === albumId)) {
+    selectedAlbumId.value = albumId
+    await nextTick()
+    scrollToAlbumRow(albumId)
+    return
+  }
+
+  clearAllListFiltersForJump()
+  selectedAlbumId.value = null
+  albums.value = []
+  currentPage.value = 1
+  hasMore.value = true
+
+  const found = await fetchAlbumsAndScrollTo(albumId)
+  if (seq !== artistBrowserJumpSeq) return
+  if (!found) {
+    showMessage('未能定位该专辑（可能已被同步删除或列表加载失败）', 'error')
+    return
+  }
+
+  selectedAlbumId.value = albumId
   await nextTick()
-  scrollToAlbumRow(targetAlbumId)
+  scrollToAlbumRow(albumId)
 }
 
 /**
@@ -2044,6 +2190,14 @@ function clearSearch() {
 
 function applyFilters() {
   resetAndFetch()
+}
+
+/**
+ * 地区筛选变化：与风格筛选一致，重置列表；有选中专辑时定位保持。
+ * 选「全部地区」即清空筛选。
+ */
+function onRegionChange() {
+  resetAndFetch(selectedAlbumId.value)
 }
 
 // ==================== 风格标签编辑 ====================
@@ -2193,6 +2347,12 @@ function handleSelectGenreFromStats(genre: string) {
   }
 }
 
+// 从地区统计弹窗中选择地区进行筛选（地区为单选，直接替换）
+function handleSelectRegionFromStats(region: string) {
+  selectedRegion.value = region
+  resetAndFetch()
+}
+
 // 过滤风格建议列表（排除已选、匹配输入；以输入开头的优先）
 // 候选来自 filterGenres（只含在用风格），不列尚未被使用的全量风味库标签
 function filteredGenreSuggestions(): string[] {
@@ -2315,6 +2475,29 @@ const followedOnly = ref(false)
 /** 关注状态广播 / 关注列表窗口筛选请求 的监听清理函数 */
 let removeFollowedChangedListener: (() => void) | null = null
 let removeArtistFilterRequestListener: (() => void) | null = null
+/** 艺人信息窗口跳转 / 地区变更的监听清理函数 */
+let removeArtistBrowserOpenAlbumListener: (() => void) | null = null
+let removeArtistRegionChangedListener: (() => void) | null = null
+
+/**
+ * 跳转定位前清空所有影响结果集包含性的筛选条件。
+ * 保留排序、视图模式、角标开关与播放状态；搜索防抖一并取消，避免清空后又被旧定时器重置。
+ */
+function clearAllListFiltersForJump(): void {
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+    searchTimer = null
+  }
+  searchQuery.value = ''
+  selectedArtist.value = ''
+  artistInput.value = ''
+  artistPartial.value = ''
+  showArtistSuggestions.value = false
+  selectedGenres.value = []
+  genreInput.value = ''
+  selectedRegion.value = ''
+  followedOnly.value = false
+}
 
 /** 艺术家操作小菜单状态 */
 const artistPopover = reactive({
@@ -2578,16 +2761,11 @@ async function handleRandomPick() {
     const randomAlbum = result.data
 
     // 专辑已在当前列表时直接选中并滚动定位（保留现有搜索/筛选条件）；
-    // 否则清除过滤条件、一次全量加载并滚动定位后选中（复用播放条封面点击的定位机制，不做搜索定位）
+    // 否则清除过滤条件、一次全量加载并滚动定位后选中（复用播放条封面点击的定位机制）
     if (albums.value.some((a) => a.id === randomAlbum.id)) {
       scrollToAlbumRow(randomAlbum.id)
     } else {
-      searchQuery.value = ''
-      selectedArtist.value = ''
-      artistInput.value = ''
-      artistPartial.value = ''
-      selectedGenres.value = []
-      genreInput.value = ''
+      clearAllListFiltersForJump()
       sortBy.value = undefined
       sortOrder.value = 'desc'
 
@@ -2595,7 +2773,11 @@ async function handleRandomPick() {
       albums.value = []
       currentPage.value = 1
       hasMore.value = true
-      await fetchAlbumsAndScrollTo(randomAlbum.id)
+      const found = await fetchAlbumsAndScrollTo(randomAlbum.id)
+      if (!found) {
+        showMessage('该专辑已不在库中（可能已被同步删除）', 'error')
+        return
+      }
     }
 
     // 展开该专辑
@@ -2855,7 +3037,14 @@ function setupProgressListener() {
     if (progress.current >= progress.total) {
       setTimeout(async () => {
         enrichProgress.value = null
-        await fetchAlbums()
+        // fetchAlbums 按当前 page 替换整个列表；用户已滚到第 N 页时直接替换
+        // 会丢掉前 N-1 页，且 hasMore 仍为 true，后续加载从 N+1 开始。
+        // 多页状态统一用 resetAndFetch 重建列表；第 1 页保持原行为。
+        if (currentPage.value > 1) {
+          resetAndFetch(selectedAlbumId.value)
+        } else {
+          await fetchAlbums()
+        }
         await fetchFilters()
       }, 1000)
     }
@@ -2910,6 +3099,8 @@ async function handleReEnrichAll() {
     showMessage('重新补全失败：未知错误', 'error')
   }
 }
+
+// ==================== 补全结果提示 ====================
 
 /** 展示补全结果统计：精确匹配 / 待确认 / 跳过 */
 function showEnrichSummary(prefix: string, data: { matched: number; failed: number; pending: number }) {
@@ -3000,6 +3191,24 @@ onMounted(async () => {
     applyArtistPartialFilter(name)
   })
 
+  // 艺人信息窗口：点击专辑 → 主界面直接选中并定位
+  removeArtistBrowserOpenAlbumListener = window.api.onArtistBrowserOpenAlbum(
+    (albumId: number) => {
+      void openAlbumFromArtistBrowser(albumId)
+    }
+  )
+
+  // 艺人信息窗口：手动修改地区 → 同步当前列表与地区筛选项
+  removeArtistRegionChangedListener = window.api.onArtistRegionChanged(
+    (payload: {
+      neteaseArtistId: number
+      region: string | null
+      regionLabel: string | null
+    }) => {
+      void applyArtistRegionChange(payload)
+    }
+  )
+
   // 监听登录要求事件
   // 首次启动时显示引导弹窗，之后直接显示登录弹窗
   let isFirstLoginPrompt = true
@@ -3026,6 +3235,11 @@ onMounted(async () => {
   // 监听菜单栏"风格统计"事件
   removeMenuGenreStatsListener = window.api.onMenuGenreStats(() => {
     showGenreStatsModal.value = true
+  })
+
+  // 监听菜单栏"地区统计"事件
+  removeMenuRegionStatsListener = window.api.onMenuRegionStats(() => {
+    showRegionStatsModal.value = true
   })
 
   // 监听菜单栏"关于"事件
@@ -3107,8 +3321,17 @@ onUnmounted(() => {
   if (removeArtistFilterRequestListener) {
     removeArtistFilterRequestListener()
   }
+  if (removeArtistBrowserOpenAlbumListener) {
+    removeArtistBrowserOpenAlbumListener()
+  }
+  if (removeArtistRegionChangedListener) {
+    removeArtistRegionChangedListener()
+  }
   if (removeMenuGenreStatsListener) {
     removeMenuGenreStatsListener()
+  }
+  if (removeMenuRegionStatsListener) {
+    removeMenuRegionStatsListener()
   }
   if (removeGenreLibrarySyncProgressListener) {
     removeGenreLibrarySyncProgressListener()
@@ -4450,6 +4673,30 @@ body {
 .col-index { width: 44px; text-align: center; color: var(--text-secondary); }
 .col-title { width: 24%; }
 .col-artist { width: 16%; }
+.artist-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+.artist-names {
+  line-height: 1.3;
+  word-break: break-word;
+}
+/* 地区标签：跟主艺人绑定，用绿色系与风格标签（靛蓝）区分 */
+.region-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #047857;
+  background: #ecfdf5;
+  border: 1px solid #d1fae5;
+  white-space: nowrap;
+  user-select: none;
+}
 .col-user-rating { width: 120px; text-align: center; }
 .col-media { width: 80px; text-align: center; }
 .col-mb-rating { width: 80px; text-align: center; }
@@ -4835,6 +5082,33 @@ body {
 
 .genre-filter-input::placeholder {
   color: #aaa;
+}
+
+/* ==================== 地区筛选组件 ==================== */
+.region-filter-select {
+  width: 120px;
+  flex-shrink: 1;
+  min-width: 96px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: white;
+  color: var(--text);
+  transition: border-color 0.2s;
+  cursor: pointer;
+}
+
+.region-filter-select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+}
+
+.region-filter-select:disabled {
+  color: var(--text-secondary);
+  background: #f5f5f5;
+  cursor: not-allowed;
 }
 
 .genre-suggestions {

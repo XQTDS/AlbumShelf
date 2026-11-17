@@ -3,7 +3,10 @@ import { readFileSync, writeFileSync } from 'fs'
 import { getMainWindow } from './window-ref'
 import { exportDatabase, importDatabase, type ExportData } from './database'
 import { AlbumService, AlbumQueryOptions, type Album } from './album-service'
+import { ArtistService } from './artist-service'
+import { ArtistBrowserService } from './artist-browser-service'
 import { FollowedArtistService } from './followed-artist-service'
+import { regionLabel } from './region'
 import {
   ArtistUpdateService,
   type ArtistUpdateCategory
@@ -33,6 +36,8 @@ import { NcmLoginRequiredError } from './ncm-cli-service'
 import { GenreLibraryService } from './genre-library-service'
 
 let albumService: AlbumService
+let artistService: ArtistService
+let artistBrowserService: ArtistBrowserService
 let trackService: TrackService
 let ncmCliService: NcmCliService
 let trackSyncService: TrackSyncService
@@ -47,6 +52,10 @@ let genreLibrarySyncRunning = false
 
 // 关注艺术家新专辑检查进行中标志（防重入）
 let artistUpdateCheckRunning = false
+
+// 同步后的自动补全若因其他批量补全占用而未能启动，标记为延后；
+// 当前批量任务结束后由 runPendingAutoEnrich 补跑，避免新增专辑静默漏补。
+let pendingAutoEnrich = false
 
 // 播放会话代际：新一轮 player:playAlbum / player:stop 使上一轮未完成的
 // 后台补队列任务失效（代际不匹配即中止），避免旧任务污染新队列
@@ -67,6 +76,8 @@ let fuzzyDialogDraining = false
  */
 function initServices(): void {
   albumService = new AlbumService()
+  artistService = new ArtistService()
+  artistBrowserService = new ArtistBrowserService()
   trackService = new TrackService()
   ncmCliService = new NcmCliService()
   trackSyncService = new TrackSyncService(ncmCliService, trackService, albumService)
@@ -115,9 +126,15 @@ export function registerIpcHandlers(): void {
       if (result.added > 0 && isMbClientInitialized()) {
         // 异步触发，不阻塞同步返回
         const mainWindow = getMainWindow()
-        enrichAll(mainWindow).catch((err) =>
+        enrichAll(mainWindow).catch((err) => {
+          if (enrichService.busy) {
+            // 其他批量补全/地区回填正在运行；标记延后，等它结束后补跑
+            pendingAutoEnrich = true
+            console.log('批量补全进行中，新增专辑的自动补全已延后')
+            return
+          }
           console.error('自动补全失败:', err)
-        )
+        })
       }
 
       return { success: true, data: result }
@@ -157,16 +174,18 @@ export function registerIpcHandlers(): void {
   })
 
   /**
-   * 获取筛选选项（所有艺术家 + 在用风格标签）
+   * 获取筛选选项（所有艺术家 + 在用风格标签 + 在用地区）
    *
    * 风格只返回「至少关联一张专辑」的（getUsedGenres）：风格库同步会把 MB 全量
    * 2201 个风格写进 genre 表，其中绝大多数尚无专辑使用，列进筛选建议只会筛出空结果。
+   * 地区同理，只返回至少关联一张专辑的地区。
    */
   ipcMain.handle('album:filters', async () => {
     try {
       const artists = albumService.getAllArtists()
       const genres = albumService.getUsedGenres()
-      return { success: true, data: { artists, genres } }
+      const regions = artistService.getUsedRegions()
+      return { success: true, data: { artists, genres, regions } }
     } catch (error) {
       return { success: false, error: (error as Error).message }
     }
@@ -508,6 +527,20 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  // ==================== 地区统计 ====================
+
+  /**
+   * 获取地区统计数据（各地区的专辑数量、收藏总数、有地区标签的专辑数）
+   */
+  ipcMain.handle('region:stats', async () => {
+    try {
+      const data = artistService.getRegionStats()
+      return { success: true, data }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
   // ==================== 风格标签管理 ====================
 
   /**
@@ -798,6 +831,7 @@ export function registerIpcHandlers(): void {
 
       const mainWindow = BrowserWindow.fromWebContents(event.sender)
       const result = await enrichAll(mainWindow)
+      runPendingAutoEnrich(mainWindow)
       return { success: true, data: result }
     } catch (error) {
       return { success: false, error: (error as Error).message }
@@ -813,6 +847,7 @@ export function registerIpcHandlers(): void {
 
       const mainWindow = BrowserWindow.fromWebContents(event.sender)
       const result = await enrichAlbumsWithoutMbData(mainWindow)
+      runPendingAutoEnrich(mainWindow)
       return { success: true, data: result }
     } catch (error) {
       return { success: false, error: (error as Error).message }
@@ -828,6 +863,7 @@ export function registerIpcHandlers(): void {
 
       const mainWindow = BrowserWindow.fromWebContents(event.sender)
       const result = await reEnrichAll(mainWindow)
+      runPendingAutoEnrich(mainWindow)
       return { success: true, data: result }
     } catch (error) {
       return { success: false, error: (error as Error).message }
@@ -1113,6 +1149,139 @@ export function registerIpcHandlers(): void {
 
   /** 关注列表窗口：关闭自身（Esc 快捷键） */
   ipcMain.on('followed:closeWindow', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close()
+  })
+
+  // ==================== 艺人信息窗口 ====================
+
+  /** 手动地区修改后广播给所有窗口（主窗口同步专辑地区 chip / 筛选项） */
+  function broadcastArtistRegionChanged(payload: {
+    neteaseArtistId: number
+    region: string | null
+    regionLabel: string | null
+  }): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('artist-region:changed', payload)
+      }
+    }
+  }
+
+  ipcMain.handle('artistBrowser:list', async () => {
+    try {
+      return { success: true, data: artistBrowserService.listArtists() }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  ipcMain.handle('artistBrowser:albums', async (_event, key: string) => {
+    try {
+      if (typeof key !== 'string' || !key.trim()) {
+        return { success: false, error: '无效的艺人标识' }
+      }
+      return { success: true, data: artistBrowserService.listAlbums(key) }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  ipcMain.handle('artistBrowser:regionOptions', async () => {
+    try {
+      return { success: true, data: artistBrowserService.getRegionOptions() }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  ipcMain.handle(
+    'artistBrowser:setRegion',
+    async (
+      _event,
+      payload: {
+        key?: string
+        name?: string
+        neteaseArtistId?: number
+        neteaseEncryptedId?: string | null
+        region?: string | null
+      }
+    ) => {
+      try {
+        if (!payload || typeof payload !== 'object') {
+          return { success: false, error: '无效的请求参数' }
+        }
+        const key = payload.key
+        const neteaseArtistId = payload.neteaseArtistId
+        const name = payload.name
+        const region = payload.region
+
+        if (typeof key !== 'string' || !key.startsWith('netease:')) {
+          return { success: false, error: '该艺人未关联网易云 ID，暂不支持修改地区' }
+        }
+        if (!Number.isInteger(neteaseArtistId) || (neteaseArtistId as number) <= 0) {
+          return { success: false, error: '无效的网易云艺人 ID' }
+        }
+        if (key !== `netease:${neteaseArtistId}`) {
+          return { success: false, error: '艺人标识与 ID 不一致' }
+        }
+        if (typeof name !== 'string' || !name.trim()) {
+          return { success: false, error: '艺人名不能为空' }
+        }
+        if (region === undefined) {
+          return { success: false, error: '缺少地区值' }
+        }
+        if (region !== null && typeof region !== 'string') {
+          return { success: false, error: '无效的地区值' }
+        }
+
+        const row = artistService.setManualRegion({
+          neteaseArtistId: neteaseArtistId as number,
+          name,
+          neteaseEncryptedId:
+            typeof payload.neteaseEncryptedId === 'string'
+              ? payload.neteaseEncryptedId
+              : null,
+          region
+        })
+
+        broadcastArtistRegionChanged({
+          neteaseArtistId: neteaseArtistId as number,
+          region: row.region,
+          regionLabel: regionLabel(row.region)
+        })
+
+        return { success: true, data: artistBrowserService.getArtist(key) }
+      } catch (error) {
+        return { success: false, error: (error as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle('artistBrowser:openAlbum', async (_event, albumId: number) => {
+    try {
+      if (!Number.isInteger(albumId) || albumId <= 0) {
+        return { success: false, error: '无效的专辑 ID' }
+      }
+      if (!albumService.getAlbumById(albumId)) {
+        return { success: false, error: '该专辑已不在库中（可能已被同步删除）' }
+      }
+      const mainWindow = getMainWindow()
+      if (!mainWindow) {
+        return { success: false, error: '主窗口不可用，请重新打开主窗口' }
+      }
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+      mainWindow.moveTop()
+      mainWindow.webContents.send('artistBrowser:openAlbum', albumId)
+      return { success: true, data: { albumId } }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /** 艺人信息窗口：关闭自身（Esc 快捷键） */
+  ipcMain.on('artistBrowser:closeWindow', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close()
   })
 
@@ -1461,7 +1630,8 @@ export function registerIpcHandlers(): void {
         data: {
           path: filePath,
           albums: data.data.albums.length,
-          tracks: data.data.tracks.length
+          tracks: data.data.tracks.length,
+          artists: data.data.artists.length
         }
       }
     } catch (error) {
@@ -1658,6 +1828,16 @@ async function enrichAll(mainWindow: BrowserWindow | null) {
     createFuzzyMatchCallback(mainWindow)
   )
   return result
+}
+
+/**
+ * 当前批量任务结束后，补跑同步期间被 busy 拒绝的自动补全。
+ * 异步触发，不阻塞调用方返回。
+ */
+function runPendingAutoEnrich(mainWindow: BrowserWindow | null): void {
+  if (!pendingAutoEnrich) return
+  pendingAutoEnrich = false
+  enrichAll(mainWindow).catch((err) => console.error('延后自动补全失败:', err))
 }
 
 /**

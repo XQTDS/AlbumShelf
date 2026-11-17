@@ -1,6 +1,9 @@
 import { getMbClient } from './mb-client'
 import { AlbumService, Album } from '../album-service'
-import type { IReleaseGroupMatch, IRating } from 'musicbrainz-api'
+import { ArtistService } from '../artist-service'
+import { albumArtistRefs } from '../album-artist'
+import { isLikelySameArtist } from '../region'
+import type { IReleaseGroupMatch, IRating, IArtist } from 'musicbrainz-api'
 import { getAliases, addAlias } from './artist-alias'
 import { getEnrichStrategies, type EnrichStrategies } from './settings'
 import { extractExternalLinks, type ExternalLinks, type MbUrlRelation } from './external-links'
@@ -33,6 +36,31 @@ export interface MbMatchResult {
   externalLinks: ExternalLinks
   /** 首次发行日期（来自 MusicBrainz first-release-date，格式如 "YYYY-MM-DD"、"YYYY-MM"、"YYYY"） */
   releaseDate: string | null
+  /** 主艺人地区信息；null = 无 artist-credit 或解析失败（见 artistResolveFailed） */
+  artist: MbArtistRegion | null
+  /**
+   * true = 艺人地区解析过程中发生网络/API 错误。
+   * 此时专辑的 region_checked_at 不应保留旧值，留待后续重新补全/重新同步重试。
+   */
+  artistResolveFailed: boolean
+}
+
+/**
+ * 主艺人地区信息（来自 release-group 的 artist-credit[0]，
+ * country 缺失时补一次 artist lookup）。
+ */
+export interface MbArtistRegion {
+  /** MusicBrainz Artist MBID */
+  mbid: string
+  /** MB 艺人规范名 */
+  name: string
+  sortName: string | null
+  /** MB country（ISO 3166-1 alpha-2） */
+  country: string | null
+  /** MB area 名称 */
+  area: string | null
+  /** area 的 ISO 3166-1 代码，country 缺失时用于兜底 */
+  isoCodes: string[] | null
 }
 
 /**
@@ -173,12 +201,70 @@ function pickBestReleaseGroup(
  */
 export class EnrichService {
   private albumService: AlbumService
+  private artistService: ArtistService
   private isEnriching = false
   /** 正在查询外部链接的专辑 id，用于并发去重 */
   private externalLinksInFlight = new Set<number>()
+  /** 主艺人地区内存缓存：同一 MBID 在一次会话内至多解析一次 */
+  private artistRegionCache = new Map<string, MbArtistRegion>()
 
   constructor(albumService: AlbumService) {
     this.albumService = albumService
+    this.artistService = new ArtistService()
+  }
+
+  /**
+   * 解析 release-group 主艺人的地区信息。
+   *
+   * - `artist-credit[0].artist` 通常已带 `country`（release-group lookup 加
+   *   `inc=artist-credits` 即可），这时零额外请求。
+   * - `country` 缺失时：先查本地 artist 表；未命中再 `lookup('artist')` 取
+   *   `country / area / begin-area`。结果按 MBID 缓存在内存中。
+   * - 网络/API 错误向上抛出，由调用方清空水位线以便回填重试；
+   *   MB 确实没有地区数据不算错误，返回 `country/region` 为空的条目。
+   */
+  private async resolveArtistRegion(credit: IArtist): Promise<MbArtistRegion> {
+    const mbid = credit.id
+    const cached = this.artistRegionCache.get(mbid)
+    if (cached) return cached
+
+    let country = credit.country ?? null
+    let areaName = credit.area?.name ?? null
+    let isoCodes = credit.area?.['iso-3166-1-codes'] ?? null
+
+    if (!country) {
+      // 先看本地是否已有该艺人的地区结果（同一艺人的另一张专辑可能已经查过）
+      const local = this.artistService.getArtistByMbid(mbid)
+      if (local && local.region_fetched_at) {
+        const resolved: MbArtistRegion = {
+          mbid,
+          name: credit.name || local.name,
+          sortName: credit['sort-name'] ?? local.sort_name ?? null,
+          country: local.country,
+          area: local.area,
+          isoCodes: null
+        }
+        this.artistRegionCache.set(mbid, resolved)
+        return resolved
+      }
+
+      const mbApi = getMbClient()
+      const artist = await mbApi.lookup('artist', mbid)
+      country = artist.country ?? null
+      areaName = artist.area?.name ?? null
+      isoCodes = artist.area?.['iso-3166-1-codes'] ?? null
+    }
+
+    const resolved: MbArtistRegion = {
+      mbid,
+      name: credit.name,
+      sortName: credit['sort-name'] ?? null,
+      country,
+      area: areaName,
+      isoCodes
+    }
+    this.artistRegionCache.set(mbid, resolved)
+    return resolved
   }
 
   /**
@@ -236,10 +322,12 @@ export class EnrichService {
       // 从同 score 候选中选出最佳匹配
       const bestMatch = pickBestReleaseGroup(topCandidates, releaseDate ?? null)
 
-      // 获取匹配 Release Group 的详细信息（ratings、genres 与外部站点链接）
+      // 获取匹配 Release Group 的详细信息（ratings、genres、主艺人信用于地区解析、
+      // 以及外部站点链接）。artist-credits 搭在同一次 lookup 上，不产生额外请求。
       const details = await mbApi.lookup('release-group', bestMatch.id, [
         'ratings',
         'genres',
+        'artist-credits',
         'url-rels'
       ])
 
@@ -248,6 +336,22 @@ export class EnrichService {
       const externalLinks = extractExternalLinks(
         (details as unknown as { relations?: MbUrlRelation[] }).relations
       )
+
+      // 主艺人地区：country 缺失时才补一次 artist lookup；失败不影响专辑匹配本身，
+      // 只标记 artistResolveFailed 让调用方清空区域水位线以便回填重试。
+      let artistRegion: MbArtistRegion | null = null
+      let artistResolveFailed = false
+      const primaryArtist = (
+        details as unknown as { 'artist-credit'?: { artist?: IArtist }[] }
+      )['artist-credit']?.[0]?.artist
+      if (primaryArtist?.id) {
+        try {
+          artistRegion = await this.resolveArtistRegion(primaryArtist)
+        } catch (error) {
+          artistResolveFailed = true
+          console.error(`艺人地区解析失败 [${title} - ${artist}]:`, error)
+        }
+      }
 
       // 提取首次发行日期
       const firstReleaseDate =
@@ -260,7 +364,9 @@ export class EnrichService {
         ratingCount: rating?.['votes-count'] ?? 0,
         genres: genres?.map((g) => g.name).filter(Boolean) ?? [],
         externalLinks,
-        releaseDate: firstReleaseDate
+        releaseDate: firstReleaseDate,
+        artist: artistRegion,
+        artistResolveFailed
       }
     } catch (error) {
       console.error(`MusicBrainz 匹配失败 [${title} - ${artist}]:`, error)
@@ -477,6 +583,89 @@ export class EnrichService {
   }
 
   /**
+   * 把主艺人地区写入 artist 表，并返回应合并进 album update 的地区字段。
+   *
+   * - `resolveFailed`：网络/API 失败 → 清空 `region_checked_at`（保留旧地区
+   *   供界面暂时展示），标记本次未解析成功；后续重新补全/重新同步可再次尝试。
+   * - 专辑有网易云主艺人 ID：按该 ID upsert artist（业务键），并写
+   *   `album.primary_artist_id`；`artist === null`（无 artist-credit）时只写键与
+   *   水位线，地区由已有 artist 行的数据 JOIN 得到。
+   * - 专辑没有结构化网易云主艺人 ID：无法建立业务键关联，只写水位线。
+   */
+  private buildRegionUpdate(
+    album: Album,
+    artist: MbArtistRegion | null,
+    resolveFailed: boolean
+  ): {
+    primary_artist_id?: number | null
+    /** 旧 MBID 列：仅用于启动迁移合并/旧备份兼容，查询与展示不读 */
+    primary_artist_mbid?: string | null
+    region_checked_at?: string | null
+  } {
+    if (resolveFailed) {
+      // updateAlbum 只跳过 undefined，null 会真正落库
+      return { region_checked_at: null }
+    }
+
+    const primary = albumArtistRefs(album)[0]
+    if (primary?.originalId == null) {
+      // 无网易云主艺人 ID：地区无法按业务键关联，但本次尝试仍然算已处理
+      return { region_checked_at: new Date().toISOString() }
+    }
+
+    if (!artist) {
+      return {
+        primary_artist_id: primary.originalId,
+        region_checked_at: new Date().toISOString()
+      }
+    }
+
+    // 地区按网易云艺人 ID 共享：只有能确认 MB credit 与网易云主艺人是同一实体时才写入，
+    // 否则会把作曲家/合辑/同名不同人的地区挂到该网易云艺人名下的所有专辑。
+    // 别名文件是「网易云名 → MB 名」，所以别名要作为网易云侧补充名参与比较；
+    // 同时查询主艺人名与专辑展示名的别名，覆盖以 "A / B" 为 key 的历史别名。
+    const neteaseNames = new Set(
+      [
+        primary.name,
+        ...getAliases(primary.name),
+        ...getAliases(album.artist)
+      ].filter(Boolean)
+    )
+    const matched = [...neteaseNames].some((name) =>
+      isLikelySameArtist(name, [artist.name, artist.sortName])
+    )
+    if (!matched) {
+      console.warn(
+        `[Enrich] MB 主艺人与网易云主艺人不匹配，跳过地区写入: ` +
+          `${primary.name} <-> ${artist.name}`
+      )
+      return {
+        primary_artist_id: primary.originalId,
+        region_checked_at: new Date().toISOString()
+      }
+    }
+
+    this.artistService.upsertArtist({
+      neteaseArtistId: primary.originalId,
+      neteaseEncryptedId: primary.id,
+      name: primary.name,
+      musicbrainzArtistId: artist.mbid,
+      sortName: artist.sortName,
+      country: artist.country,
+      area: artist.area,
+      isoCodes: artist.isoCodes
+    })
+
+    return {
+      primary_artist_id: primary.originalId,
+      // 旧 MBID 列仅供启动迁移合并 split 行/兼容旧备份使用，查询与展示不读它。
+      // 此处写入的 MBID 在 artist 表中必然存在（上面 upsertArtist 已保证），外键安全。
+      primary_artist_mbid: artist.mbid,
+      region_checked_at: new Date().toISOString()
+    }
+  }
+
+  /**
    * 数据补全逻辑：将匹配结果写入数据库
    *
    * @param album 待补全的专辑
@@ -491,13 +680,14 @@ export class EnrichService {
     const result = await this.matchAlbum(album.title, album.artist, album.release_date)
 
     if (result) {
-      // 精确匹配成功，直接写入
+      // 精确匹配成功，直接写入（地区字段由 buildRegionUpdate 决定是否写入）
       this.albumService.updateAlbum(album.id, {
         musicbrainz_id: result.mbid,
         mb_rating: result.rating,
         mb_rating_count: result.ratingCount,
         release_date: result.releaseDate ?? album.release_date,
-        enriched_at: new Date().toISOString()
+        enriched_at: new Date().toISOString(),
+        ...this.buildRegionUpdate(album, result.artist, result.artistResolveFailed)
       })
 
       if (result.genres.length > 0) {
@@ -584,13 +774,29 @@ export class EnrichService {
       // 从候选中找到选中项，以获取 releaseDate
       const selectedCandidate = candidates.find((c) => c.mbid === mbid)
 
+      // 主艺人地区：lookup 已带 artist-credits，通常零额外请求
+      let artistRegion: MbArtistRegion | null = null
+      let artistResolveFailed = false
+      const primaryArtist = (
+        details as unknown as { 'artist-credit'?: { artist?: IArtist }[] }
+      )['artist-credit']?.[0]?.artist
+      if (primaryArtist?.id) {
+        try {
+          artistRegion = await this.resolveArtistRegion(primaryArtist)
+        } catch (error) {
+          artistResolveFailed = true
+          console.error(`艺人地区解析失败 [albumId=${album.id}, mbid=${mbid}]:`, error)
+        }
+      }
+
       // 写入数据库
       this.albumService.updateAlbum(album.id, {
         musicbrainz_id: mbid,
         mb_rating: rating?.value ?? null,
         mb_rating_count: rating?.['votes-count'] ?? 0,
         release_date: selectedCandidate?.releaseDate ?? undefined,
-        enriched_at: new Date().toISOString()
+        enriched_at: new Date().toISOString(),
+        ...this.buildRegionUpdate(album, artistRegion, artistResolveFailed)
       })
 
       // 更新 Genre 关联（仅当专辑当前无风格时写入，保护手动编辑）
@@ -639,8 +845,8 @@ export class EnrichService {
     onProgress?: (progress: EnrichProgress) => void,
     onFuzzyMatch?: OnFuzzyMatchCallback
   ): Promise<EnrichResult> {
-    if (this.isEnriching) {
-      throw new Error('数据补全正在进行中，请勿重复触发。')
+    if (this.busy) {
+      throw new Error('补全正在进行中，请勿重复触发。')
     }
 
     this.isEnriching = true
@@ -696,8 +902,8 @@ export class EnrichService {
     onProgress?: (progress: EnrichProgress) => void,
     onFuzzyMatch?: OnFuzzyMatchCallback
   ): Promise<EnrichResult> {
-    if (this.isEnriching) {
-      throw new Error('数据补全正在进行中，请勿重复触发。')
+    if (this.busy) {
+      throw new Error('补全正在进行中，请勿重复触发。')
     }
 
     this.isEnriching = true
@@ -756,8 +962,8 @@ export class EnrichService {
     onProgress?: (progress: EnrichProgress) => void,
     onFuzzyMatch?: OnFuzzyMatchCallback
   ): Promise<EnrichResult> {
-    if (this.isEnriching) {
-      throw new Error('数据补全正在进行中，请勿重复触发。')
+    if (this.busy) {
+      throw new Error('补全正在进行中，请勿重复触发。')
     }
 
     this.isEnriching = true
@@ -854,6 +1060,11 @@ export class EnrichService {
    * 是否正在补全
    */
   get enriching(): boolean {
+    return this.isEnriching
+  }
+
+  /** 是否有批量 MB 补全任务在运行 */
+  get busy(): boolean {
     return this.isEnriching
   }
 }

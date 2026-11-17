@@ -9,10 +9,16 @@
 - **WHEN** 同步操作完成且有新专辑写入本地数据库
 - **THEN** 系统 SHALL 自动对每个尚未补全的新专辑发起 MusicBrainz 匹配，无需用户手动操作
 
+#### Scenario: 自动补全遇到其他批量任务
+
+- **WHEN** 同步完成且有新增专辑，但其他批量补全正在运行
+- **THEN** 系统 SHALL 标记自动补全为延后，并在当前批量任务结束后自动补跑一次
+- **AND** SHALL NOT 静默丢弃新增专辑的补全
+
 #### Scenario: 匹配成功
 
 - **WHEN** MusicBrainz 搜索 Release Group（按专辑名 + 艺术家名及其别名）返回结果
-- **THEN** 系统 SHALL 取 score 最高的结果，获取其 ratings、genres 与 url-rels，写入本地数据库的对应字段（风格标签仅在专辑当前风格为空时写入，见「风格标签保护」；外部站点链接见「外部站点链接的顺带采集」）
+- **THEN** 系统 SHALL 取 score 最高的结果，获取其 ratings、genres、artist-credits（主艺人地区，见「主艺人地区自动补全」）与 url-rels，写入本地数据库的对应字段（风格标签仅在专辑当前风格为空时写入，见「风格标签保护」；外部站点链接见「外部站点链接的顺带采集」）
 
 #### Scenario: 精确匹配失败后模糊匹配产生候选
 
@@ -23,7 +29,7 @@
 #### Scenario: 用户确认模糊匹配候选
 
 - **WHEN** 用户在逐条确认弹窗中选择了某个候选
-- **THEN** 系统 SHALL 调用 MusicBrainz lookup 获取该候选的 ratings、genres 与 url-rels，写入数据库，并检查是否需要学习新别名
+- **THEN** 系统 SHALL 调用 MusicBrainz lookup 获取该候选的 ratings、genres、artist-credits（主艺人地区）与 url-rels，写入数据库，并检查是否需要学习新别名
 
 #### Scenario: 用户拒绝模糊匹配候选
 
@@ -34,6 +40,54 @@
 
 - **WHEN** MusicBrainz 精确匹配和模糊匹配均无结果，或 API 调用失败
 - **THEN** 该专辑的 mb_rating 和 genres 字段保持为空，不影响其他专辑的补全流程，不阻塞 UI
+
+### Requirement: 主艺人地区自动补全
+
+系统 SHALL 在数据补全匹配专辑时，顺带解析主艺人的 MusicBrainz 地区信息，并写入 artist 表与专辑的主艺人引用。用户手动设置的地区（`region_source = 'manual'`）SHALL 优先，自动补全 SHALL NOT 覆盖。
+
+#### Scenario: 精确匹配时写入地区
+
+- **WHEN** 数据补全精确匹配成功并 lookup release-group（include 含 `artist-credits`）
+- **THEN** 系统 SHALL 从 `artist-credit[0].artist` 读取 MBID、名称、country / area
+- **AND** 写入共享 artist 行前 SHALL 校验 MB credit 与网易云主艺人可确认为同一实体；无法确认或为群星/Various Artists 等合成实体时 SHALL NOT 写入 MBID/地区
+- **AND** 可确认时按专辑的网易云主艺人 ID（`artists[0].originalId`）upsert artist 行：已有地区保留，缺失地区填充
+- **AND** 目标 artist 行 `region_source = 'manual'` 时 SHALL NOT 更新 `region` / `country` / `area` / `region_source`
+- **AND** 系统 SHALL 写入专辑的 `primary_artist_id` 与 `region_checked_at`
+
+#### Scenario: country 缺失时补 artist lookup
+
+- **WHEN** release-group 的 artist-credit 未返回 `country`，且本地 artist 表没有该 MBID 的有效地区结果
+- **THEN** 系统 SHALL 发起一次 `lookup('artist', mbid)` 获取 `country` / `area`
+- **AND** 同一 MBID 的结果 SHALL 在服务生命周期内缓存，SHALL NOT 对同一艺人重复查询
+
+#### Scenario: 地区解析失败不影响专辑匹配
+
+- **WHEN** artist lookup 因网络/API 错误失败
+- **THEN** 系统 SHALL 仍写入专辑的 MB 匹配、评分、风格与外部链接
+- **AND** SHALL 将 `region_checked_at` 置为 NULL，标记本次地区解析未成功，后续重新补全/重新同步可再次尝试
+- **AND** SHALL NOT 删除已有 artist 行的地区（界面暂时沿用旧值）
+
+#### Scenario: 无 artist-credit
+
+- **WHEN** release-group lookup 成功但不含 `artist-credit`
+- **THEN** 系统 SHALL 写入专辑的 `primary_artist_id` 与 `region_checked_at`，保持 artist 行已有地区不变，避免反复查询
+
+#### Scenario: 无结构化网易云主艺人
+
+- **WHEN** 专辑没有 `artists[0].originalId`
+- **THEN** 系统 SHALL 只写 `region_checked_at`，SHALL NOT 创建网易云 artist 行
+
+#### Scenario: 模糊匹配确认时写入地区
+
+- **WHEN** 用户确认模糊匹配候选并完成 release-group lookup
+- **THEN** 系统 SHALL 按精确匹配同样的规则解析主艺人地区并写入
+
+#### Scenario: 地区来源限定
+
+- **WHEN** 系统自动判定专辑地区
+- **THEN** 自动地区的唯一来源 SHALL 为 MusicBrainz artist 的 country / area
+- **AND** SHALL NOT 使用网易云的 language / company / genre / nationality 字段，也不抓取外部站点
+- **AND** 用户手动设置的地区 SHALL 优先于自动结果，且自动流程 SHALL NOT 覆盖手动值
 
 ### Requirement: 风格标签保护
 

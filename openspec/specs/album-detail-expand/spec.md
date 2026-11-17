@@ -107,6 +107,7 @@
 - Discogs / AllMusic / Last.fm / Wikipedia 外部链接（各自取到时才显示）
 - MusicBrainz 外部链接（基于 musicbrainz_id，字段为空时不显示）
 - 网易云音乐外部链接（基于 netease_id）
+- 地区（主艺人 MusicBrainz 地区，中文展示名；无数据时显示"—"）
 - MB 评分（mb_rating，为空时显示"—"）
 - 评分人数（mb_rating_count）
 - 发行日期（release_date，为空时显示"—"）
@@ -126,6 +127,14 @@
 #### Scenario: 部分数据缺失
 - **WHEN** 用户选中一个未补全或部分数据为空的专辑
 - **THEN** 缺失字段使用"—"或"未补全"等占位文字，MusicBrainz 链接在 musicbrainz_id 为空时不显示，封面图为空时显示占位符，风格区域显示"—"但仍然提供编辑按钮
+
+#### Scenario: 地区展示
+
+- **WHEN** 选中专辑的主艺人已有地区（`region_label` 非空）
+- **THEN** 元数据区 SHALL 展示「地区」一项，值为中文地区名（如「中国香港」）
+- **AND** 该值的 `title` SHALL 优先使用 MB area 名称
+- **WHEN** 专辑没有地区
+- **THEN** 「地区」项 SHALL 显示"—"
 
 ### Requirement: 详情面板展示外部站点链接
 
