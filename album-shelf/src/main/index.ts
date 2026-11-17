@@ -17,6 +17,9 @@ const MIN_HEIGHT = 600
 /** 关注列表独立窗口（单实例，关闭后置空） */
 let followedWindow: BrowserWindow | null = null
 
+/** 艺人信息独立窗口（单实例，关闭后置空） */
+let artistBrowserWindow: BrowserWindow | null = null
+
 function createWindow(): void {
   const savedState = loadWindowState()
 
@@ -140,6 +143,53 @@ function createFollowedWindow(): void {
     followedWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] + '/followed.html')
   } else {
     followedWindow.loadFile(join(__dirname, '../renderer/followed.html'))
+  }
+}
+
+/**
+ * 打开独立的「艺人信息」窗口（单实例：已打开则聚焦）。
+ * 与关注列表共享默认 session 的 CSP / cover:// 协议，无需重复注册。
+ */
+function createArtistBrowserWindow(): void {
+  if (artistBrowserWindow && !artistBrowserWindow.isDestroyed()) {
+    if (artistBrowserWindow.isMinimized()) artistBrowserWindow.restore()
+    artistBrowserWindow.show()
+    artistBrowserWindow.focus()
+    return
+  }
+
+  artistBrowserWindow = new BrowserWindow({
+    // 左栏艺人列表 + 右栏艺人详情/专辑列表，需要足够的横向空间
+    width: 900,
+    height: 660,
+    minWidth: 720,
+    minHeight: 520,
+    show: false,
+    title: '艺人信息',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false
+    }
+  })
+
+  artistBrowserWindow.setMenuBarVisibility(false)
+
+  artistBrowserWindow.on('ready-to-show', () => {
+    artistBrowserWindow?.show()
+  })
+  artistBrowserWindow.on('closed', () => {
+    artistBrowserWindow = null
+  })
+
+  artistBrowserWindow.webContents.setWindowOpenHandler((details) => {
+    shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+
+  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+    artistBrowserWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] + '/artists.html')
+  } else {
+    artistBrowserWindow.loadFile(join(__dirname, '../renderer/artists.html'))
   }
 }
 
@@ -281,6 +331,12 @@ function buildAppMenu(loginStatus?: NcmLoginStatus): void {
           }
         },
         {
+          label: '艺人信息',
+          click: (): void => {
+            createArtistBrowserWindow()
+          }
+        },
+        {
           label: '风格统计',
           click: (): void => {
             const mainWindow = getMainWindow()
@@ -355,7 +411,8 @@ app.whenReady().then(async () => {
   await initAuthOnStartup()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    // 主窗口可能已被关闭而只剩下艺人/关注窗口（macOS）；此时也应恢复主窗口
+    if (!getMainWindow()) {
       createWindow()
     }
   })

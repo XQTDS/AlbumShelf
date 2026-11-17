@@ -4,7 +4,9 @@ import { getMainWindow } from './window-ref'
 import { exportDatabase, importDatabase, type ExportData } from './database'
 import { AlbumService, AlbumQueryOptions, type Album } from './album-service'
 import { ArtistService } from './artist-service'
+import { ArtistBrowserService } from './artist-browser-service'
 import { FollowedArtistService } from './followed-artist-service'
+import { regionLabel } from './region'
 import {
   ArtistUpdateService,
   type ArtistUpdateCategory
@@ -35,6 +37,7 @@ import { GenreLibraryService } from './genre-library-service'
 
 let albumService: AlbumService
 let artistService: ArtistService
+let artistBrowserService: ArtistBrowserService
 let trackService: TrackService
 let ncmCliService: NcmCliService
 let trackSyncService: TrackSyncService
@@ -74,6 +77,7 @@ let fuzzyDialogDraining = false
 function initServices(): void {
   albumService = new AlbumService()
   artistService = new ArtistService()
+  artistBrowserService = new ArtistBrowserService()
   trackService = new TrackService()
   ncmCliService = new NcmCliService()
   trackSyncService = new TrackSyncService(ncmCliService, trackService, albumService)
@@ -1131,6 +1135,139 @@ export function registerIpcHandlers(): void {
 
   /** 关注列表窗口：关闭自身（Esc 快捷键） */
   ipcMain.on('followed:closeWindow', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close()
+  })
+
+  // ==================== 艺人信息窗口 ====================
+
+  /** 手动地区修改后广播给所有窗口（主窗口同步专辑地区 chip / 筛选项） */
+  function broadcastArtistRegionChanged(payload: {
+    neteaseArtistId: number
+    region: string | null
+    regionLabel: string | null
+  }): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('artist-region:changed', payload)
+      }
+    }
+  }
+
+  ipcMain.handle('artistBrowser:list', async () => {
+    try {
+      return { success: true, data: artistBrowserService.listArtists() }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  ipcMain.handle('artistBrowser:albums', async (_event, key: string) => {
+    try {
+      if (typeof key !== 'string' || !key.trim()) {
+        return { success: false, error: '无效的艺人标识' }
+      }
+      return { success: true, data: artistBrowserService.listAlbums(key) }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  ipcMain.handle('artistBrowser:regionOptions', async () => {
+    try {
+      return { success: true, data: artistBrowserService.getRegionOptions() }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  ipcMain.handle(
+    'artistBrowser:setRegion',
+    async (
+      _event,
+      payload: {
+        key?: string
+        name?: string
+        neteaseArtistId?: number
+        neteaseEncryptedId?: string | null
+        region?: string | null
+      }
+    ) => {
+      try {
+        if (!payload || typeof payload !== 'object') {
+          return { success: false, error: '无效的请求参数' }
+        }
+        const key = payload.key
+        const neteaseArtistId = payload.neteaseArtistId
+        const name = payload.name
+        const region = payload.region
+
+        if (typeof key !== 'string' || !key.startsWith('netease:')) {
+          return { success: false, error: '该艺人未关联网易云 ID，暂不支持修改地区' }
+        }
+        if (!Number.isInteger(neteaseArtistId) || (neteaseArtistId as number) <= 0) {
+          return { success: false, error: '无效的网易云艺人 ID' }
+        }
+        if (key !== `netease:${neteaseArtistId}`) {
+          return { success: false, error: '艺人标识与 ID 不一致' }
+        }
+        if (typeof name !== 'string' || !name.trim()) {
+          return { success: false, error: '艺人名不能为空' }
+        }
+        if (region === undefined) {
+          return { success: false, error: '缺少地区值' }
+        }
+        if (region !== null && typeof region !== 'string') {
+          return { success: false, error: '无效的地区值' }
+        }
+
+        const row = artistService.setManualRegion({
+          neteaseArtistId: neteaseArtistId as number,
+          name,
+          neteaseEncryptedId:
+            typeof payload.neteaseEncryptedId === 'string'
+              ? payload.neteaseEncryptedId
+              : null,
+          region
+        })
+
+        broadcastArtistRegionChanged({
+          neteaseArtistId: neteaseArtistId as number,
+          region: row.region,
+          regionLabel: regionLabel(row.region)
+        })
+
+        return { success: true, data: artistBrowserService.getArtist(key) }
+      } catch (error) {
+        return { success: false, error: (error as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle('artistBrowser:openAlbum', async (_event, albumId: number) => {
+    try {
+      if (!Number.isInteger(albumId) || albumId <= 0) {
+        return { success: false, error: '无效的专辑 ID' }
+      }
+      if (!albumService.getAlbumById(albumId)) {
+        return { success: false, error: '该专辑已不在库中（可能已被同步删除）' }
+      }
+      const mainWindow = getMainWindow()
+      if (!mainWindow) {
+        return { success: false, error: '主窗口不可用，请重新打开主窗口' }
+      }
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+      mainWindow.moveTop()
+      mainWindow.webContents.send('artistBrowser:openAlbum', albumId)
+      return { success: true, data: { albumId } }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  /** 艺人信息窗口：关闭自身（Esc 快捷键） */
+  ipcMain.on('artistBrowser:closeWindow', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close()
   })
 

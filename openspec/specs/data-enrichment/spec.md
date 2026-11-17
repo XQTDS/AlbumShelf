@@ -43,7 +43,7 @@
 
 ### Requirement: 主艺人地区自动补全
 
-系统 SHALL 在数据补全匹配专辑时，顺带解析主艺人的 MusicBrainz 地区信息，并写入 artist 表与专辑的主艺人引用。
+系统 SHALL 在数据补全匹配专辑时，顺带解析主艺人的 MusicBrainz 地区信息，并写入 artist 表与专辑的主艺人引用。用户手动设置的地区（`region_source = 'manual'`）SHALL 优先，自动补全 SHALL NOT 覆盖。
 
 #### Scenario: 精确匹配时写入地区
 
@@ -51,6 +51,7 @@
 - **THEN** 系统 SHALL 从 `artist-credit[0].artist` 读取 MBID、名称、country / area
 - **AND** 写入共享 artist 行前 SHALL 校验 MB credit 与网易云主艺人可确认为同一实体；无法确认或为群星/Various Artists 等合成实体时 SHALL NOT 写入 MBID/地区
 - **AND** 可确认时按专辑的网易云主艺人 ID（`artists[0].originalId`）upsert artist 行：已有地区保留，缺失地区填充
+- **AND** 目标 artist 行 `region_source = 'manual'` 时 SHALL NOT 更新 `region` / `country` / `area` / `region_source`
 - **AND** 系统 SHALL 写入专辑的 `primary_artist_id` 与 `region_checked_at`
 
 #### Scenario: country 缺失时补 artist lookup
@@ -83,9 +84,10 @@
 
 #### Scenario: 地区来源限定
 
-- **WHEN** 系统判定专辑地区
-- **THEN** 地区唯一来源 SHALL 为 MusicBrainz artist 的 country / area
+- **WHEN** 系统自动判定专辑地区
+- **THEN** 自动地区的唯一来源 SHALL 为 MusicBrainz artist 的 country / area
 - **AND** SHALL NOT 使用网易云的 language / company / genre / nationality 字段，也不抓取外部站点
+- **AND** 用户手动设置的地区 SHALL 优先于自动结果，且自动流程 SHALL NOT 覆盖手动值
 
 ### Requirement: 风格标签保护
 

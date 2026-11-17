@@ -2,12 +2,12 @@
 
 ### Requirement: Artist 表结构
 
-系统 SHALL 维护 `artist` 表，以**网易云艺人 ID**（`netease_artist_id`）为业务唯一键，并存储 MusicBrainz 来源地区。地区信息 SHALL 以艺人为粒度存储，专辑 SHALL NOT 冗余存储地区值。
+系统 SHALL 维护 `artist` 表，以**网易云艺人 ID**（`netease_artist_id`）为业务唯一键，并存储 MusicBrainz 来源地区与用户手动地区。地区信息 SHALL 以艺人为粒度存储，专辑 SHALL NOT 冗余存储地区值。
 
 #### Scenario: Artist 表字段
 
 - **WHEN** `artist` 表被创建
-- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、netease_artist_id（网易云明文艺人 ID，业务唯一键，可空以兼容历史 MBID 行）、netease_encrypted_id（网易云加密艺人 ID，可空）、musicbrainz_artist_id（MusicBrainz Artist MBID，地区来源属性，可空且唯一）、name（网易云展示名）、sort_name（MB 排序名，可空）、country（MB 原始 country，ISO 3166-1 alpha-2，可空）、area（MB area 名称，可空）、region（归一化地区键，可空）、region_fetched_at（地区首次解析时间，已有值保留，可空）、created_at（创建时间）、updated_at（更新时间，可空）
+- **THEN** 表 SHALL 包含以下字段：id（主键，自增）、netease_artist_id（网易云明文艺人 ID，业务唯一键，可空以兼容历史 MBID 行）、netease_encrypted_id（网易云加密艺人 ID，可空）、musicbrainz_artist_id（MusicBrainz Artist MBID，地区来源属性，可空且唯一）、name（网易云展示名）、sort_name（MB 排序名，可空）、country（MB 原始 country 或手动地区 ISO 代码，可空）、area（MB area 名称，可空）、region（归一化地区键，可空）、region_source（地区来源：NULL = 自动/MB；`'manual'` = 用户手动设置或清除）、region_fetched_at（地区首次解析时间，已有值保留，可空）、created_at（创建时间）、updated_at（更新时间，可空）
 - **AND** 表 SHALL 建立 `idx_artist_region` 索引与 `idx_artist_netease_id` 唯一索引
 
 #### Scenario: 以网易云艺人 ID 去重
@@ -19,7 +19,7 @@
 #### Scenario: MBID 退化为地区来源属性
 
 - **WHEN** 同一 MBID 对应多个网易云艺人 ID
-- **THEN** 系统 SHALL 选择一个网易云行持有 `musicbrainz_artist_id`，其余行复制 `country` / `area` / `region` / `region_fetched_at`，并保持 `musicbrainz_artist_id = NULL`
+- **THEN** 系统 SHALL 选择一个网易云行持有 `musicbrainz_artist_id`，其余行复制 `country` / `area` / `region` / `region_source`（manual 时保留手动标记）/ `region_fetched_at`，并保持 `musicbrainz_artist_id = NULL`
 - **AND** 地区展示仍以网易云行自身的 `region` 为准，不要求 MBID 一一对应
 
 #### Scenario: 地区字段语义
@@ -28,6 +28,36 @@
 - **THEN** `country` SHALL 原样保存 MB 的 ISO 代码，`area` SHALL 保存 MB area 名称，`region` SHALL 保存归一化后的地区键
 - **AND** 一个网易云艺人行已有非空 `region` 时 SHALL 保留该值（first-wins），避免同一艺人在多次补全间抖动
 - **AND** `region_fetched_at` SHALL 记录**首次**写入地区结果的时间（已有值保留），用作「是否已尝试解析」的标记
+
+### Requirement: 手动地区覆盖
+
+系统 SHALL 允许用户手动设置或清除艺人地区。手动地区 SHALL 写入 `artist.region` 并标记 `region_source = 'manual'`；自动补全、启动迁移与数据导入 SHALL NOT 覆盖手动值。
+
+#### Scenario: 手动设置地区
+
+- **WHEN** 用户为某网易云艺人设置地区 `XX`
+- **THEN** 系统 SHALL 写入 `region = 'XX'`、`country = 'XX'`、`area = NULL`、`region_source = 'manual'`
+- **AND** 艺人尚无 `artist` 行时 SHALL 按 `netease_artist_id` 新建一行
+- **AND** 专辑地区展示 SHALL 通过既有 `JOIN artist` 自动反映新值
+
+#### Scenario: 手动清除地区
+
+- **WHEN** 用户清除某艺人的地区
+- **THEN** 系统 SHALL 将 `region` / `country` / `area` 置为 NULL，并保持 `region_source = 'manual'`
+- **AND** 后续自动补全 SHALL NOT 回填该地区
+
+#### Scenario: 自动补全不覆盖手动值
+
+- **WHEN** 目标 artist 行 `region_source = 'manual'`
+- **THEN** 自动地区补全（`upsertArtist`）SHALL NOT 更新 `region` / `country` / `area` / `region_source`
+- **AND** 启动迁移合并网易云行与 MB 行时 SHALL 保留手动值（包括手动清除的 NULL）
+- **AND** 用户执行「重新补全所有专辑」后手动值 SHALL 保持不变
+
+#### Scenario: 无网易云 ID 的艺人
+
+- **WHEN** 艺人身份没有网易云明文 ID
+- **THEN** 系统 SHALL NOT 提供手动地区写入；调用方 SHALL 返回明确错误
+- **AND** 该限制 SHALL 仅影响旧备份文本拆分产生的极少数身份
 
 ### Requirement: 专辑与主艺人关联
 
@@ -186,14 +216,17 @@
 #### Scenario: 导出版本升级
 
 - **WHEN** 用户导出数据
-- **THEN** 导出 JSON SHALL 为 version 4 格式，包含 `artists` 数组（含 `netease_artist_id` / `netease_encrypted_id` / `musicbrainz_artist_id` / 地区字段）
+- **THEN** 导出 JSON SHALL 为 version 5 格式，包含 `artists` 数组（含 `netease_artist_id` / `netease_encrypted_id` / `musicbrainz_artist_id` / `region` / `region_source` 等地区字段）
 - **AND** album 导出 SHALL 包含 `primary_artist_id`、`primary_artist_mbid`（历史）与 `region_checked_at`（`SELECT *` 全列导出）
 
-#### Scenario: 导入 v4 artist
+#### Scenario: 导入 v5/v4 artist
 
-- **WHEN** 导入 version 4 数据且 artist 行有 `netease_artist_id`
+- **WHEN** 导入 version 4 或 5 数据且 artist 行有 `netease_artist_id`
 - **THEN** 系统 SHALL 按网易云艺人 ID upsert：`musicbrainz_artist_id` 仅在目标行为空时填充，已有 MBID 不被覆盖
-- **AND** 地区/名称等字段按非空值填充，已有值保留
+- **AND** 目标行 `region_source = 'manual'` 时 SHALL 保留目标地区/国家/area/source，不被入站自动值覆盖
+- **AND** 目标为非手动、入站为 `region_source = 'manual'` 时 SHALL 采用入站手动地区
+- **AND** 双方均非手动时，地区/名称等字段按非空值填充，已有值保留
+- **AND** v4 文件缺少 `region_source` 时 SHALL 按 NULL（自动来源）处理
 - **AND** 若入站 MBID 已被另一个网易云行占用，SHALL 保留网易云键与地区、放弃本行 MBID，不中断导入
 - **AND** 只有 MBID UNIQUE 冲突才降级为「不写 MBID」，其他错误（如外键）SHALL 抛出
 
@@ -202,14 +235,15 @@
 - **WHEN** 导入 version 1 / 2 / 3 数据
 - **THEN** artist 行无网易云 ID 时 SHALL 按 `musicbrainz_artist_id` upsert
 - **AND** album 的 `primary_artist_id` SHALL 用 `COALESCE` 保留库中已有值
-- **AND** album 的历史列 `primary_artist_mbid` SHALL 只写目标库 artist 表中确实存在的 MBID：v4 按 `primary_artist_id` 查目标 artist 的当前 MBID；v1/v2/v3 退回文件中的 `primary_artist_mbid`，但仅当该 MBID 已在目标 artist 表存在（v3 artist 行先按 MBID 导入）时使用；否则写 NULL
+- **AND** album 的历史列 `primary_artist_mbid` SHALL 只写目标库 artist 表中确实存在的 MBID：v4/v5 按 `primary_artist_id` 查目标 artist 的当前 MBID；v1/v2/v3 退回文件中的 `primary_artist_mbid`，但仅当该 MBID 已在目标 artist 表存在（v3 artist 行先按 MBID 导入）时使用；否则写 NULL
 - **AND** 这样 v3 备份导入空库后，启动迁移仍能从 `album.primary_artist_mbid` 收集候选并把网易云 ID 挂回带地区的 MB 行
 - **AND** 导入完成后 SHALL 执行一次网易云艺人身份迁移，用导入专辑的 `artists` 把 MBID 行关联到网易云 ID
 
 #### Scenario: 旧版导出缺少新列
 
-- **WHEN** 导入的 album 元素没有 `primary_artist_id` / `region_checked_at`
-- **THEN** 已存在专辑的对应列 SHALL 保留库中已有值（`COALESCE`）
+- **WHEN** 导入的 album 元素没有 `primary_artist_id` / `region_checked_at`，或 artist 元素没有 `region_source`
+- **THEN** 已存在专辑/艺人的对应列 SHALL 保留库中已有值（`COALESCE`）
+- **AND** `region_source` 缺失时 SHALL 按 NULL（自动来源）处理
 - **AND** 新专辑按 NULL 落库，由迁移按 `artists` 回填 `primary_artist_id`
 
 #### Scenario: artist_update 不导出
@@ -227,6 +261,7 @@
 - **THEN** 系统 SHALL 清空专辑的 `enriched_at` / `musicbrainz_id` / `mb_rating` / `mb_rating_count`
 - **AND** SHALL NOT 清空 `artist` 表、专辑的 `primary_artist_id` 与 `region_checked_at`
 - **AND** 后续补全成功时 SHALL 按网易云艺人 ID 更新地区（已有地区 first-wins）
+- **AND** `region_source = 'manual'` 的艺人 SHALL 保持手动地区不变（包括手动清除的 NULL）
 - **AND** 后续补全成功但地区解析失败时 SHALL 清空 `region_checked_at`，以便后续重新补全重试
 
 #### Scenario: 单张专辑重新同步
@@ -236,6 +271,7 @@
 
 #### Scenario: 地区补全实现不依赖网易云字段
 
-- **WHEN** 系统判定专辑地区
+- **WHEN** 系统自动判定专辑地区
 - **THEN** SHALL NOT 使用网易云 `language` / `company` / `genre` / `nationality` 字段
-- **AND** 地区唯一来源 SHALL 为 MusicBrainz artist 的 country / area
+- **AND** 自动地区的唯一来源 SHALL 为 MusicBrainz artist 的 country / area
+- **AND** 用户手动设置的地区 SHALL 优先于自动来源，按「手动地区覆盖」要求处理

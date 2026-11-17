@@ -208,6 +208,74 @@ export function regionLabel(region: string | null | undefined): string | null {
   }
 }
 
+/**
+ * 标准 ISO 3166-1 alpha-2 地区码（手动地区选择器用）。
+ *
+ * 只作为候选项来源；库中已有的非标准两位码由 listRegionOptions 合并进来，
+ * 避免导入数据中的历史值在下拉框中消失。
+ */
+const ISO_REGION_CODES = `
+  AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ
+  BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ
+  CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ
+  DE DJ DK DM DO DZ
+  EC EE EG EH ER ES ET
+  FI FJ FK FM FO FR
+  GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY
+  HK HM HN HR HT HU
+  ID IE IL IM IN IO IQ IR IS IT
+  JE JM JO JP
+  KE KG KH KI KM KN KP KR KW KY KZ
+  LA LB LC LI LK LR LS LT LU LV LY
+  MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ
+  NA NC NE NF NG NI NL NO NP NR NU NZ
+  OM
+  PA PE PF PG PH PK PL PM PN PR PS PT PW PY
+  QA
+  RE RO RS RU RW
+  SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ
+  TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ
+  UA UG UM US UY UZ
+  VA VC VE VG VI VN VU
+  WF WS
+  YE YT
+  ZA ZM ZW
+`
+  .split(/\s+/)
+  .filter(Boolean)
+
+/** 手动地区选择项 */
+export interface RegionOptionItem {
+  key: string
+  label: string
+}
+
+/**
+ * 手动地区键归一化：仅接受两位字母，统一大写。
+ * 空值返回 null；调用方用 `region === null` 表示「清除地区」，两者语义不同。
+ */
+export function normalizeRegionKey(region: string | null | undefined): string | null {
+  if (typeof region !== 'string') return null
+  const key = region.trim().toUpperCase()
+  return /^[A-Z]{2}$/.test(key) ? key : null
+}
+
+/**
+ * 手动地区候选：标准 ISO 列表 + 库中已有地区，按中文标签排序。
+ * 标签复用 regionLabel（含中国大陆/中国台湾/中国香港/中国澳门口径）。
+ */
+export function listRegionOptions(existing: string[] = []): RegionOptionItem[] {
+  const codes = new Set(ISO_REGION_CODES)
+  for (const raw of existing) {
+    const key = normalizeRegionKey(raw)
+    if (key) codes.add(key)
+  }
+
+  return [...codes]
+    .map((key) => ({ key, label: regionLabel(key) ?? key }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN') || a.key.localeCompare(b.key))
+}
+
 /** 合成/合辑类艺人名，不应承载具体地区 */
 const SYNTHETIC_ARTIST_NAMES = new Set([
   '群星',
@@ -218,6 +286,21 @@ const SYNTHETIC_ARTIST_NAMES = new Set([
   'various',
   'variousartist'
 ])
+
+/** 网易云「群星 / Various Artists」实体 ID（合辑判定与艺人目录分组用） */
+const SYNTHETIC_ARTIST_IDS = new Set([122455, 104700])
+
+/** 是否合成/合辑类艺人：按网易云 ID 或归一化名字判定 */
+export function isSyntheticArtist(
+  neteaseArtistId: number | null | undefined,
+  name: string | null | undefined
+): boolean {
+  if (neteaseArtistId != null && SYNTHETIC_ARTIST_IDS.has(neteaseArtistId)) {
+    return true
+  }
+  const normalized = normalizeArtistName(name ?? '')
+  return normalized.length > 0 && SYNTHETIC_ARTIST_NAMES.has(normalized)
+}
 
 function normalizeArtistName(name: string): string {
   return name

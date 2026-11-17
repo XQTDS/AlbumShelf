@@ -74,6 +74,52 @@ interface FollowedArtist {
   album_count: number
 }
 
+/** 艺人信息窗口：全库艺人摘要 */
+interface ArtistBrowserSummary {
+  key: string
+  netease_artist_id: number | null
+  netease_encrypted_id: string | null
+  name: string
+  alias_names: string[]
+  region: string | null
+  region_label: string | null
+  region_area: string | null
+  /** NULL = 自动/MB 来源；'manual' = 用户手动设置或清除 */
+  region_source: 'manual' | null
+  album_count: number
+  primary_album_count: number
+  rated_album_count: number
+  average_rating: number | null
+  is_synthetic: boolean
+}
+
+/** 艺人信息窗口：某艺人的专辑条目 */
+interface ArtistBrowserAlbum {
+  id: number
+  title: string
+  cover_url: string | null
+  user_rating: number | null
+  release_date: string | null
+  is_primary: boolean
+  artist_text: string
+}
+
+/** 手动地区选择项 */
+interface ArtistBrowserRegionOption {
+  key: string
+  label: string
+}
+
+/** 手动设置/清除艺人地区请求 */
+interface ArtistBrowserSetRegionRequest {
+  key: string
+  name: string
+  neteaseArtistId: number
+  neteaseEncryptedId?: string | null
+  /** null = 清除地区（仍标记手动，不会被自动补全回填） */
+  region: string | null
+}
+
 /**
  * 动态条目分类
  *
@@ -461,6 +507,26 @@ interface AlbumShelfAPI {
   onArtistFilterRequest: (callback: (name: string) => void) => () => void
   /** 关注列表窗口：关闭自身 */
   followedWindowClose: () => void
+
+  // 艺人信息窗口
+  artistBrowserList: () => Promise<IpcResult<ArtistBrowserSummary[]>>
+  artistBrowserAlbums: (key: string) => Promise<IpcResult<ArtistBrowserAlbum[]>>
+  artistBrowserRegionOptions: () => Promise<IpcResult<ArtistBrowserRegionOption[]>>
+  artistBrowserSetRegion: (
+    payload: ArtistBrowserSetRegionRequest
+  ) => Promise<IpcResult<ArtistBrowserSummary | null>>
+  artistBrowserOpenAlbum: (albumId: number) => Promise<IpcResult<{ albumId: number }>>
+  artistBrowserCloseWindow: () => void
+  /** 主窗口：接收艺人信息窗口的专辑跳转请求 */
+  onArtistBrowserOpenAlbum: (callback: (albumId: number) => void) => () => void
+  /** 主窗口：手动修改艺人地区后同步刷新 */
+  onArtistRegionChanged: (
+    callback: (payload: {
+      neteaseArtistId: number
+      region: string | null
+      regionLabel: string | null
+    }) => void
+  ) => () => void
   /** 检查关注艺术家的新专辑（严格手动触发；单飞防重入）
    *  @param lookbackDays 回溯天数（30/90/180/365，默认 90）。实际扫描窗口取
    *  `min(now - lookbackDays, 该艺人水位线)`，即至少扫这个范围，水位线更早则扫到水位线 */

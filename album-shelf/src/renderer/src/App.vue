@@ -1819,21 +1819,20 @@ function handlePlayerCoverClick(): void {
     selectedAlbumId.value = albumId
     return
   }
-  // 清除过滤条件（镜像 handleRandomPick 的清条件逻辑）
-  searchQuery.value = ''
-  selectedArtist.value = ''
-  artistInput.value = ''
-  selectedGenres.value = []
-  genreInput.value = ''
-  selectedRegion.value = ''
+  // 清除过滤条件（与随机选择共用；含 followedOnly / artistPartial）
+  clearAllListFiltersForJump()
   sortBy.value = undefined
   sortOrder.value = 'desc'
-  // 重置分页并定位：fetchAlbumsAndScrollTo 持续分页直到找到目标专辑
+  // 重置分页并定位：fetchAlbumsAndScrollTo 一次拉取完整结果集并滚动到目标
   albums.value = []
   currentPage.value = 1
   hasMore.value = true
-  void fetchAlbumsAndScrollTo(albumId).then(() => {
-    selectedAlbumId.value = albumId
+  void fetchAlbumsAndScrollTo(albumId).then((found) => {
+    if (found) {
+      selectedAlbumId.value = albumId
+    } else {
+      showMessage('该专辑已不在库中（可能已被同步删除）', 'error')
+    }
   })
 }
 
@@ -1995,6 +1994,33 @@ async function fetchFilters() {
   }
 }
 
+/**
+ * 艺人信息窗口手动修改地区后的同步：
+ * 更新当前已加载专辑的地区展示，刷新地区筛选项；地区筛选生效时按新值重载列表。
+ */
+async function applyArtistRegionChange(payload: {
+  neteaseArtistId: number
+  region: string | null
+  regionLabel: string | null
+}): Promise<void> {
+  albums.value = albums.value.map((album) =>
+    album.primary_artist_id === payload.neteaseArtistId
+      ? {
+          ...album,
+          region: payload.region,
+          region_label: payload.regionLabel,
+          region_area: null
+        }
+      : album
+  )
+
+  await fetchFilters()
+  // fetchFilters 可能已因候选消失清空地区并重载；仅在筛选仍有效时再按新地区重载
+  if (selectedRegion.value) {
+    resetAndFetch(selectedAlbumId.value)
+  }
+}
+
 // 拉取全量风格库（编辑框候选）：同步风格库后需重新拉取才能看到新增标签
 async function fetchGenreLibrary() {
   try {
@@ -2033,8 +2059,10 @@ function resetAndFetch(scrollToAlbumId?: number | null) {
 /**
  * 一次拉取完整结果集（fetchAll 模式）并滚动定位到目标专辑。
  * 替代逐页顺序加载循环：底部专辑定位从几十轮 IPC 降为一次。
+ *
+ * @returns 目标专辑是否出现在结果集中（被同步删除时可能为 false）
  */
-async function fetchAlbumsAndScrollTo(targetAlbumId: number) {
+async function fetchAlbumsAndScrollTo(targetAlbumId: number): Promise<boolean> {
   loadingAll.value = true
   loadingMore.value = true
   try {
@@ -2052,9 +2080,51 @@ async function fetchAlbumsAndScrollTo(targetAlbumId: number) {
     loadingAll.value = false
   }
 
-  // 滚动到目标专辑
+  const found = albums.value.some((album) => album.id === targetAlbumId)
+  if (found) {
+    // 滚动到目标专辑
+    await nextTick()
+    scrollToAlbumRow(targetAlbumId)
+  }
+  return found
+}
+
+/**
+ * 艺人信息窗口点击专辑：在主界面直接选中该专辑并打开详情。
+ *
+ * - 目标已在当前列表：只改变详情面板选中态，保留搜索/筛选/排序；
+ * - 目标不在列表：清空所有影响结果集包含性的筛选，fetchAll 后定位；
+ * - 目标已被同步删除：提示，不设置选中态。
+ */
+let artistBrowserJumpSeq = 0
+
+async function openAlbumFromArtistBrowser(albumId: number): Promise<void> {
+  if (!Number.isInteger(albumId) || albumId <= 0) return
+  const seq = ++artistBrowserJumpSeq
+
+  if (albums.value.some((album) => album.id === albumId)) {
+    selectedAlbumId.value = albumId
+    await nextTick()
+    scrollToAlbumRow(albumId)
+    return
+  }
+
+  clearAllListFiltersForJump()
+  selectedAlbumId.value = null
+  albums.value = []
+  currentPage.value = 1
+  hasMore.value = true
+
+  const found = await fetchAlbumsAndScrollTo(albumId)
+  if (seq !== artistBrowserJumpSeq) return
+  if (!found) {
+    showMessage('未能定位该专辑（可能已被同步删除或列表加载失败）', 'error')
+    return
+  }
+
+  selectedAlbumId.value = albumId
   await nextTick()
-  scrollToAlbumRow(targetAlbumId)
+  scrollToAlbumRow(albumId)
 }
 
 /**
@@ -2386,6 +2456,29 @@ const followedOnly = ref(false)
 /** 关注状态广播 / 关注列表窗口筛选请求 的监听清理函数 */
 let removeFollowedChangedListener: (() => void) | null = null
 let removeArtistFilterRequestListener: (() => void) | null = null
+/** 艺人信息窗口跳转 / 地区变更的监听清理函数 */
+let removeArtistBrowserOpenAlbumListener: (() => void) | null = null
+let removeArtistRegionChangedListener: (() => void) | null = null
+
+/**
+ * 跳转定位前清空所有影响结果集包含性的筛选条件。
+ * 保留排序、视图模式、角标开关与播放状态；搜索防抖一并取消，避免清空后又被旧定时器重置。
+ */
+function clearAllListFiltersForJump(): void {
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+    searchTimer = null
+  }
+  searchQuery.value = ''
+  selectedArtist.value = ''
+  artistInput.value = ''
+  artistPartial.value = ''
+  showArtistSuggestions.value = false
+  selectedGenres.value = []
+  genreInput.value = ''
+  selectedRegion.value = ''
+  followedOnly.value = false
+}
 
 /** 艺术家操作小菜单状态 */
 const artistPopover = reactive({
@@ -2649,17 +2742,11 @@ async function handleRandomPick() {
     const randomAlbum = result.data
 
     // 专辑已在当前列表时直接选中并滚动定位（保留现有搜索/筛选条件）；
-    // 否则清除过滤条件、一次全量加载并滚动定位后选中（复用播放条封面点击的定位机制，不做搜索定位）
+    // 否则清除过滤条件、一次全量加载并滚动定位后选中（复用播放条封面点击的定位机制）
     if (albums.value.some((a) => a.id === randomAlbum.id)) {
       scrollToAlbumRow(randomAlbum.id)
     } else {
-      searchQuery.value = ''
-      selectedArtist.value = ''
-      artistInput.value = ''
-      artistPartial.value = ''
-      selectedGenres.value = []
-      genreInput.value = ''
-      selectedRegion.value = ''
+      clearAllListFiltersForJump()
       sortBy.value = undefined
       sortOrder.value = 'desc'
 
@@ -2667,7 +2754,11 @@ async function handleRandomPick() {
       albums.value = []
       currentPage.value = 1
       hasMore.value = true
-      await fetchAlbumsAndScrollTo(randomAlbum.id)
+      const found = await fetchAlbumsAndScrollTo(randomAlbum.id)
+      if (!found) {
+        showMessage('该专辑已不在库中（可能已被同步删除）', 'error')
+        return
+      }
     }
 
     // 展开该专辑
@@ -3081,6 +3172,24 @@ onMounted(async () => {
     applyArtistPartialFilter(name)
   })
 
+  // 艺人信息窗口：点击专辑 → 主界面直接选中并定位
+  removeArtistBrowserOpenAlbumListener = window.api.onArtistBrowserOpenAlbum(
+    (albumId: number) => {
+      void openAlbumFromArtistBrowser(albumId)
+    }
+  )
+
+  // 艺人信息窗口：手动修改地区 → 同步当前列表与地区筛选项
+  removeArtistRegionChangedListener = window.api.onArtistRegionChanged(
+    (payload: {
+      neteaseArtistId: number
+      region: string | null
+      regionLabel: string | null
+    }) => {
+      void applyArtistRegionChange(payload)
+    }
+  )
+
   // 监听登录要求事件
   // 首次启动时显示引导弹窗，之后直接显示登录弹窗
   let isFirstLoginPrompt = true
@@ -3187,6 +3296,12 @@ onUnmounted(() => {
   }
   if (removeArtistFilterRequestListener) {
     removeArtistFilterRequestListener()
+  }
+  if (removeArtistBrowserOpenAlbumListener) {
+    removeArtistBrowserOpenAlbumListener()
+  }
+  if (removeArtistRegionChangedListener) {
+    removeArtistRegionChangedListener()
   }
   if (removeMenuGenreStatsListener) {
     removeMenuGenreStatsListener()

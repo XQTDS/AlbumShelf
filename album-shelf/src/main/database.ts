@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS artist (
   country TEXT,
   area TEXT,
   region TEXT,
+  region_source TEXT,
   region_fetched_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT
@@ -140,6 +141,7 @@ interface DbArtistRow {
   country: string | null
   area: string | null
   region: string | null
+  region_source: string | null
   region_fetched_at: string | null
   created_at: string
   updated_at: string | null
@@ -161,6 +163,8 @@ function rebuildArtistTable(db: Database.Database): void {
   const mbidColumn = columns.find((c) => c.name === 'musicbrainz_artist_id')
   if (!mbidColumn || mbidColumn.notnull === 0) return
 
+  const hasRegionSource = columns.some((c) => c.name === 'region_source')
+
   db.pragma('foreign_keys = OFF')
   try {
     const rebuild = db.transaction(() => {
@@ -175,6 +179,7 @@ function rebuildArtistTable(db: Database.Database): void {
           country TEXT,
           area TEXT,
           region TEXT,
+          region_source TEXT,
           region_fetched_at TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT
@@ -183,10 +188,11 @@ function rebuildArtistTable(db: Database.Database): void {
       db.exec(`
         INSERT INTO artist_new (
           id, musicbrainz_artist_id, name, sort_name, country, area, region,
-          region_fetched_at, created_at, updated_at
+          region_source, region_fetched_at, created_at, updated_at
         )
         SELECT id, musicbrainz_artist_id, name, sort_name, country, area, region,
-               region_fetched_at, created_at, updated_at
+               ${hasRegionSource ? 'region_source' : 'NULL'}, region_fetched_at,
+               created_at, updated_at
         FROM artist
       `)
       db.exec('DROP TABLE artist')
@@ -284,13 +290,15 @@ function ensureNeteaseArtistIdentity(db: Database.Database): void {
     WHERE id = ?
   `)
 
-  // 网易云-only 行合并进 MB 行：MB 行已有值优先，只补缺失字段
+  // 网易云-only 行合并进 MB 行：地区字段由调用方按 manual 优先级算好后整体写入，
+  // 避免 SQL 里的 COALESCE 把手动地区（含手动清除的 NULL）覆盖回 MB 值。
   const mergeNeteaseIntoMbid = db.prepare(`
     UPDATE artist SET
       sort_name = COALESCE(sort_name, ?),
-      country = COALESCE(country, ?),
-      area = COALESCE(area, ?),
-      region = COALESCE(region, ?),
+      country = ?,
+      area = ?,
+      region = ?,
+      region_source = ?,
       region_fetched_at = COALESCE(region_fetched_at, ?),
       updated_at = datetime('now')
     WHERE id = ?
@@ -307,6 +315,17 @@ function ensureNeteaseArtistIdentity(db: Database.Database): void {
       area = COALESCE(area, ?),
       region = COALESCE(region, ?),
       region_fetched_at = COALESCE(region_fetched_at, ?),
+      region_source = COALESCE(region_source, ?),
+      updated_at = datetime('now')
+    WHERE id = ?
+  `)
+
+  // 手动地区的行：只补非地区字段，地区/国家/area 一律不动
+  const fillNonRegion = db.prepare(`
+    UPDATE artist SET
+      netease_encrypted_id = COALESCE(netease_encrypted_id, ?),
+      name = CASE WHEN name IS NULL OR name = '' THEN ? ELSE name END,
+      sort_name = COALESCE(sort_name, ?),
       updated_at = datetime('now')
     WHERE id = ?
   `)
@@ -373,12 +392,38 @@ function ensureNeteaseArtistIdentity(db: Database.Database): void {
         chosenRow.netease_artist_id == null &&
         chosenRow.id !== row.id
       ) {
+        // 地区字段按 manual 优先级合并：目标行 manual 最优先；否则源行 manual；
+        // 否则沿用 MB 行的现值，缺失时才用网易云行补。手动清除（NULL + manual）
+        // 也必须保留，不能被 MB 行的地区覆盖。
+        const targetManual = chosenRow.region_source === 'manual'
+        const sourceManual = row.region_source === 'manual'
+        const mergedCountry = targetManual
+          ? chosenRow.country
+          : sourceManual
+            ? row.country
+            : (chosenRow.country ?? row.country)
+        const mergedArea = targetManual
+          ? chosenRow.area
+          : sourceManual
+            ? row.area
+            : (chosenRow.area ?? row.area)
+        const mergedRegion = targetManual
+          ? chosenRow.region
+          : sourceManual
+            ? row.region
+            : (chosenRow.region ?? row.region)
+        const mergedRegionSource =
+          targetManual || sourceManual
+            ? 'manual'
+            : (chosenRow.region_source ?? row.region_source)
+
         mergeNeteaseIntoMbid.run(
           row.sort_name,
-          row.country,
-          row.area,
-          row.region,
-          row.region_fetched_at,
+          mergedCountry,
+          mergedArea,
+          mergedRegion,
+          mergedRegionSource,
+          chosenRow.region_fetched_at ?? row.region_fetched_at,
           chosenRow.id
         )
         deleteNeteaseRow.run(row.id)
@@ -416,17 +461,28 @@ function ensureNeteaseArtistIdentity(db: Database.Database): void {
 
       if (row) {
         if (chosenRow) {
+          const isManual = row.region_source === 'manual'
           const copiesRegion =
-            (!row.region && !!chosenRow.region) ||
-            (!row.country && !!chosenRow.country) ||
-            (!row.area && !!chosenRow.area)
+            !isManual &&
+            ((!row.region && !!chosenRow.region) ||
+              (!row.country && !!chosenRow.country) ||
+              (!row.area && !!chosenRow.area))
 
-          const canFill =
-            copiesRegion ||
+          const canFillOther =
             (!row.sort_name && !!chosenRow.sort_name) ||
             (!row.netease_encrypted_id && !!group.encryptedId)
 
-          if (canFill) {
+          if (isManual) {
+            // 手动地区行：只补名称/加密 ID/sort_name，绝不碰地区字段
+            if (canFillOther) {
+              fillNonRegion.run(
+                group.encryptedId,
+                group.name || row.name,
+                chosenRow.sort_name,
+                row.id
+              )
+            }
+          } else if (copiesRegion || canFillOther) {
             fillRegion.run(
               group.encryptedId,
               group.name || row.name,
@@ -435,6 +491,9 @@ function ensureNeteaseArtistIdentity(db: Database.Database): void {
               chosenRow.area,
               chosenRow.region,
               chosenRow.region_fetched_at,
+              chosenRow.region_source === 'manual' && !!chosenRow.region && !row.region
+                ? 'manual'
+                : null,
               row.id
             )
             if (row.id !== chosenRow.id && copiesRegion) copied++
@@ -503,6 +562,11 @@ export function initDatabase(): Database.Database {
   }
   if (!artistColumns.some((c) => c.name === 'netease_encrypted_id')) {
     db.exec('ALTER TABLE artist ADD COLUMN netease_encrypted_id TEXT')
+  }
+  // region_source：NULL = 自动/MB 来源；'manual' = 用户手动设置/清除。
+  // 手动值 SHALL NOT 被自动补全覆盖（见 artist-service.ts / ensureNeteaseArtistIdentity）。
+  if (!artistColumns.some((c) => c.name === 'region_source')) {
+    db.exec('ALTER TABLE artist ADD COLUMN region_source TEXT')
   }
   db.exec(CREATE_ARTIST_INDEXES)
   db.exec(CREATE_TRACK_TABLE)
@@ -712,7 +776,7 @@ export function closeDatabase(): void {
 }
 
 export interface ExportData {
-  version: 4
+  version: 5
   exportedAt: string
   data: {
     albums: Record<string, unknown>[]
@@ -727,7 +791,7 @@ export interface ExportData {
 export function exportDatabase(): ExportData {
   const database = getDatabase()
   return {
-    version: 4,
+    version: 5,
     exportedAt: new Date().toISOString(),
     data: {
       albums: database.prepare('SELECT * FROM album').all() as Record<string, unknown>[],
@@ -749,8 +813,8 @@ export interface ImportResult {
   artistsImported: number
 }
 
-/** 导入文件可接受的版本（v4 = 当前格式；v1-v3 = 历史格式） */
-export type ImportData = Omit<ExportData, 'version'> & { version: 1 | 2 | 3 | 4 }
+/** 导入文件可接受的版本（v5 = 当前格式；v1-v4 = 历史格式） */
+export type ImportData = Omit<ExportData, 'version'> & { version: 1 | 2 | 3 | 4 | 5 }
 
 export function importDatabase(data: ImportData): ImportResult {
   const database = getDatabase()
@@ -759,7 +823,8 @@ export function importDatabase(data: ImportData): ImportResult {
     data.version !== 1 &&
     data.version !== 2 &&
     data.version !== 3 &&
-    data.version !== 4
+    data.version !== 4 &&
+    data.version !== 5
   ) {
     throw new Error(`不支持的导出版本: ${data.version}`)
   }
@@ -774,22 +839,39 @@ export function importDatabase(data: ImportData): ImportResult {
   }
 
   const importTx = database.transaction(() => {
-    // 0. Import artists（v4 优先按网易云 ID；v3/历史行按 MBID；两者都没有则跳过）
+    // 0. Import artists（v5/v4 优先按网易云 ID；v3/历史行按 MBID；两者都没有则跳过）
     //    必须在 album 之前导入：album.primary_artist_mbid 引用 artist.musicbrainz_artist_id。
     const artists = data.data.artists ?? []
     const upsertByNetease = database.prepare(`
       INSERT INTO artist (
         netease_artist_id, netease_encrypted_id, musicbrainz_artist_id, name,
-        sort_name, country, area, region, region_fetched_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        sort_name, country, area, region, region_source, region_fetched_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(netease_artist_id) DO UPDATE SET
         netease_encrypted_id = COALESCE(excluded.netease_encrypted_id, artist.netease_encrypted_id),
         musicbrainz_artist_id = COALESCE(artist.musicbrainz_artist_id, excluded.musicbrainz_artist_id),
         name = excluded.name,
         sort_name = COALESCE(excluded.sort_name, artist.sort_name),
-        country = COALESCE(excluded.country, artist.country),
-        area = COALESCE(excluded.area, artist.area),
-        region = COALESCE(excluded.region, artist.region),
+        country = CASE
+          WHEN artist.region_source = 'manual' THEN artist.country
+          WHEN excluded.region_source = 'manual' THEN excluded.country
+          ELSE COALESCE(excluded.country, artist.country)
+        END,
+        area = CASE
+          WHEN artist.region_source = 'manual' THEN artist.area
+          WHEN excluded.region_source = 'manual' THEN excluded.area
+          ELSE COALESCE(excluded.area, artist.area)
+        END,
+        region = CASE
+          WHEN artist.region_source = 'manual' THEN artist.region
+          WHEN excluded.region_source = 'manual' THEN excluded.region
+          ELSE COALESCE(excluded.region, artist.region)
+        END,
+        region_source = CASE
+          WHEN artist.region_source = 'manual' THEN 'manual'
+          WHEN excluded.region_source = 'manual' THEN 'manual'
+          ELSE artist.region_source
+        END,
         region_fetched_at = COALESCE(artist.region_fetched_at, excluded.region_fetched_at),
         updated_at = datetime('now')
     `)
@@ -797,27 +879,61 @@ export function importDatabase(data: ImportData): ImportResult {
     const upsertByNeteaseNoMbid = database.prepare(`
       INSERT INTO artist (
         netease_artist_id, netease_encrypted_id, name,
-        sort_name, country, area, region, region_fetched_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        sort_name, country, area, region, region_source, region_fetched_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(netease_artist_id) DO UPDATE SET
         netease_encrypted_id = COALESCE(excluded.netease_encrypted_id, artist.netease_encrypted_id),
         name = excluded.name,
         sort_name = COALESCE(excluded.sort_name, artist.sort_name),
-        country = COALESCE(excluded.country, artist.country),
-        area = COALESCE(excluded.area, artist.area),
-        region = COALESCE(excluded.region, artist.region),
+        country = CASE
+          WHEN artist.region_source = 'manual' THEN artist.country
+          WHEN excluded.region_source = 'manual' THEN excluded.country
+          ELSE COALESCE(excluded.country, artist.country)
+        END,
+        area = CASE
+          WHEN artist.region_source = 'manual' THEN artist.area
+          WHEN excluded.region_source = 'manual' THEN excluded.area
+          ELSE COALESCE(excluded.area, artist.area)
+        END,
+        region = CASE
+          WHEN artist.region_source = 'manual' THEN artist.region
+          WHEN excluded.region_source = 'manual' THEN excluded.region
+          ELSE COALESCE(excluded.region, artist.region)
+        END,
+        region_source = CASE
+          WHEN artist.region_source = 'manual' THEN 'manual'
+          WHEN excluded.region_source = 'manual' THEN 'manual'
+          ELSE artist.region_source
+        END,
         region_fetched_at = COALESCE(artist.region_fetched_at, excluded.region_fetched_at),
         updated_at = datetime('now')
     `)
     const upsertByMbid = database.prepare(`
-      INSERT INTO artist (musicbrainz_artist_id, name, sort_name, country, area, region, region_fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO artist (musicbrainz_artist_id, name, sort_name, country, area, region, region_source, region_fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(musicbrainz_artist_id) DO UPDATE SET
         name = excluded.name,
         sort_name = COALESCE(excluded.sort_name, artist.sort_name),
-        country = COALESCE(excluded.country, artist.country),
-        area = COALESCE(excluded.area, artist.area),
-        region = COALESCE(excluded.region, artist.region),
+        country = CASE
+          WHEN artist.region_source = 'manual' THEN artist.country
+          WHEN excluded.region_source = 'manual' THEN excluded.country
+          ELSE COALESCE(excluded.country, artist.country)
+        END,
+        area = CASE
+          WHEN artist.region_source = 'manual' THEN artist.area
+          WHEN excluded.region_source = 'manual' THEN excluded.area
+          ELSE COALESCE(excluded.area, artist.area)
+        END,
+        region = CASE
+          WHEN artist.region_source = 'manual' THEN artist.region
+          WHEN excluded.region_source = 'manual' THEN excluded.region
+          ELSE COALESCE(excluded.region, artist.region)
+        END,
+        region_source = CASE
+          WHEN artist.region_source = 'manual' THEN 'manual'
+          WHEN excluded.region_source = 'manual' THEN 'manual'
+          ELSE artist.region_source
+        END,
         region_fetched_at = COALESCE(artist.region_fetched_at, excluded.region_fetched_at),
         updated_at = datetime('now')
     `)
@@ -838,6 +954,7 @@ export function importDatabase(data: ImportData): ImportResult {
       const country = typeof artist.country === 'string' ? artist.country : null
       const area = typeof artist.area === 'string' ? artist.area : null
       const region = typeof artist.region === 'string' ? artist.region : null
+      const regionSource = artist.region_source === 'manual' ? 'manual' : null
       const regionFetchedAt =
         typeof artist.region_fetched_at === 'string' ? artist.region_fetched_at : null
 
@@ -852,6 +969,7 @@ export function importDatabase(data: ImportData): ImportResult {
             country,
             area,
             region,
+            regionSource,
             regionFetchedAt
           )
         } catch (error) {
@@ -872,6 +990,7 @@ export function importDatabase(data: ImportData): ImportResult {
             country,
             area,
             region,
+            regionSource,
             regionFetchedAt
           )
         }
@@ -881,7 +1000,16 @@ export function importDatabase(data: ImportData): ImportResult {
         artistMbidByNetease.set(neteaseId, current?.musicbrainz_artist_id ?? null)
         result.artistsImported++
       } else if (mbid) {
-        upsertByMbid.run(mbid, name, sortName, country, area, region, regionFetchedAt)
+        upsertByMbid.run(
+          mbid,
+          name,
+          sortName,
+          country,
+          area,
+          region,
+          regionSource,
+          regionFetchedAt
+        )
         result.artistsImported++
       }
     }
@@ -950,12 +1078,14 @@ export function importDatabase(data: ImportData): ImportResult {
       if (existing) {
         // 地区列使用 COALESCE：旧版导出（v1/v2）不含这些列，导入时不应把库中
         // 已有地区关联抹成 NULL；新专辑（INSERT 分支）仍按导入值或 NULL 落库。
+        // artists 同理：v1-v3 文件没有结构化艺术家数据，不能把库中已有 JSON 抹成 NULL，
+        // 否则艺人信息窗口会退化为文本拆分（含 '/' 的名字会被拆碎）。
         database.prepare(`
           UPDATE album SET
             title = ?, artist = ?, cover_url = ?, release_date = ?,
             musicbrainz_id = ?, mb_rating = ?, mb_rating_count = ?,
             track_count = ?, enriched_at = ?, user_rating = ?,
-            netease_original_id = ?, physical_media = ?, artists = ?,
+            netease_original_id = ?, physical_media = ?, artists = COALESCE(?, artists),
             external_links = ?, primary_artist_mbid = COALESCE(?, primary_artist_mbid),
             region_checked_at = COALESCE(?, region_checked_at),
             primary_artist_id = COALESCE(?, primary_artist_id)

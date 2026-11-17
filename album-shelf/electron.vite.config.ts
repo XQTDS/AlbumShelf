@@ -25,12 +25,13 @@ export default defineConfig({
       }
     },
     plugins: [vue()],
-    // 多页面：主界面 index.html + 独立的关注列表窗口 followed.html
+    // 多页面：主界面 index.html + 独立的关注列表 followed.html + 艺人信息 artists.html
     build: {
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),
-          followed: resolve('src/renderer/followed.html')
+          followed: resolve('src/renderer/followed.html'),
+          artists: resolve('src/renderer/artists.html')
         }
       }
     },

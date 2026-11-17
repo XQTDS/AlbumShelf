@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { getDatabase } from './database'
-import { normalizeRegion, regionLabel } from './region'
+import { normalizeRegion, normalizeRegionKey, regionLabel } from './region'
 
 /** 写入 artist 表的最小地区信息 */
 export interface ArtistRegionInput {
@@ -31,9 +31,20 @@ export interface ArtistRow {
   country: string | null
   area: string | null
   region: string | null
+  /** NULL = 自动/MB 来源；'manual' = 用户手动设置或手动清除，自动补全不得覆盖 */
+  region_source: string | null
   region_fetched_at: string | null
   created_at: string
   updated_at: string | null
+}
+
+/** 手动设置/清除艺人地区 */
+export interface ManualArtistRegionInput {
+  neteaseArtistId: number
+  name: string
+  neteaseEncryptedId?: string | null
+  /** null = 清除地区（仍标记 manual，防止自动补全回填） */
+  region: string | null
 }
 
 /** 地区筛选项（只含至少关联一张专辑的地区） */
@@ -100,9 +111,9 @@ export class ArtistService {
               netease_encrypted_id = COALESCE(?, netease_encrypted_id),
               name = ?,
               sort_name = COALESCE(sort_name, ?),
-              country = COALESCE(country, ?),
-              area = COALESCE(area, ?),
-              region = COALESCE(region, ?),
+              country = CASE WHEN region_source = 'manual' THEN country ELSE COALESCE(country, ?) END,
+              area = CASE WHEN region_source = 'manual' THEN area ELSE COALESCE(area, ?) END,
+              region = CASE WHEN region_source = 'manual' THEN region ELSE COALESCE(region, ?) END,
               region_fetched_at = COALESCE(region_fetched_at, ?),
               updated_at = datetime('now')
             WHERE id = ?
@@ -129,27 +140,45 @@ export class ArtistService {
       // B. 目标 MBID 已归属另一行（绑定到其他网易云 ID，或仍是未绑定的历史行）：
       //    本行只复制地区，不写 MBID；未绑定的历史行由下次启动迁移合并。
       if (byMbid && (!byNetease || byMbid.id !== byNetease.id)) {
-        const country = input.country ?? byMbid.country
-        const area = input.area ?? byMbid.area
-        const regionValue = region ?? byMbid.region
+        const manualSource = byMbid.region_source === 'manual'
+        // 目标 MBID 行是手动地区时，原样继承其值（包括手动清除的 NULL），
+        // 不能先用本次自动补全的 country/region 覆盖。
+        const country = manualSource ? byMbid.country : (input.country ?? byMbid.country)
+        const area = manualSource ? byMbid.area : (input.area ?? byMbid.area)
+        const regionValue = manualSource ? byMbid.region : (region ?? byMbid.region)
+        const regionSource = manualSource ? 'manual' : null
         const regionFetchedAt = fetchedAt
 
         this.db
           .prepare(`
             INSERT INTO artist (
               netease_artist_id, netease_encrypted_id, name,
-              sort_name, country, area, region, region_fetched_at
+              sort_name, country, area, region, region_source, region_fetched_at
             ) VALUES (
               @netease_artist_id, @netease_encrypted_id, @name,
-              @sort_name, @country, @area, @region, @region_fetched_at
+              @sort_name, @country, @area, @region, @region_source, @region_fetched_at
             )
             ON CONFLICT(netease_artist_id) DO UPDATE SET
               netease_encrypted_id = COALESCE(excluded.netease_encrypted_id, artist.netease_encrypted_id),
               name = excluded.name,
               sort_name = COALESCE(artist.sort_name, excluded.sort_name),
-              country = COALESCE(artist.country, excluded.country),
-              area = COALESCE(artist.area, excluded.area),
-              region = COALESCE(artist.region, excluded.region),
+              country = CASE
+                WHEN artist.region_source = 'manual' THEN artist.country
+                ELSE COALESCE(artist.country, excluded.country)
+              END,
+              area = CASE
+                WHEN artist.region_source = 'manual' THEN artist.area
+                ELSE COALESCE(artist.area, excluded.area)
+              END,
+              region = CASE
+                WHEN artist.region_source = 'manual' THEN artist.region
+                ELSE COALESCE(artist.region, excluded.region)
+              END,
+              region_source = CASE
+                WHEN artist.region_source = 'manual' THEN 'manual'
+                WHEN excluded.region_source = 'manual' THEN 'manual'
+                ELSE artist.region_source
+              END,
               region_fetched_at = COALESCE(artist.region_fetched_at, excluded.region_fetched_at),
               updated_at = datetime('now')
           `)
@@ -161,6 +190,7 @@ export class ArtistService {
             country,
             area,
             region: regionValue,
+            region_source: regionSource,
             region_fetched_at: regionFetchedAt
           })
 
@@ -186,9 +216,23 @@ export class ArtistService {
             musicbrainz_artist_id = COALESCE(artist.musicbrainz_artist_id, excluded.musicbrainz_artist_id),
             name = excluded.name,
             sort_name = COALESCE(artist.sort_name, excluded.sort_name),
-            country = COALESCE(artist.country, excluded.country),
-            area = COALESCE(artist.area, excluded.area),
-            region = COALESCE(artist.region, excluded.region),
+            country = CASE
+              WHEN artist.region_source = 'manual' THEN artist.country
+              ELSE COALESCE(artist.country, excluded.country)
+            END,
+            area = CASE
+              WHEN artist.region_source = 'manual' THEN artist.area
+              ELSE COALESCE(artist.area, excluded.area)
+            END,
+            region = CASE
+              WHEN artist.region_source = 'manual' THEN artist.region
+              ELSE COALESCE(artist.region, excluded.region)
+            END,
+            region_source = CASE
+              WHEN artist.region_source = 'manual' THEN 'manual'
+              WHEN excluded.region_source = 'manual' THEN 'manual'
+              ELSE artist.region_source
+            END,
             region_fetched_at = COALESCE(artist.region_fetched_at, excluded.region_fetched_at),
             updated_at = datetime('now')
         `)
@@ -212,6 +256,63 @@ export class ArtistService {
     })
 
     return run()
+  }
+
+  /**
+   * 手动设置/清除艺人地区（艺人信息窗口的唯一写操作）。
+   *
+   * - 写入 `region` / `country`，清空 `area`，并标记 `region_source = 'manual'`；
+   * - `region = null` 表示手动清除：地区保持为空，自动补全不得回填；
+   * - 艺人尚无 artist 行时按网易云 ID 新建（覆盖只在合作位置出现的艺人）；
+   * - 无网易云 ID 的身份无法稳定落库，调用方应在 UI 禁用编辑。
+   */
+  setManualRegion(input: ManualArtistRegionInput): ArtistRow {
+    const neteaseArtistId = input.neteaseArtistId
+    if (!Number.isInteger(neteaseArtistId) || neteaseArtistId <= 0) {
+      throw new Error('无效的网易云艺人 ID')
+    }
+
+    const region = input.region == null ? null : normalizeRegionKey(input.region)
+    if (input.region != null && region == null) {
+      throw new Error('无效的地区代码（应为两位 ISO 3166-1 alpha-2 代码）')
+    }
+
+    const name = input.name.trim() || '未知艺人'
+    const fetchedAt = new Date().toISOString()
+
+    this.db
+      .prepare(`
+        INSERT INTO artist (
+          netease_artist_id, netease_encrypted_id, name,
+          country, area, region, region_source, region_fetched_at, updated_at
+        ) VALUES (
+          @netease_artist_id, @netease_encrypted_id, @name,
+          @country, NULL, @region, 'manual', @region_fetched_at, datetime('now')
+        )
+        ON CONFLICT(netease_artist_id) DO UPDATE SET
+          netease_encrypted_id = COALESCE(excluded.netease_encrypted_id, artist.netease_encrypted_id),
+          name = CASE WHEN artist.name IS NULL OR artist.name = '' THEN excluded.name ELSE artist.name END,
+          country = excluded.country,
+          area = NULL,
+          region = excluded.region,
+          region_source = 'manual',
+          region_fetched_at = COALESCE(artist.region_fetched_at, excluded.region_fetched_at),
+          updated_at = datetime('now')
+      `)
+      .run({
+        netease_artist_id: neteaseArtistId,
+        netease_encrypted_id: input.neteaseEncryptedId ?? null,
+        name,
+        country: region,
+        region,
+        region_fetched_at: fetchedAt
+      })
+
+    const row = this.getArtistByNeteaseId(neteaseArtistId)
+    if (!row) {
+      throw new Error(`artist 手动地区写入后未能读取记录: ${neteaseArtistId}`)
+    }
+    return row
   }
 
   /**
