@@ -35,12 +35,16 @@
           没有匹配的艺人。
         </div>
         <div v-else class="ab-list">
-          <button
+          <div
             v-for="artist in filteredArtists"
             :key="artist.key"
             class="ab-artist-row"
             :class="{ selected: artist.key === selectedKey }"
-            @click="selectArtist(artist.key)"
+            role="button"
+            tabindex="0"
+            @click="handleArtistRowClick(artist.key)"
+            @keydown.enter.prevent="selectArtist(artist.key)"
+            @keydown.space.prevent="selectArtist(artist.key)"
           >
             <span class="ab-artist-name" :title="artist.name">{{ artist.name }}</span>
             <span class="ab-artist-meta">
@@ -58,7 +62,7 @@
               </span>
               <span v-if="artist.is_synthetic" class="ab-synthetic-chip">群星/合辑</span>
             </span>
-          </button>
+          </div>
         </div>
       </aside>
 
@@ -125,12 +129,16 @@
             </div>
             <div v-else-if="albums.length === 0" class="ab-empty">该艺人暂无专辑。</div>
             <div v-else class="ab-album-list">
-              <button
+              <div
                 v-for="album in albums"
                 :key="album.id"
                 class="ab-album-row"
+                role="button"
+                tabindex="0"
                 title="在主界面打开专辑详情"
-                @click="openAlbum(album)"
+                @click="handleAlbumRowClick(album)"
+                @keydown.enter.prevent="openAlbum(album)"
+                @keydown.space.prevent="openAlbum(album)"
               >
                 <span class="ab-cover-wrap">
                   <img
@@ -164,7 +172,7 @@
                   </template>
                   <span v-else class="ab-rating-empty">—</span>
                 </span>
-              </button>
+              </div>
             </div>
           </div>
 
@@ -416,6 +424,22 @@ async function selectArtist(key: string): Promise<void> {
   await loadAlbums(key)
 }
 
+/** 鼠标拖选文字时不触发行点击，避免复制艺人名/专辑名时切换选中或打开专辑 */
+function hasTextSelection(): boolean {
+  const selection = window.getSelection()
+  return !!selection && !selection.isCollapsed && selection.toString().trim().length > 0
+}
+
+function handleArtistRowClick(key: string): void {
+  if (hasTextSelection()) return
+  void selectArtist(key)
+}
+
+function handleAlbumRowClick(album: ArtistAlbum): void {
+  if (hasTextSelection()) return
+  void openAlbum(album)
+}
+
 async function reloadAll(): Promise<void> {
   await loadArtists(true)
 }
@@ -594,7 +618,6 @@ body {
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
-  user-select: none;
 }
 </style>
 
@@ -715,6 +738,23 @@ body {
   border-color: var(--primary);
   background: rgba(91, 106, 191, 0.08);
   box-shadow: inset 3px 0 0 var(--primary);
+}
+
+/* 内容区允许鼠标框选/复制；行本身可点，拖选文字时由脚本忽略行点击 */
+.ab-artist-row,
+.ab-album-row,
+.ab-artist-name,
+.ab-detail-name,
+.ab-album-title,
+.ab-album-artist {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.ab-artist-row:focus-visible,
+.ab-album-row:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
 }
 
 .ab-artist-name {
